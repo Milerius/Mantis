@@ -24,18 +24,18 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - name: Build benchmarks
-        run: cargo +nightly bench --bench spsc --all-features --no-run
       - name: Run SPSC benchmarks
-        run: cargo +nightly bench --bench spsc --all-features 2>&1 | tee bench-output.txt
-        env:
-          CARGO_TERM_COLOR: never
+        run: cargo +nightly bench --bench spsc --all-features
+      - name: Convert report for CI tracking
+        run: |
+          jq '[.results[] | {name: .workload, unit: "ns/op", value: .ns_per_op}]' \
+            target/bench-report-spsc.json > bench-output.json
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@a7bc2366eda11037936ea57d811a43b3418d3073 # v1.21.0
         with:
           name: SPSC Ring Benchmarks (${{ matrix.os }})
-          tool: cargo
-          output-file-path: bench-output.txt
+          tool: customSmallerIsBetter
+          output-file-path: bench-output.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: false
           alert-threshold: "105%"
@@ -46,4 +46,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: benchmark-results-${{ matrix.os }}
-          path: bench-output.txt
+          path: |
+            target/bench-report-spsc.json
+            bench-output.json
