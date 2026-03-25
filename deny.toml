@@ -7,9 +7,7 @@ targets = [
 
 [advisories]
 vulnerability = "deny"
-unmaintained = "warn"
 yanked = "deny"
-notice = "warn"
 
 [licenses]
 unlicensed = "deny"
@@ -27,7 +25,7 @@ copyleft = "deny"
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
-allow-wildcard-paths = []
+allow-wildcard-paths = false
 
 [sources]
 unknown-registry = "deny"
