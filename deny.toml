@@ -9,6 +9,7 @@ targets = [
 yanked = "deny"
 
 [licenses]
+unused-allowed-license = "allow"
 allow = [
     "MIT",
     "Apache-2.0",
@@ -23,6 +24,9 @@ allow = [
 multiple-versions = "warn"
 wildcards = "deny"
 allow-wildcard-paths = true
+skip = [
+    { crate = "syn@1", reason = "bolero-generator-derive depends on syn v1" },
+]
 
 [sources]
 unknown-registry = "deny"
