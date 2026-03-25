@@ -12,4 +12,6 @@
 #![deny(unsafe_code)]
 
 pub mod counters;
+pub mod measurement;
 pub mod report;
+pub mod workloads;
