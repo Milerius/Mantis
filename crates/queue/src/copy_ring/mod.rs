@@ -4,4 +4,5 @@
 //! SIMD acceleration on `x86_64` (SSE2) and `aarch64` (NEON).
 //!
 //! The ring engine and public handles will be added in subsequent tasks.
+pub(crate) mod engine;
 pub(crate) mod raw;

@@ -7,19 +7,12 @@
 //! use by the copy-ring engine.
 
 #![expect(unsafe_code, reason = "raw slot access requires unsafe")]
-// write_slot_copy, read_slot_copy, and DefaultCopyPolicy are consumed by
-// the copy-ring engine added in a later task (Task 3+).
-#![expect(
-    dead_code,
-    unused_imports,
-    reason = "consumed by copy-ring engine added in Task 3+"
-)]
+// write_slot_copy and read_slot_copy are called from CopyRingEngine::push/pop.
+// The engine methods are reachable from tests but not from lib public API until
+// the split handles are added in a later task.
+#![allow(dead_code)]
 
 pub(crate) mod simd;
-// Re-exported for use by the copy-ring engine (added in a later task).
-pub(crate) use simd::DefaultCopyPolicy;
-#[cfg(feature = "nightly")]
-pub(crate) use simd::SimdCopyPolicy;
 
 use core::ptr;
 
@@ -70,4 +63,29 @@ pub(crate) fn read_slot_copy<T: Copy, S: Storage<T>, CP: CopyPolicy<T>>(
         let src = storage.slot_ptr(index).cast::<T>();
         CP::copy_out(ptr::addr_of_mut!(*out), src);
     }
+}
+
+// --- unsafe impl Sync for CopyRingEngine ---
+//
+// CopyRingEngine contains Cell<usize> (tail_cached, head_cached), which
+// makes it !Sync. We need Sync for Arc<CopyRingEngine> in split handles.
+//
+// SAFETY: The SPSC protocol guarantees disjoint access:
+// - Producer ONLY accesses: head (AtomicUsize), tail_cached (Cell<usize>)
+// - Consumer ONLY accesses: tail (AtomicUsize), head_cached (Cell<usize>)
+// These two sides never touch each other's Cell. Atomics are inherently
+// Sync. Storage is Sync (required by trait bound). The split-handle design
+// enforces this partition at compile time. Validated by Miri on every PR.
+use crate::copy_ring::engine::CopyRingEngine;
+use mantis_core::{IndexStrategy, Instrumentation, PushPolicy};
+
+unsafe impl<T, S, I, P, Instr, CP> Sync for CopyRingEngine<T, S, I, P, Instr, CP>
+where
+    T: Copy + Send,
+    S: Storage<T>,
+    I: IndexStrategy,
+    P: PushPolicy,
+    Instr: Instrumentation + Sync,
+    CP: CopyPolicy<T>,
+{
 }

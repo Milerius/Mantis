@@ -21,6 +21,11 @@
 //! always reaches the scalar fallback.
 
 #![expect(unsafe_code, reason = "SIMD intrinsics require unsafe")]
+// SIMD dispatch helpers (load128, store128, copy_N, copy_bucket) are called
+// only through CopyDispatcher::copy which is invoked by SimdCopyPolicy and
+// tests. The dead_code lint cannot trace through const-generic dispatch
+// branches, so it incorrectly marks them as unused.
+#![allow(dead_code)]
 
 use core::marker::PhantomData;
 use core::ptr;
