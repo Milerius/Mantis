@@ -27,7 +27,9 @@ jobs:
       - name: Build benchmarks
         run: cargo +nightly bench --bench spsc --all-features --no-run
       - name: Run SPSC benchmarks
-        run: cargo +nightly bench --bench spsc --all-features 2>&1 | grep -E "^(Benchmarking|test |.*time:)" | tee bench-output.txt
+        run: cargo +nightly bench --bench spsc --all-features 2>&1 | tee bench-output.txt
+        env:
+          CARGO_TERM_COLOR: never
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@a7bc2366eda11037936ea57d811a43b3418d3073 # v1.21.0
         with:
