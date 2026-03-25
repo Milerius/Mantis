@@ -155,7 +155,14 @@ jobs:
         run: cargo +nightly llvm-cov --all-features --codecov --output-path codecov.json
       - name: Branch coverage
         run: cargo +nightly llvm-cov --all-features --branch --lcov --output-path lcov-branch.info
-      - name: Upload coverage
+      - name: Upload to Codecov
+        if: github.event_name == 'pull_request'
+        uses: codecov/codecov-action@1af58845a975a7985b0beb0cbe6fbbb71a41dbad # v5.5.3
+        with:
+          files: codecov.json
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+      - name: Upload coverage artifacts
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
