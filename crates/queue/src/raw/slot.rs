@@ -4,8 +4,6 @@
 //! implementation. Callers must uphold the single-writer invariant.
 
 #![allow(unsafe_code)]
-// Used by raw::mod safe wrappers; suppress until engine exists.
-#![allow(dead_code)]
 
 use core::ptr;
 

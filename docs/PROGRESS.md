@@ -139,7 +139,7 @@
 | Crate | Status | no_std | Tests | Benchmarks | Verification |
 |---|---|---|---|---|---|
 | `mantis-core` | Active | yes | 1 | — | — |
-| `mantis-types` | Active | yes | 5 | — | — |
+| `mantis-types` | Active | yes | 6 | — | — |
 | `mantis-queue` | Active | yes | 31 | — | miri pass |
 | `mantis-bench` | Active | std | 11 | 6 benches + 4 contenders | — |
 | `mantis-layout` | Scaffold | std | 2 | — | — |
