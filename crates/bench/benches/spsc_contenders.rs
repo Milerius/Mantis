@@ -2,6 +2,8 @@
 //!
 //! Requires `bench-contenders` feature flag.
 
+#![allow(missing_docs)]
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 fn bench_rtrb_single_item(c: &mut Criterion) {

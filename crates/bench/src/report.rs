@@ -183,7 +183,7 @@ mod tests {
                 mean_occupancy: None,
             }],
         };
-        let json = serde_json::to_string_pretty(&report).expect("serialization failed");
+        let json = serde_json::to_string_pretty(&report).unwrap_or_default();
         assert!(json.contains("SpscRing"));
         assert!(json.contains("single_item"));
     }

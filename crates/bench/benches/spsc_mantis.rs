@@ -1,5 +1,7 @@
 //! Criterion benchmarks for all Mantis SPSC ring presets.
 
+#![allow(missing_docs)]
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use mantis_queue::SpscRing;
 
