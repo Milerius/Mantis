@@ -9,8 +9,14 @@ env:
 
 jobs:
   benchmark:
-    name: Benchmark Regression
-    runs-on: ubuntu-latest
+    name: Benchmark (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout PR
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -18,16 +24,20 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - name: Run benchmarks
-        run: cargo +nightly bench --all-features 2>&1 | tee bench-output.txt
+      - name: Build benchmarks
+        run: cargo +nightly bench --all-features --no-run
+      - name: Run mantis benchmarks
+        run: cargo +nightly bench --bench spsc_mantis --all-features 2>&1 | tee bench-output.txt
+      - name: Run contender benchmarks
+        run: cargo +nightly bench --bench spsc_contenders --all-features 2>&1 | tee -a bench-output.txt
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@a7bc2366eda11037936ea57d811a43b3418d3073 # v1.21.0
         with:
-          name: SPSC Ring Benchmarks
+          name: SPSC Ring Benchmarks (${{ matrix.os }})
           tool: cargo
           output-file-path: bench-output.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
+          auto-push: false
           alert-threshold: "105%"
           comment-on-alert: true
           fail-on-alert: true
@@ -35,5 +45,5 @@ jobs:
       - name: Upload benchmark results
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: benchmark-results
+          name: benchmark-results-${{ matrix.os }}
           path: bench-output.txt

@@ -17,7 +17,7 @@ use crate::counters::{CycleCounter, Measurement};
 /// # Safety
 ///
 /// Valid only on `x86_64`. Caller must ensure the CPU supports `rdtsc`
-/// (all modern x86_64 CPUs do). The `lfence` barriers prevent reordering.
+/// (all modern `x86_64` CPUs do). The `lfence` barriers prevent reordering.
 #[inline]
 fn rdtsc_serialized() -> u64 {
     // SAFETY: `rdtsc` is available on all x86_64 CPUs. `lfence` barriers
@@ -78,11 +78,10 @@ impl CycleCounter for RdtscCounter {
         let nanos = u64::try_from(self.epoch.elapsed().as_nanos()).unwrap_or(u64::MAX);
         let epoch_cycles = rdtsc_serialized().saturating_sub(self.epoch_tsc);
         // Approximate nanos for the measured interval by linear interpolation.
-        let interval_nanos = if epoch_cycles > 0 {
-            nanos.saturating_mul(cycles) / epoch_cycles
-        } else {
-            0
-        };
+        let interval_nanos = nanos
+            .saturating_mul(cycles)
+            .checked_div(epoch_cycles)
+            .unwrap_or(0);
         Measurement {
             nanos: interval_nanos,
             cycles,
