@@ -11,10 +11,10 @@
 **Status: Complete** | Completed: 2026-03-25
 
 - [x] Rust workspace with crate skeletons (`mantis-core`, `mantis-types`, `mantis-queue`, `mantis-bench`, `mantis-layout`, `mantis-verify`)
-- [x] CI pipeline: fmt, clippy, test, no_std test, doc, deny, miri, careful, coverage
-- [x] Nightly CI: mutants, extended miri, full coverage, ASM toggle
-- [x] Verification CI: kani proofs, bolero property tests
-- [x] Benchmark regression CI with artifact upload
+- [x] CI pipeline: fmt, clippy, nextest, no_std test, doc, deny, miri, careful, coverage, codecov
+- [x] Nightly CI: mutants, extended miri, full coverage, ASM toggle, ASM inspection, kani proofs, fuzz
+- [x] Verification CI: kani proofs (4), bolero property tests (4), differential tests (3)
+- [x] Benchmark regression CI with 5% threshold, artifact upload, PR annotations
 - [x] Dependabot for cargo + actions
 - [x] Coding guidelines (`CLAUDE.md`)
 - [x] Unsafe policy (`docs/UNSAFE.md`)
@@ -38,7 +38,7 @@
 **Status: In Progress** | Started: 2026-03-25
 
 ### 1.1 SPSC Ring Buffer (`mantis-queue`)
-**Status: Core Complete** | Verification pending (Plan 3)
+**Status: Complete**
 
 - [x] Core ring buffer engine with strategy pattern
 - [x] `raw` submodule with unsafe slot operations
