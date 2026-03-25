@@ -54,17 +54,19 @@
 - [ ] Differential testing across strategy variants
 
 ### 1.2 Benchmark Harness (`mantis-bench`)
-- [ ] RDTSC + lfence cycle counter (x86_64)
-- [ ] kperf / `mach_absolute_time` counter (macOS ARM64)
-- [ ] `clock_gettime` counter (Linux ARM64)
-- [ ] Criterion integration with JSON export
-- [ ] Warmup phase and frequency stabilization
-- [ ] BenchReport with CPU name detection
-- [ ] External contender benchmarks via FFI (`bench-contenders` feature)
-  - [ ] rtrb
-  - [ ] ringbuf
-  - [ ] crossbeam
-- [ ] Benchmark workload shapes: single-item, burst, full-ring
+**Status: Complete**
+
+- [x] RDTSC + lfence cycle counter (x86_64)
+- [x] kperf / `mach_absolute_time` counter (macOS ARM64)
+- [x] `clock_gettime` counter (Linux ARM64)
+- [x] Criterion integration with JSON export
+- [x] MantisMeasurement<C> criterion Measurement trait
+- [x] BenchReport with CPU name, compiler, full metrics schema
+- [x] External contender benchmarks (`bench-contenders` feature)
+  - [x] rtrb
+  - [x] crossbeam
+- [x] Benchmark workload shapes: single-item, burst, full-drain
+- [x] Godbolt ASM inspection script
 
 ### 1.3 Canonical Event Model
 - [ ] `BookDelta`, `Trade`, `Quote` types
@@ -139,6 +141,6 @@
 | `mantis-core` | Active | yes | 1 | — | — |
 | `mantis-types` | Active | yes | 5 | — | — |
 | `mantis-queue` | Active | yes | 31 | — | miri pass |
-| `mantis-bench` | Scaffold | std | 2 | — | — |
+| `mantis-bench` | Active | std | 11 | 6 benches + 4 contenders | — |
 | `mantis-layout` | Scaffold | std | 2 | — | — |
 | `mantis-verify` | Scaffold | std | 1 | — | — |
