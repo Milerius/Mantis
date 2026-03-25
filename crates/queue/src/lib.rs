@@ -21,5 +21,8 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+mod pad;
+
 pub use mantis_core::{ImmediatePush, NoInstr, Pow2Masked};
 pub use mantis_types::QueueError;
+pub use pad::CachePadded;
