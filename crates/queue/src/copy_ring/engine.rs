@@ -4,10 +4,6 @@
 //! operations and returns `bool` instead of `Result` (caller retains
 //! the value since `T: Copy`).
 
-// Public handles (Producer/Consumer split wrappers) are added in a later task.
-// Until then, all items in this module are reachable only from tests.
-#![allow(dead_code)]
-
 use core::cell::Cell;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -211,11 +207,6 @@ where
     #[inline]
     pub(crate) fn instrumentation(&self) -> &Instr {
         &self.instr
-    }
-
-    #[inline]
-    pub(crate) fn storage(&self) -> &S {
-        &self.storage
     }
 }
 

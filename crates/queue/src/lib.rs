@@ -31,6 +31,9 @@ mod presets;
 mod raw;
 pub mod storage;
 
+pub use copy_ring::RawRingCopy;
+#[cfg(feature = "alloc")]
+pub use copy_ring::handle::{spsc_ring_copy, spsc_ring_copy_heap, ConsumerCopy, ProducerCopy};
 pub use handle::{Consumer, Producer, RawRing};
 pub use presets::*;
 #[cfg(feature = "alloc")]

@@ -7,12 +7,10 @@
 //! use by the copy-ring engine.
 
 #![expect(unsafe_code, reason = "raw slot access requires unsafe")]
-// write_slot_copy and read_slot_copy are called from CopyRingEngine::push/pop.
-// The engine methods are reachable from tests but not from lib public API until
-// the split handles are added in a later task.
-#![allow(dead_code)]
 
 pub(crate) mod simd;
+
+pub(crate) use simd::DefaultCopyPolicy;
 
 use core::ptr;
 

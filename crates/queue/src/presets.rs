@@ -57,6 +57,67 @@ impl<T: Send, const N: usize> Default for SpscRingInstrumented<T, N> {
     }
 }
 
+use crate::copy_ring::raw::DefaultCopyPolicy;
+use crate::copy_ring::RawRingCopy;
+
+// ─── Copy-optimized presets (T: Copy only) ──────────────────────────────────
+
+/// Stack-allocated copy-optimized SPSC ring with SIMD copy dispatch.
+pub type SpscRingCopy<T, const N: usize> =
+    RawRingCopy<T, InlineStorage<T, N>, Pow2Masked, ImmediatePush, NoInstr, DefaultCopyPolicy>;
+
+impl<T: Copy + Send, const N: usize> SpscRingCopy<T, N> {
+    /// Create a new copy-optimized SPSC ring.
+    #[must_use]
+    pub fn new() -> Self {
+        RawRingCopy::with_strategies(InlineStorage::new(), NoInstr)
+    }
+}
+
+impl<T: Copy + Send, const N: usize> Default for SpscRingCopy<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Heap-allocated copy-optimized SPSC ring with SIMD copy dispatch.
+#[cfg(feature = "alloc")]
+pub type SpscRingCopyHeap<T> =
+    RawRingCopy<T, HeapStorage<T>, Pow2Masked, ImmediatePush, NoInstr, DefaultCopyPolicy>;
+
+#[cfg(feature = "alloc")]
+impl<T: Copy + Send> SpscRingCopyHeap<T> {
+    /// Create a new heap copy ring with at least `capacity` slots.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        RawRingCopy::with_strategies(HeapStorage::new(capacity), NoInstr)
+    }
+}
+
+/// Copy-optimized SPSC ring with instrumentation counters.
+pub type SpscRingCopyInstrumented<T, const N: usize> = RawRingCopy<
+    T,
+    InlineStorage<T, N>,
+    Pow2Masked,
+    ImmediatePush,
+    CountingInstr,
+    DefaultCopyPolicy,
+>;
+
+impl<T: Copy + Send, const N: usize> SpscRingCopyInstrumented<T, N> {
+    /// Create a new instrumented copy ring.
+    #[must_use]
+    pub fn new() -> Self {
+        RawRingCopy::with_strategies(InlineStorage::new(), CountingInstr::new())
+    }
+}
+
+impl<T: Copy + Send, const N: usize> Default for SpscRingCopyInstrumented<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
