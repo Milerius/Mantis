@@ -19,11 +19,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Run benchmarks
-        run: cargo bench --all-features -- --output-format bencher | tee bench-output.txt
+        run: cargo bench --all-features 2>&1 | tee bench-output.txt
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@a7bc2366eda11037936ea57d811a43b3418d3073 # v1.21.0
+        with:
+          name: SPSC Ring Benchmarks
+          tool: cargo
+          output-file-path: bench-output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: "105%"
+          comment-on-alert: true
+          fail-on-alert: true
+          alert-comment-cc-users: "@mantis-maintainers"
       - name: Upload benchmark results
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: benchmark-results
           path: bench-output.txt
-      # TODO: Add baseline comparison (bench-baseline, bench-candidate,
-      # bench-contenders, bench-report jobs) when SPSC ring benchmarks exist.
