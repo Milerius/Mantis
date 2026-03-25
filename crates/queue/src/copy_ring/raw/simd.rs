@@ -50,6 +50,10 @@ use core::arch::aarch64::{uint8x16_t, vld1q_u8, vst1q_u8};
     clippy::inline_always,
     reason = "hot SIMD primitive — inlining is load-bearing"
 )]
+#[expect(
+    clippy::cast_ptr_alignment,
+    reason = "_mm_loadu_si128 performs an unaligned load — alignment is not required"
+)]
 #[inline(always)]
 unsafe fn load128(src: *const u8) -> __m128i {
     // SAFETY: caller guarantees src is valid for 16-byte reads.
@@ -65,6 +69,10 @@ unsafe fn load128(src: *const u8) -> __m128i {
 #[expect(
     clippy::inline_always,
     reason = "hot SIMD primitive — inlining is load-bearing"
+)]
+#[expect(
+    clippy::cast_ptr_alignment,
+    reason = "_mm_storeu_si128 performs an unaligned store — alignment is not required"
 )]
 #[inline(always)]
 unsafe fn store128(dst: *mut u8, v: __m128i) {

@@ -68,7 +68,6 @@ where
             let tail = self.tail.load(Ordering::Acquire);
             self.tail_cached.set(tail);
             if next_head == tail {
-                #[cfg(feature = "nightly")]
                 core::hint::cold_path();
                 self.instr.on_push_full();
                 return slow_full();
@@ -89,7 +88,6 @@ where
             let head = self.head.load(Ordering::Acquire);
             self.head_cached.set(head);
             if tail == head {
-                #[cfg(feature = "nightly")]
                 core::hint::cold_path();
                 self.instr.on_pop_empty();
                 return slow_empty();

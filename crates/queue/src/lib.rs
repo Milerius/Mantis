@@ -15,7 +15,7 @@
 //! This crate is `no_std` by default. Enable the `std` feature for
 //! standard library support.
 
-#![cfg_attr(feature = "nightly", feature(generic_const_exprs, likely_unlikely))]
+#![cfg_attr(feature = "nightly", feature(generic_const_exprs))]
 #![cfg_attr(feature = "nightly", allow(incomplete_features))]
 #![no_std]
 #![deny(unsafe_code)]
