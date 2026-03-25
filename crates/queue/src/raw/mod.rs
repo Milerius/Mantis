@@ -7,8 +7,6 @@
 //! `drop_range`) are provided for use by the engine.
 
 #![allow(unsafe_code)]
-// RawRing (Task 7) will consume these via the engine; suppress until then.
-#![allow(dead_code)]
 
 pub(crate) mod slot;
 
@@ -88,4 +86,5 @@ where
     I: IndexStrategy,
     P: PushPolicy,
     Instr: Instrumentation + Sync,
-{}
+{
+}

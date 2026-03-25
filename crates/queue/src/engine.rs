@@ -36,8 +36,6 @@ where
 
 // NOTE: `unsafe impl Sync` lives in `raw/mod.rs` per unsafe isolation policy.
 
-// RawRing (Task 7) will consume these; suppress until then.
-#[expect(dead_code)]
 impl<T, S, I, P, Instr> RingEngine<T, S, I, P, Instr>
 where
     S: Storage<T>,
@@ -138,30 +136,18 @@ mod tests {
     use crate::InlineStorage;
     use mantis_core::{ImmediatePush, NoInstr, Pow2Masked};
 
-    type TestEngine = RingEngine<
-        u64,
-        InlineStorage<u64, 4>,
-        Pow2Masked,
-        ImmediatePush,
-        NoInstr,
-    >;
+    type TestEngine = RingEngine<u64, InlineStorage<u64, 4>, Pow2Masked, ImmediatePush, NoInstr>;
 
     #[test]
     fn push_pop_single() {
-        let engine = TestEngine::new(
-            InlineStorage::new(),
-            NoInstr,
-        );
+        let engine = TestEngine::new(InlineStorage::new(), NoInstr);
         assert!(engine.try_push(42).is_ok());
         assert_eq!(engine.try_pop().ok(), Some(42));
     }
 
     #[test]
     fn push_full_returns_value() {
-        let engine = TestEngine::new(
-            InlineStorage::new(),
-            NoInstr,
-        );
+        let engine = TestEngine::new(InlineStorage::new(), NoInstr);
         // capacity-1 = 3 usable slots (sentinel slot)
         assert!(engine.try_push(1).is_ok());
         assert!(engine.try_push(2).is_ok());
@@ -172,19 +158,13 @@ mod tests {
 
     #[test]
     fn pop_empty_returns_error() {
-        let engine = TestEngine::new(
-            InlineStorage::new(),
-            NoInstr,
-        );
+        let engine = TestEngine::new(InlineStorage::new(), NoInstr);
         assert_eq!(engine.try_pop(), Err(QueueError::Empty));
     }
 
     #[test]
     fn fifo_ordering() {
-        let engine = TestEngine::new(
-            InlineStorage::new(),
-            NoInstr,
-        );
+        let engine = TestEngine::new(InlineStorage::new(), NoInstr);
         for i in 0..3 {
             assert!(engine.try_push(i).is_ok());
         }
@@ -195,10 +175,7 @@ mod tests {
 
     #[test]
     fn wraparound() {
-        let engine = TestEngine::new(
-            InlineStorage::new(),
-            NoInstr,
-        );
+        let engine = TestEngine::new(InlineStorage::new(), NoInstr);
         for round in 0..3 {
             for i in 0..3 {
                 assert!(engine.try_push(round * 3 + i).is_ok());
@@ -211,10 +188,7 @@ mod tests {
 
     #[test]
     fn len_and_is_empty() {
-        let engine = TestEngine::new(
-            InlineStorage::new(),
-            NoInstr,
-        );
+        let engine = TestEngine::new(InlineStorage::new(), NoInstr);
         assert!(engine.is_empty());
         assert_eq!(engine.len(), 0);
         assert!(engine.try_push(1).is_ok());
