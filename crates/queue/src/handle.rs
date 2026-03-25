@@ -204,10 +204,13 @@ where
     P: PushPolicy,
     Instr: Instrumentation,
 {
-    /// Create a new `RawRing` with the given storage and
-    /// instrumentation.
+    /// Create a new `RawRing` with explicit strategy types.
+    ///
+    /// Prefer the curated preset constructors (`SpscRing::new`,
+    /// `SpscRingHeap::with_capacity`, `SpscRingInstrumented::new`)
+    /// for common configurations.
     #[must_use]
-    pub fn new(storage: S, instr: Instr) -> Self {
+    pub fn with_strategies(storage: S, instr: Instr) -> Self {
         Self {
             engine: RingEngine::new(storage, instr),
         }
@@ -275,7 +278,7 @@ mod tests {
     #[test]
     fn raw_ring_push_pop() {
         let mut ring =
-            RawRing::<u64, InlineStorage<u64, 4>, Pow2Masked, ImmediatePush, NoInstr>::new(
+            RawRing::<u64, InlineStorage<u64, 4>, Pow2Masked, ImmediatePush, NoInstr>::with_strategies(
                 InlineStorage::new(),
                 NoInstr,
             );

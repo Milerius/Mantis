@@ -24,10 +24,12 @@ extern crate std;
 pub(crate) mod engine;
 mod handle;
 mod pad;
+mod presets;
 mod raw;
 pub mod storage;
 
 pub use handle::{Consumer, Producer, RawRing};
+pub use presets::*;
 #[cfg(feature = "alloc")]
 pub use handle::{spsc_ring, spsc_ring_heap};
 pub use mantis_core::{ImmediatePush, NoInstr, Pow2Masked};
