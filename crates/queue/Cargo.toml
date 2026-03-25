@@ -12,6 +12,7 @@ default = []
 std = ["alloc"]
 alloc = []
 asm = []
+nightly = []
 
 [dependencies]
 mantis-core = { workspace = true }
