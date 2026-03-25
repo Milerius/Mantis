@@ -16,12 +16,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
       - uses: taiki-e/install-action@328a871ad8f62ecac78390391f463ccabc974b72 # v2
         with:
           tool: cargo-mutants
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: cargo mutants --timeout 60 -- --all-features
+      - run: cargo +nightly mutants --timeout 60 -- --all-features
         continue-on-error: true
       - name: Upload mutants report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -56,14 +56,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
         with:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@328a871ad8f62ecac78390391f463ccabc974b72 # v2
         with:
           tool: cargo-llvm-cov
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: cargo llvm-cov --all-features --branch --html
+      - run: cargo +nightly llvm-cov --all-features --branch --html
       - name: Upload coverage report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -80,12 +80,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Test with default features
-        run: cargo test --all-features
+        run: cargo +nightly test --all-features
       - name: Test with no default features
-        run: cargo test -p mantis-core -p mantis-types -p mantis-queue --no-default-features
+        run: cargo +nightly test -p mantis-core -p mantis-types -p mantis-queue --no-default-features
       - name: Install cargo-show-asm
         uses: taiki-e/install-action@328a871ad8f62ecac78390391f463ccabc974b72 # v2
         with:
