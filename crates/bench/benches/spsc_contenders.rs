@@ -11,6 +11,7 @@ use criterion::{black_box, criterion_group};
 use mantis_bench::bench_runner::{
     export_report, mantis_criterion, run_bench, BenchDesc, MantisC,
 };
+use mantis_bench::messages::{make_msg48, make_msg64};
 
 fn bench_contenders(c: &mut MantisC) {
     let mut descs: Vec<BenchDesc> = Vec::new();
@@ -33,6 +34,24 @@ fn bench_contenders(c: &mut MantisC) {
             for _ in 0..100 {
                 let _ = black_box(rx.pop());
             }
+        });
+    }));
+
+    descs.push(run_bench(c, "spsc/rtrb/single_item/msg48", "Message48", 1024, |b| {
+        let (mut tx, mut rx) = rtrb::RingBuffer::new(1024);
+        let msg = make_msg48(1);
+        b.iter(|| {
+            let _ = tx.push(black_box(msg));
+            let _ = black_box(rx.pop());
+        });
+    }));
+
+    descs.push(run_bench(c, "spsc/rtrb/single_item/msg64", "Message64", 1024, |b| {
+        let (mut tx, mut rx) = rtrb::RingBuffer::new(1024);
+        let msg = make_msg64(1);
+        b.iter(|| {
+            let _ = tx.push(black_box(msg));
+            let _ = black_box(rx.pop());
         });
     }));
 
@@ -65,6 +84,36 @@ fn bench_contenders(c: &mut MantisC) {
                 for _ in 0..100 {
                     let _ = black_box(q.pop());
                 }
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/crossbeam/single_item/msg48",
+        "Message48",
+        1024,
+        |b| {
+            let q = crossbeam_queue::ArrayQueue::new(1024);
+            let msg = make_msg48(1);
+            b.iter(|| {
+                let _ = q.push(black_box(msg));
+                let _ = black_box(q.pop());
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/crossbeam/single_item/msg64",
+        "Message64",
+        1024,
+        |b| {
+            let q = crossbeam_queue::ArrayQueue::new(1024);
+            let msg = make_msg64(1);
+            b.iter(|| {
+                let _ = q.push(black_box(msg));
+                let _ = black_box(q.pop());
             });
         },
     ));
