@@ -41,3 +41,4 @@ mantis-layout = { path = "crates/layout", version = "0.1.0" }
 mantis-verify = { path = "crates/verify", version = "0.1.0" }
 criterion = { version = "0.5", features = ["html_reports"] }
 bolero = "0.11"
+libc = "0.2.169"
