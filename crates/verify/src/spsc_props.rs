@@ -120,4 +120,31 @@ mod tests {
                 }
             });
     }
+
+    /// Batch push followed by batch pop preserves FIFO ordering.
+    #[test]
+    fn copy_batch_fifo_ordering() {
+        bolero::check!().with_type::<Vec<u8>>().for_each(|data| {
+            if data.is_empty() { return; }
+
+            let mut ring = mantis_queue::SpscRingCopy::<u8, 256>::new();
+            let pushed = ring.push_batch(data);
+            let mut out = vec![0u8; pushed];
+            let popped = ring.pop_batch(&mut out);
+
+            assert_eq!(pushed, popped);
+            assert_eq!(&data[..pushed], &out[..popped]);
+        });
+    }
+
+    /// Batch push never exceeds capacity.
+    #[test]
+    fn copy_batch_respects_capacity() {
+        bolero::check!().with_type::<Vec<u8>>().for_each(|data| {
+            let mut ring = mantis_queue::SpscRingCopy::<u8, 16>::new();
+            let pushed = ring.push_batch(data);
+            assert!(pushed <= ring.capacity());
+            assert!(pushed <= data.len());
+        });
+    }
 }

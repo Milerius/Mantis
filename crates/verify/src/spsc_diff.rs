@@ -85,4 +85,41 @@ mod tests {
             }
         }
     }
+
+    /// Verify `SpscRingCopy` produces identical output to `SpscRing`
+    /// for the same push/pop sequence.
+    #[test]
+    fn copy_vs_general_fixed() {
+        use mantis_queue::SpscRingCopy;
+
+        let mut general = SpscRing::<u64, 16>::new();
+        let mut copy = SpscRingCopy::<u64, 16>::new();
+
+        let ops = vec![
+            true, true, true, false, false,
+            true, true, true, true, false,
+            false, false, true, false,
+        ];
+
+        let mut gen_out = Vec::new();
+        let mut copy_out = Vec::new();
+        let mut val = 0u64;
+
+        for &is_push in &ops {
+            if is_push {
+                let gen_ok = general.try_push(val).is_ok();
+                let copy_ok = copy.push(&val);
+                assert_eq!(gen_ok, copy_ok, "push diverged at val={val}");
+                val += 1;
+            } else {
+                if let Ok(v) = general.try_pop() { gen_out.push(v) }
+                let mut out = 0u64;
+                if copy.pop(&mut out) {
+                    copy_out.push(out);
+                }
+            }
+        }
+
+        assert_eq!(gen_out, copy_out);
+    }
 }
