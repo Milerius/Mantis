@@ -108,6 +108,89 @@ where
     }
 
     #[inline]
+    pub(crate) fn push_batch(&self, src: &[T]) -> usize {
+        if src.is_empty() {
+            return 0;
+        }
+
+        let head = self.head.load(Ordering::Relaxed);
+        let cached_tail = self.tail_cached.get();
+        let cap = self.storage.capacity();
+        let usable = cap - 1;
+
+        let len = if head >= cached_tail {
+            head - cached_tail
+        } else {
+            cap - cached_tail + head
+        };
+        let mut free = usable - len;
+
+        if free < src.len() {
+            let tail = self.tail.load(Ordering::Acquire);
+            self.tail_cached.set(tail);
+            let len = if head >= tail {
+                head - tail
+            } else {
+                cap - tail + head
+            };
+            free = usable - len;
+            if free == 0 {
+                return 0;
+            }
+        }
+
+        let n = src.len().min(free);
+        let mut idx = head;
+        for item in &src[..n] {
+            crate::copy_ring::raw::write_slot_copy::<T, S, CP>(&self.storage, idx, item);
+            idx = I::wrap(idx + 1, cap);
+        }
+
+        self.head.store(idx, Ordering::Release);
+        n
+    }
+
+    #[inline]
+    pub(crate) fn pop_batch(&self, dst: &mut [T]) -> usize {
+        if dst.is_empty() {
+            return 0;
+        }
+
+        let tail = self.tail.load(Ordering::Relaxed);
+        let cached_head = self.head_cached.get();
+        let cap = self.storage.capacity();
+
+        let mut avail = if cached_head >= tail {
+            cached_head - tail
+        } else {
+            cap - tail + cached_head
+        };
+
+        if avail < dst.len() {
+            let head = self.head.load(Ordering::Acquire);
+            self.head_cached.set(head);
+            avail = if head >= tail {
+                head - tail
+            } else {
+                cap - tail + head
+            };
+            if avail == 0 {
+                return 0;
+            }
+        }
+
+        let n = dst.len().min(avail);
+        let mut idx = tail;
+        for out in &mut dst[..n] {
+            crate::copy_ring::raw::read_slot_copy::<T, S, CP>(&self.storage, idx, out);
+            idx = I::wrap(idx + 1, cap);
+        }
+
+        self.tail.store(idx, Ordering::Release);
+        n
+    }
+
+    #[inline]
     pub(crate) fn capacity(&self) -> usize {
         self.storage.capacity() - 1
     }
@@ -138,6 +221,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+    use std::vec;
+    use std::vec::Vec;
+
     use super::*;
     use crate::storage::InlineStorage;
     use mantis_core::{ImmediatePush, NoInstr, Pow2Masked};
@@ -208,6 +295,89 @@ mod tests {
                 assert!(engine.pop(&mut out));
                 assert_eq!(out, round * 10 + i);
             }
+        }
+    }
+
+    #[test]
+    fn push_batch_full_capacity() {
+        let engine = new_engine();
+        let src: Vec<u64> = (0..7).collect();
+        let pushed = engine.push_batch(&src);
+        assert_eq!(pushed, 7);
+
+        let more = [100u64, 101];
+        assert_eq!(engine.push_batch(&more), 0);
+    }
+
+    #[test]
+    fn pop_batch_all() {
+        let engine = new_engine();
+        let src: Vec<u64> = (0..5).collect();
+        engine.push_batch(&src);
+
+        let mut dst = vec![0u64; 5];
+        let popped = engine.pop_batch(&mut dst);
+        assert_eq!(popped, 5);
+        assert_eq!(dst, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn push_batch_partial() {
+        let engine = new_engine();
+        let first: Vec<u64> = (0..5).collect();
+        assert_eq!(engine.push_batch(&first), 5);
+
+        let second: Vec<u64> = (10..15).collect();
+        assert_eq!(engine.push_batch(&second), 2);
+    }
+
+    #[test]
+    fn pop_batch_partial() {
+        let engine = new_engine();
+        let src: Vec<u64> = (0..3).collect();
+        engine.push_batch(&src);
+
+        let mut dst = vec![0u64; 10];
+        let popped = engine.pop_batch(&mut dst);
+        assert_eq!(popped, 3);
+        assert_eq!(&dst[..3], &[0, 1, 2]);
+    }
+
+    #[test]
+    fn batch_empty_slice() {
+        let engine = new_engine();
+        assert_eq!(engine.push_batch(&[]), 0);
+        let mut dst = vec![0u64; 0];
+        assert_eq!(engine.pop_batch(&mut dst), 0);
+    }
+
+    #[test]
+    fn batch_wraparound() {
+        let engine = new_engine();
+        let vals: Vec<u64> = (0..6).collect();
+        engine.push_batch(&vals);
+        let mut drain = vec![0u64; 6];
+        engine.pop_batch(&mut drain);
+
+        let wrap: Vec<u64> = (100..105).collect();
+        assert_eq!(engine.push_batch(&wrap), 5);
+        let mut out = vec![0u64; 5];
+        assert_eq!(engine.pop_batch(&mut out), 5);
+        assert_eq!(out, vec![100, 101, 102, 103, 104]);
+    }
+
+    #[test]
+    fn batch_fifo_ordering() {
+        let engine = new_engine();
+        for round in 0u64..10 {
+            let src: Vec<u64> = (round * 7..(round + 1) * 7).collect();
+            let pushed = engine.push_batch(&src);
+            assert_eq!(pushed, src.len());
+
+            let mut dst = vec![0u64; pushed];
+            let popped = engine.pop_batch(&mut dst);
+            assert_eq!(popped, pushed);
+            assert_eq!(dst, src);
         }
     }
 
