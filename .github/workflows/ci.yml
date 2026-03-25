@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  checks: write
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
@@ -18,10 +22,10 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
         with:
           components: rustfmt
-      - run: cargo fmt --all --check
+      - run: cargo +nightly fmt --all --check
 
   clippy:
     name: Clippy (${{ matrix.os }})
@@ -33,11 +37,11 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
         with:
           components: clippy
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo +nightly clippy --all-targets --all-features -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
@@ -49,9 +53,25 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: cargo test --all-features
+      - name: Install nextest
+        uses: taiki-e/install-action@328a871ad8f62ecac78390391f463ccabc974b72 # v2
+        with:
+          tool: cargo-nextest
+      - name: Run tests
+        run: cargo +nightly nextest run --all-features --profile ci
+      - name: Test Report
+        uses: dorny/test-reporter@31a54ee7ebcacc03a09ea97a7e5465a47b84aea5 # v1.9.1
+        if: success() || failure()
+        with:
+          name: Rust Tests (${{ matrix.os }})
+          path: target/nextest/ci/junit.xml
+          reporter: java-junit
+      - name: Test with ASM feature
+        run: cargo +nightly test --features asm
+      - name: Test without ASM (portable fallback)
+        run: cargo +nightly test --no-default-features -p mantis-queue -p mantis-core -p mantis-types
 
   test-no-std:
     name: Test no_std (${{ matrix.os }})
@@ -63,9 +83,9 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: cargo test -p mantis-core -p mantis-types -p mantis-queue --no-default-features
+      - run: cargo +nightly test -p mantis-core -p mantis-types -p mantis-queue --no-default-features
 
   doc:
     name: Documentation
@@ -74,9 +94,9 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: cargo doc --no-deps --all-features
+      - run: cargo +nightly doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -Dwarnings
 
@@ -139,7 +159,14 @@ jobs:
         run: cargo +nightly llvm-cov --all-features --codecov --output-path codecov.json
       - name: Branch coverage
         run: cargo +nightly llvm-cov --all-features --branch --lcov --output-path lcov-branch.info
-      - name: Upload coverage
+      - name: Upload to Codecov
+        if: github.event_name == 'pull_request'
+        uses: codecov/codecov-action@1af58845a975a7985b0beb0cbe6fbbb71a41dbad # v5.5.3
+        with:
+          files: codecov.json
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+      - name: Upload coverage artifacts
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

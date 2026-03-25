@@ -31,6 +31,13 @@ similar_names = "allow"
 [workspace.lints.rust]
 unsafe_code = "deny"
 missing_docs = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
+# Bench profile: full optimization for accurate measurements
+[profile.bench]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
 
 [workspace.dependencies]
 mantis-core = { path = "crates/core", version = "0.1.0" }
@@ -41,3 +48,4 @@ mantis-layout = { path = "crates/layout", version = "0.1.0" }
 mantis-verify = { path = "crates/verify", version = "0.1.0" }
 criterion = { version = "0.5", features = ["html_reports"] }
 bolero = "0.11"
+libc = "0.2.169"

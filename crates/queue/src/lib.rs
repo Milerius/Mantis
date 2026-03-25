@@ -15,11 +15,32 @@
 //! This crate is `no_std` by default. Enable the `std` feature for
 //! standard library support.
 
+#![cfg_attr(feature = "nightly", feature(generic_const_exprs))]
+#![cfg_attr(feature = "nightly", allow(incomplete_features))]
 #![no_std]
 #![deny(unsafe_code)]
 
 #[cfg(feature = "std")]
 extern crate std;
 
-pub use mantis_core::{ImmediatePush, NoInstr, Pow2Masked};
-pub use mantis_types::QueueError;
+pub(crate) mod copy_ring;
+pub(crate) mod engine;
+mod handle;
+mod pad;
+mod presets;
+mod raw;
+pub mod storage;
+
+pub use copy_ring::RawRingCopy;
+#[cfg(feature = "alloc")]
+pub use copy_ring::handle::{ConsumerCopy, ProducerCopy, spsc_ring_copy, spsc_ring_copy_heap};
+pub use handle::{Consumer, Producer, RawRing};
+#[cfg(feature = "alloc")]
+pub use handle::{spsc_ring, spsc_ring_heap};
+pub use mantis_core::{CountingInstr, ImmediatePush, NoInstr, Pow2Masked};
+pub use mantis_types::{PushError, QueueError};
+pub use pad::CachePadded;
+pub use presets::*;
+#[cfg(feature = "alloc")]
+pub use storage::HeapStorage;
+pub use storage::{InlineStorage, Storage};

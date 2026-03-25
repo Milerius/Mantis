@@ -3,17 +3,20 @@
 ## Quick Reference
 
 ```
-Build:          cargo build --all-features
-Test:           cargo test --all-features
+Build:          cargo build --features alloc,std
+Build nightly:  cargo +nightly build --all-features
+Test:           cargo test --features alloc,std
+Test nightly:   cargo +nightly test --all-features
 Test no_std:    cargo test -p mantis-core -p mantis-types -p mantis-queue --no-default-features
-Lint:           cargo clippy --all-targets --all-features -- -D warnings
+Lint:           cargo clippy --all-targets --features alloc,std -- -D warnings
+Lint nightly:   cargo +nightly clippy --all-targets --all-features -- -D warnings
 Format:         cargo fmt --all
 Format check:   cargo fmt --all --check
 Deny:           cargo deny check
 Miri:           cargo +nightly miri test -p mantis-queue
 Careful:        cargo +nightly careful test
-Bench:          cargo bench
-Bench + ext:    cargo bench --features bench-contenders
+Bench:          cargo bench --bench spsc
+Bench + ext:    cargo bench --bench spsc --features bench-contenders
 Fuzz:           cargo +nightly fuzz run <target>
 Layout:         cargo run -p mantis-layout
 Kani:           cargo kani -p mantis-verify
@@ -25,6 +28,15 @@ Coverage:       cargo llvm-cov --all-features
 See `philosophy/fin_sdk_oss_blueprint.md` for full SDK vision.
 See `philosophy/benchmark_tooling_modular_strategy_design.md` for container strategy.
 See `.claude/memory/constantine-reference.md` for reference architecture patterns.
+See `docs/PROGRESS.md` for current project status and phase tracking.
+
+## Progress Tracking
+
+**Update `docs/PROGRESS.md` after completing meaningful work:**
+- Check off completed items
+- Update the crate status table (test counts, benchmark status, verification status)
+- Move phase status from "Not Started" to "In Progress" / "Complete" with dates
+- Add new sub-items if scope is discovered during implementation
 
 ## Workspace Layout
 

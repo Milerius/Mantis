@@ -54,7 +54,132 @@ impl PushPolicy for ImmediatePush {
     }
 }
 
+use core::sync::atomic::{AtomicU64, Ordering};
+
+/// Instrumentation that counts push/pop operations via atomic counters.
+///
+/// All increments use `Relaxed` ordering (counters are advisory, not
+/// synchronization primitives). Suitable for debug/profiling presets.
+pub struct CountingInstr {
+    pushes: AtomicU64,
+    pops: AtomicU64,
+    push_full: AtomicU64,
+    pop_empty: AtomicU64,
+}
+
+impl CountingInstr {
+    /// Create a new counter with all values at zero.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            pushes: AtomicU64::new(0),
+            pops: AtomicU64::new(0),
+            push_full: AtomicU64::new(0),
+            pop_empty: AtomicU64::new(0),
+        }
+    }
+
+    /// Total successful pushes.
+    #[must_use]
+    pub fn push_count(&self) -> u64 {
+        self.pushes.load(Ordering::Relaxed)
+    }
+
+    /// Total successful pops.
+    #[must_use]
+    pub fn pop_count(&self) -> u64 {
+        self.pops.load(Ordering::Relaxed)
+    }
+
+    /// Total push attempts that failed (queue full).
+    #[must_use]
+    pub fn push_full_count(&self) -> u64 {
+        self.push_full.load(Ordering::Relaxed)
+    }
+
+    /// Total pop attempts that failed (queue empty).
+    #[must_use]
+    pub fn pop_empty_count(&self) -> u64 {
+        self.pop_empty.load(Ordering::Relaxed)
+    }
+}
+
+impl Default for CountingInstr {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Instrumentation for CountingInstr {
+    #[inline]
+    fn on_push(&self) {
+        self.pushes.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    fn on_pop(&self) {
+        self.pops.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    fn on_push_full(&self) {
+        self.push_full.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    fn on_pop_empty(&self) {
+        self.pop_empty.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// No-op instrumentation. Zero overhead in release builds.
 pub struct NoInstr;
 
+/// Copy strategy for SPSC ring slot operations.
+///
+/// Implementations are zero-sized types used for static dispatch only.
+/// No instance is ever constructed — all methods are associated functions.
+pub trait CopyPolicy<T: Copy> {
+    /// Copy `*src` into the ring slot at `*dst`.
+    ///
+    /// # Safety
+    /// - `dst` must be valid, aligned, and point to an unoccupied slot.
+    /// - `src` must be valid and aligned for reads of `T`.
+    // SAFETY: callers must uphold the pointer validity invariants above.
+    // Declared safe to satisfy `#![deny(unsafe_code)]` on the crate root;
+    // all implementations must enforce the contract themselves.
+    fn copy_in(dst: *mut T, src: *const T);
+
+    /// Copy the ring slot at `*src` into `*dst`.
+    ///
+    /// # Safety
+    /// - `src` must be valid, aligned, and point to an occupied slot.
+    /// - `dst` must be valid and aligned for writes of `T`.
+    // SAFETY: callers must uphold the pointer validity invariants above.
+    // Declared safe to satisfy `#![deny(unsafe_code)]` on the crate root;
+    // all implementations must enforce the contract themselves.
+    fn copy_out(dst: *mut T, src: *const T);
+}
+
 impl Instrumentation for NoInstr {}
+
+#[cfg(test)]
+mod tests {
+    extern crate alloc;
+    use super::*;
+
+    #[test]
+    fn counting_instr_tracks_push_pop() {
+        let instr = CountingInstr::new();
+        instr.on_push();
+        instr.on_push();
+        instr.on_pop();
+        instr.on_push_full();
+        instr.on_pop_empty();
+        instr.on_pop_empty();
+        assert_eq!(instr.push_count(), 2);
+        assert_eq!(instr.pop_count(), 1);
+        assert_eq!(instr.push_full_count(), 1);
+        assert_eq!(instr.pop_empty_count(), 2);
+    }
+}

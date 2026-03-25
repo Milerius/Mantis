@@ -1,0 +1,124 @@
+//! Differential testing: run identical sequences on all presets,
+//! verify identical output.
+
+#[cfg(test)]
+mod tests {
+    use mantis_queue::{SpscRing, SpscRingHeap, SpscRingInstrumented};
+
+    /// Run the same push/pop sequence on inline and instrumented rings.
+    fn compare_inline_vs_instrumented(ops: &[bool]) {
+        let mut ring_a = SpscRing::<u64, 16>::new();
+        let mut ring_b = SpscRingInstrumented::<u64, 16>::new();
+
+        let mut push_val = 0u64;
+
+        for &is_push in ops {
+            if is_push {
+                let res_a = ring_a.try_push(push_val);
+                let res_b = ring_b.try_push(push_val);
+                assert_eq!(
+                    res_a.is_ok(),
+                    res_b.is_ok(),
+                    "push divergence at val {push_val}"
+                );
+                if res_a.is_ok() {
+                    push_val += 1;
+                }
+            } else {
+                let res_a = ring_a.try_pop();
+                let res_b = ring_b.try_pop();
+                assert_eq!(res_a, res_b, "pop divergence");
+            }
+        }
+
+        // Drain and compare
+        loop {
+            let a = ring_a.try_pop();
+            let b = ring_b.try_pop();
+            assert_eq!(a, b, "drain divergence");
+            if a.is_err() {
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn portable_vs_instrumented_fixed() {
+        let mut ops = vec![true; 5];
+        ops.extend(std::iter::repeat_n(false, 3));
+        ops.extend(std::iter::repeat_n(true, 5));
+        ops.extend(std::iter::repeat_n(false, 10));
+        compare_inline_vs_instrumented(&ops);
+    }
+
+    #[test]
+    fn portable_vs_instrumented_bolero() {
+        bolero::check!().with_type::<Vec<bool>>().for_each(|ops| {
+            compare_inline_vs_instrumented(ops);
+        });
+    }
+
+    #[test]
+    fn portable_vs_heap() {
+        let ops: Vec<bool> = (0..200)
+            .map(|i| i % 3 != 0) // 2 pushes, 1 pop
+            .collect();
+
+        let mut ring_inline = SpscRing::<u64, 16>::new();
+        let mut ring_heap = SpscRingHeap::<u64>::with_capacity(16);
+
+        let mut push_val = 0u64;
+        for &is_push in &ops {
+            if is_push {
+                let a = ring_inline.try_push(push_val);
+                let b = ring_heap.try_push(push_val);
+                assert_eq!(a.is_ok(), b.is_ok());
+                if a.is_ok() {
+                    push_val += 1;
+                }
+            } else {
+                let a = ring_inline.try_pop();
+                let b = ring_heap.try_pop();
+                assert_eq!(a, b);
+            }
+        }
+    }
+
+    /// Verify `SpscRingCopy` produces identical output to `SpscRing`
+    /// for the same push/pop sequence.
+    #[test]
+    fn copy_vs_general_fixed() {
+        use mantis_queue::SpscRingCopy;
+
+        let mut general = SpscRing::<u64, 16>::new();
+        let mut copy = SpscRingCopy::<u64, 16>::new();
+
+        let ops = vec![
+            true, true, true, false, false, true, true, true, true, false, false, false, true,
+            false,
+        ];
+
+        let mut gen_out = Vec::new();
+        let mut copy_out = Vec::new();
+        let mut val = 0u64;
+
+        for &is_push in &ops {
+            if is_push {
+                let gen_ok = general.try_push(val).is_ok();
+                let copy_ok = copy.push(&val);
+                assert_eq!(gen_ok, copy_ok, "push diverged at val={val}");
+                val += 1;
+            } else {
+                if let Ok(v) = general.try_pop() {
+                    gen_out.push(v);
+                }
+                let mut out = 0u64;
+                if copy.pop(&mut out) {
+                    copy_out.push(out);
+                }
+            }
+        }
+
+        assert_eq!(gen_out, copy_out);
+    }
+}

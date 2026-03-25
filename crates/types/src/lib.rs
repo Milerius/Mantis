@@ -11,6 +11,21 @@ extern crate std;
 
 use core::fmt;
 
+/// Error returned when pushing to a full queue, preserving the value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PushError<T> {
+    /// The queue is full. Contains the value that was not pushed.
+    Full(T),
+}
+
+impl<T> fmt::Display for PushError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Full(_) => write!(f, "queue is full"),
+        }
+    }
+}
+
 /// Error type for queue operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueueError {
@@ -82,5 +97,19 @@ mod tests {
         let () = AssertPowerOfTwo::<1>::VALID;
         let () = AssertPowerOfTwo::<2>::VALID;
         let () = AssertPowerOfTwo::<1024>::VALID;
+    }
+
+    #[test]
+    fn push_error_preserves_value() {
+        let err = PushError::Full(42u64);
+        match err {
+            PushError::Full(v) => assert_eq!(v, 42),
+        }
+    }
+
+    #[test]
+    fn push_error_display() {
+        let err = PushError::Full(0u32);
+        assert_eq!(err.to_string(), "queue is full");
     }
 }
