@@ -25,6 +25,15 @@ Coverage:       cargo llvm-cov --all-features
 See `philosophy/fin_sdk_oss_blueprint.md` for full SDK vision.
 See `philosophy/benchmark_tooling_modular_strategy_design.md` for container strategy.
 See `.claude/memory/constantine-reference.md` for reference architecture patterns.
+See `docs/PROGRESS.md` for current project status and phase tracking.
+
+## Progress Tracking
+
+**Update `docs/PROGRESS.md` after completing meaningful work:**
+- Check off completed items
+- Update the crate status table (test counts, benchmark status, verification status)
+- Move phase status from "Not Started" to "In Progress" / "Complete" with dates
+- Add new sub-items if scope is discovered during implementation
 
 ## Workspace Layout
 
