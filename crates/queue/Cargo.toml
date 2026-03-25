@@ -1,0 +1,19 @@
+[package]
+name = "mantis-queue"
+description = "Lock-free queue primitives for the Mantis low-latency financial SDK"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+std = []
+
+[dependencies]
+mantis-core = { workspace = true }
+mantis-types = { workspace = true }
+
+[lints]
+workspace = true
