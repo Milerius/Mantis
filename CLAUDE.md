@@ -3,10 +3,13 @@
 ## Quick Reference
 
 ```
-Build:          cargo build --all-features
-Test:           cargo test --all-features
+Build:          cargo build --features alloc,std
+Build nightly:  cargo +nightly build --all-features
+Test:           cargo test --features alloc,std
+Test nightly:   cargo +nightly test --all-features
 Test no_std:    cargo test -p mantis-core -p mantis-types -p mantis-queue --no-default-features
-Lint:           cargo clippy --all-targets --all-features -- -D warnings
+Lint:           cargo clippy --all-targets --features alloc,std -- -D warnings
+Lint nightly:   cargo +nightly clippy --all-targets --all-features -- -D warnings
 Format:         cargo fmt --all
 Format check:   cargo fmt --all --check
 Deny:           cargo deny check
