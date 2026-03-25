@@ -10,7 +10,7 @@ use std::io::Write;
 use criterion::Criterion;
 
 use crate::measurement::{
-    read_criterion_estimates, reset_samples, take_samples, DefaultMeasurement,
+    DefaultMeasurement, read_criterion_estimates, reset_samples, take_samples,
 };
 use crate::report::{BenchReport, WorkloadResult};
 
@@ -20,8 +20,7 @@ pub type MantisC = Criterion<DefaultMeasurement>;
 /// Create a criterion instance using our custom measurement.
 #[must_use]
 pub fn mantis_criterion() -> MantisC {
-    Criterion::default()
-        .with_measurement(DefaultMeasurement::platform_default())
+    Criterion::default().with_measurement(DefaultMeasurement::platform_default())
 }
 
 /// Descriptor collected after each benchmark run.
@@ -109,8 +108,7 @@ pub fn export_report(
         });
     }
 
-    let base = std::env::var("CARGO_MANIFEST_DIR")
-        .unwrap_or_else(|_| ".".to_owned());
+    let base = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_owned());
     let dir = std::path::Path::new(&base)
         .parent()
         .and_then(|p| p.parent())
@@ -135,12 +133,7 @@ pub fn export_report(
                     eprintln!(
                         "  {:40} {:>8.2} ns/op  {:>12.0} ops/s  \
                          p50={:.1}ns  p99={:.1}ns  cycles={:.0?}",
-                        r.workload,
-                        r.ns_per_op,
-                        r.ops_per_sec,
-                        r.p50_ns,
-                        r.p99_ns,
-                        r.cycles_per_op,
+                        r.workload, r.ns_per_op, r.ops_per_sec, r.p50_ns, r.p99_ns, r.cycles_per_op,
                     );
                 }
                 eprintln!("\nFull report: {}", path.display());

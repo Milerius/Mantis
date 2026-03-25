@@ -64,7 +64,10 @@ fn stress_two_thread_message48() {
 
     let producer = thread::spawn(move || {
         for i in 0..count {
-            let msg = Msg48 { seq: i, ..Msg48::default() };
+            let msg = Msg48 {
+                seq: i,
+                ..Msg48::default()
+            };
             while !tx.push(&msg) {
                 spin_loop();
             }
@@ -81,9 +84,15 @@ fn stress_two_thread_message48() {
         }
     });
 
-    #[expect(clippy::expect_used, reason = "test harness: panics are the correct failure mode")]
+    #[expect(
+        clippy::expect_used,
+        reason = "test harness: panics are the correct failure mode"
+    )]
     producer.join().expect("producer panicked");
-    #[expect(clippy::expect_used, reason = "test harness: panics are the correct failure mode")]
+    #[expect(
+        clippy::expect_used,
+        reason = "test harness: panics are the correct failure mode"
+    )]
     consumer.join().expect("consumer panicked");
 }
 
@@ -136,9 +145,15 @@ fn split_handles_two_thread() {
         }
     });
 
-    #[expect(clippy::expect_used, reason = "test harness: panics are the correct failure mode")]
+    #[expect(
+        clippy::expect_used,
+        reason = "test harness: panics are the correct failure mode"
+    )]
     producer.join().expect("producer panicked");
-    #[expect(clippy::expect_used, reason = "test harness: panics are the correct failure mode")]
+    #[expect(
+        clippy::expect_used,
+        reason = "test harness: panics are the correct failure mode"
+    )]
     consumer.join().expect("consumer panicked");
 }
 
@@ -182,8 +197,14 @@ fn split_handles_batch_two_thread() {
         }
     });
 
-    #[expect(clippy::expect_used, reason = "test harness: panics are the correct failure mode")]
+    #[expect(
+        clippy::expect_used,
+        reason = "test harness: panics are the correct failure mode"
+    )]
     producer.join().expect("producer panicked");
-    #[expect(clippy::expect_used, reason = "test harness: panics are the correct failure mode")]
+    #[expect(
+        clippy::expect_used,
+        reason = "test harness: panics are the correct failure mode"
+    )]
     consumer.join().expect("consumer panicked");
 }

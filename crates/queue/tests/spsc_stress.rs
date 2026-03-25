@@ -3,8 +3,8 @@
 #[cfg(feature = "alloc")]
 #[test]
 fn stress_10m_items() {
-    use std::thread;
     use mantis_queue::spsc_ring;
+    use std::thread;
 
     let item_count: u64 = if cfg!(miri) { 1_000 } else { 10_000_000 };
 
@@ -23,7 +23,10 @@ fn stress_10m_items() {
         while expected < item_count {
             match rx.try_pop() {
                 Ok(val) => {
-                    assert_eq!(val, expected, "FIFO violation: expected {expected}, got {val}");
+                    assert_eq!(
+                        val, expected,
+                        "FIFO violation: expected {expected}, got {val}"
+                    );
                     expected += 1;
                 }
                 Err(_) => core::hint::spin_loop(),
@@ -31,8 +34,14 @@ fn stress_10m_items() {
         }
     });
 
-    #[expect(clippy::expect_used, reason = "test harness: panics are the correct failure mode")]
+    #[expect(
+        clippy::expect_used,
+        reason = "test harness: panics are the correct failure mode"
+    )]
     producer.join().expect("producer panicked");
-    #[expect(clippy::expect_used, reason = "test harness: panics are the correct failure mode")]
+    #[expect(
+        clippy::expect_used,
+        reason = "test harness: panics are the correct failure mode"
+    )]
     consumer.join().expect("consumer panicked");
 }

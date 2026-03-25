@@ -109,8 +109,14 @@ pub fn spsc_ring_copy<T: Copy + Send, const N: usize>() -> (
 ) {
     let engine = Arc::new(CopyRingEngine::new(InlineStorage::new(), NoInstr));
     (
-        ProducerCopy { engine: Arc::clone(&engine), _not_sync: PhantomData },
-        ConsumerCopy { engine, _not_sync: PhantomData },
+        ProducerCopy {
+            engine: Arc::clone(&engine),
+            _not_sync: PhantomData,
+        },
+        ConsumerCopy {
+            engine,
+            _not_sync: PhantomData,
+        },
     )
 }
 
@@ -125,7 +131,13 @@ pub fn spsc_ring_copy_heap<T: Copy + Send>(
 ) {
     let engine = Arc::new(CopyRingEngine::new(HeapStorage::new(capacity), NoInstr));
     (
-        ProducerCopy { engine: Arc::clone(&engine), _not_sync: PhantomData },
-        ConsumerCopy { engine, _not_sync: PhantomData },
+        ProducerCopy {
+            engine: Arc::clone(&engine),
+            _not_sync: PhantomData,
+        },
+        ConsumerCopy {
+            engine,
+            _not_sync: PhantomData,
+        },
     )
 }

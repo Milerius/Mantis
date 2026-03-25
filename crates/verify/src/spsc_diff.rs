@@ -53,11 +53,9 @@ mod tests {
 
     #[test]
     fn portable_vs_instrumented_bolero() {
-        bolero::check!()
-            .with_type::<Vec<bool>>()
-            .for_each(|ops| {
-                compare_inline_vs_instrumented(ops);
-            });
+        bolero::check!().with_type::<Vec<bool>>().for_each(|ops| {
+            compare_inline_vs_instrumented(ops);
+        });
     }
 
     #[test]
@@ -96,9 +94,8 @@ mod tests {
         let mut copy = SpscRingCopy::<u64, 16>::new();
 
         let ops = vec![
-            true, true, true, false, false,
-            true, true, true, true, false,
-            false, false, true, false,
+            true, true, true, false, false, true, true, true, true, false, false, false, true,
+            false,
         ];
 
         let mut gen_out = Vec::new();
@@ -112,7 +109,9 @@ mod tests {
                 assert_eq!(gen_ok, copy_ok, "push diverged at val={val}");
                 val += 1;
             } else {
-                if let Ok(v) = general.try_pop() { gen_out.push(v) }
+                if let Ok(v) = general.try_pop() {
+                    gen_out.push(v);
+                }
                 let mut out = 0u64;
                 if copy.pop(&mut out) {
                     copy_out.push(out);

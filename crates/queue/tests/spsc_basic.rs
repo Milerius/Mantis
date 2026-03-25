@@ -3,7 +3,7 @@
 use mantis_queue::{QueueError, SpscRing, SpscRingInstrumented};
 
 #[cfg(feature = "alloc")]
-use mantis_queue::{spsc_ring, SpscRingHeap};
+use mantis_queue::{SpscRingHeap, spsc_ring};
 
 #[test]
 fn spsc_ring_fill_and_drain() {
@@ -118,8 +118,14 @@ fn split_handles_two_thread() {
         }
     });
 
-    #[expect(clippy::expect_used, reason = "test harness: panics are the correct failure mode")]
+    #[expect(
+        clippy::expect_used,
+        reason = "test harness: panics are the correct failure mode"
+    )]
     producer.join().expect("producer panicked");
-    #[expect(clippy::expect_used, reason = "test harness: panics are the correct failure mode")]
+    #[expect(
+        clippy::expect_used,
+        reason = "test harness: panics are the correct failure mode"
+    )]
     consumer.join().expect("consumer panicked");
 }

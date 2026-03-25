@@ -75,8 +75,7 @@ impl CycleCounter for RdtscCounter {
     fn elapsed(&self, start: u64) -> Measurement {
         let end = rdtsc_serialized();
         let cycles = end.saturating_sub(start);
-        let nanos =
-            u64::try_from(self.epoch.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        let nanos = u64::try_from(self.epoch.elapsed().as_nanos()).unwrap_or(u64::MAX);
         let epoch_cycles = rdtsc_serialized().saturating_sub(self.epoch_tsc);
         // Approximate nanos for the measured interval by linear interpolation.
         let interval_nanos = if epoch_cycles > 0 {

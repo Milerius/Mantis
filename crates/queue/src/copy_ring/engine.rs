@@ -196,7 +196,11 @@ where
         let head = self.head.load(Ordering::Relaxed);
         let tail = self.tail.load(Ordering::Relaxed);
         let cap = self.storage.capacity();
-        if head >= tail { head - tail } else { cap - tail + head }
+        if head >= tail {
+            head - tail
+        } else {
+            cap - tail + head
+        }
     }
 
     #[inline]
@@ -257,7 +261,10 @@ mod tests {
     fn pop_empty_returns_false() {
         let engine = new_engine();
         let mut out = 0u64;
-        assert!(!engine.pop(&mut out), "pop from empty ring should return false");
+        assert!(
+            !engine.pop(&mut out),
+            "pop from empty ring should return false"
+        );
     }
 
     #[test]

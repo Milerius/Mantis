@@ -8,22 +8,27 @@
 #![allow(missing_docs, clippy::print_stderr)]
 
 use criterion::{black_box, criterion_group};
-use mantis_bench::bench_runner::{
-    export_report, mantis_criterion, run_bench, BenchDesc, MantisC,
-};
+use mantis_bench::bench_runner::{BenchDesc, MantisC, export_report, mantis_criterion, run_bench};
 use mantis_bench::messages::{make_msg48, make_msg64};
 
+#[expect(clippy::too_many_lines)]
 fn bench_contenders(c: &mut MantisC) {
     let mut descs: Vec<BenchDesc> = Vec::new();
 
     // -- rtrb --
-    descs.push(run_bench(c, "spsc/rtrb/single_item/u64", "u64", 1024, |b| {
-        let (mut tx, mut rx) = rtrb::RingBuffer::new(1024);
-        b.iter(|| {
-            let _ = tx.push(black_box(42u64));
-            let _ = black_box(rx.pop());
-        });
-    }));
+    descs.push(run_bench(
+        c,
+        "spsc/rtrb/single_item/u64",
+        "u64",
+        1024,
+        |b| {
+            let (mut tx, mut rx) = rtrb::RingBuffer::new(1024);
+            b.iter(|| {
+                let _ = tx.push(black_box(42u64));
+                let _ = black_box(rx.pop());
+            });
+        },
+    ));
 
     descs.push(run_bench(c, "spsc/rtrb/burst_100/u64", "u64", 1024, |b| {
         let (mut tx, mut rx) = rtrb::RingBuffer::new(1024);
@@ -37,23 +42,35 @@ fn bench_contenders(c: &mut MantisC) {
         });
     }));
 
-    descs.push(run_bench(c, "spsc/rtrb/single_item/msg48", "Message48", 1024, |b| {
-        let (mut tx, mut rx) = rtrb::RingBuffer::new(1024);
-        let msg = make_msg48(1);
-        b.iter(|| {
-            let _ = tx.push(black_box(msg));
-            let _ = black_box(rx.pop());
-        });
-    }));
+    descs.push(run_bench(
+        c,
+        "spsc/rtrb/single_item/msg48",
+        "Message48",
+        1024,
+        |b| {
+            let (mut tx, mut rx) = rtrb::RingBuffer::new(1024);
+            let msg = make_msg48(1);
+            b.iter(|| {
+                let _ = tx.push(black_box(msg));
+                let _ = black_box(rx.pop());
+            });
+        },
+    ));
 
-    descs.push(run_bench(c, "spsc/rtrb/single_item/msg64", "Message64", 1024, |b| {
-        let (mut tx, mut rx) = rtrb::RingBuffer::new(1024);
-        let msg = make_msg64(1);
-        b.iter(|| {
-            let _ = tx.push(black_box(msg));
-            let _ = black_box(rx.pop());
-        });
-    }));
+    descs.push(run_bench(
+        c,
+        "spsc/rtrb/single_item/msg64",
+        "Message64",
+        1024,
+        |b| {
+            let (mut tx, mut rx) = rtrb::RingBuffer::new(1024);
+            let msg = make_msg64(1);
+            b.iter(|| {
+                let _ = tx.push(black_box(msg));
+                let _ = black_box(rx.pop());
+            });
+        },
+    ));
 
     // -- crossbeam --
     descs.push(run_bench(

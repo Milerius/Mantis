@@ -11,11 +11,7 @@ pub fn single_item<const N: usize>(ring: &mut SpscRing<u64, N>, n: usize) {
 }
 
 /// Push `burst_size` items, then pop all, repeat `rounds` times.
-pub fn burst<const N: usize>(
-    ring: &mut SpscRing<u64, N>,
-    burst_size: usize,
-    rounds: usize,
-) {
+pub fn burst<const N: usize>(ring: &mut SpscRing<u64, N>, burst_size: usize, rounds: usize) {
     for round in 0..rounds {
         for i in 0..burst_size {
             if ring.try_push((round * burst_size + i) as u64).is_err() {

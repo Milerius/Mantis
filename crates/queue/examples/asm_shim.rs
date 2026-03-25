@@ -20,17 +20,12 @@ pub fn spsc_pop_u64(ring: &mut SpscRing<u64, 1024>) -> Option<u64> {
 }
 
 #[inline(never)]
-pub fn spsc_push_bytes64(
-    ring: &mut SpscRing<[u8; 64], 1024>,
-    val: [u8; 64],
-) -> bool {
+pub fn spsc_push_bytes64(ring: &mut SpscRing<[u8; 64], 1024>, val: [u8; 64]) -> bool {
     ring.try_push(val).is_ok()
 }
 
 #[inline(never)]
-pub fn spsc_pop_bytes64(
-    ring: &mut SpscRing<[u8; 64], 1024>,
-) -> Option<[u8; 64]> {
+pub fn spsc_pop_bytes64(ring: &mut SpscRing<[u8; 64], 1024>) -> Option<[u8; 64]> {
     ring.try_pop().ok()
 }
 

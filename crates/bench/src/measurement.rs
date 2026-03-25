@@ -220,8 +220,6 @@ mod tests {
     fn sample_collector_mean() {
         let mut collector = SampleCollector::default();
         collector.cycles.extend_from_slice(&[10, 20, 30]);
-        assert!(
-            (collector.mean_cycles_per_sample().unwrap_or(0.0) - 20.0).abs() < 0.01
-        );
+        assert!((collector.mean_cycles_per_sample().unwrap_or(0.0) - 20.0).abs() < 0.01);
     }
 }

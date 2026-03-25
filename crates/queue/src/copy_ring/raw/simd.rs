@@ -46,7 +46,10 @@ use core::arch::aarch64::{uint8x16_t, vld1q_u8, vst1q_u8};
 ///
 /// `src` must be valid for reads of 16 bytes.
 #[cfg(target_arch = "x86_64")]
-#[expect(clippy::inline_always, reason = "hot SIMD primitive — inlining is load-bearing")]
+#[expect(
+    clippy::inline_always,
+    reason = "hot SIMD primitive — inlining is load-bearing"
+)]
 #[inline(always)]
 unsafe fn load128(src: *const u8) -> __m128i {
     // SAFETY: caller guarantees src is valid for 16-byte reads.
@@ -59,7 +62,10 @@ unsafe fn load128(src: *const u8) -> __m128i {
 ///
 /// `dst` must be valid for writes of 16 bytes.
 #[cfg(target_arch = "x86_64")]
-#[expect(clippy::inline_always, reason = "hot SIMD primitive — inlining is load-bearing")]
+#[expect(
+    clippy::inline_always,
+    reason = "hot SIMD primitive — inlining is load-bearing"
+)]
 #[inline(always)]
 unsafe fn store128(dst: *mut u8, v: __m128i) {
     // SAFETY: caller guarantees dst is valid for 16-byte writes.
@@ -72,7 +78,10 @@ unsafe fn store128(dst: *mut u8, v: __m128i) {
 ///
 /// `src` must be valid for reads of 16 bytes.
 #[cfg(target_arch = "aarch64")]
-#[expect(clippy::inline_always, reason = "hot SIMD primitive — inlining is load-bearing")]
+#[expect(
+    clippy::inline_always,
+    reason = "hot SIMD primitive — inlining is load-bearing"
+)]
 #[inline(always)]
 unsafe fn load128(src: *const u8) -> uint8x16_t {
     // SAFETY: caller guarantees src is valid for 16-byte reads.
@@ -85,7 +94,10 @@ unsafe fn load128(src: *const u8) -> uint8x16_t {
 ///
 /// `dst` must be valid for writes of 16 bytes.
 #[cfg(target_arch = "aarch64")]
-#[expect(clippy::inline_always, reason = "hot SIMD primitive — inlining is load-bearing")]
+#[expect(
+    clippy::inline_always,
+    reason = "hot SIMD primitive — inlining is load-bearing"
+)]
 #[inline(always)]
 unsafe fn store128(dst: *mut u8, v: uint8x16_t) {
     // SAFETY: caller guarantees dst is valid for 16-byte writes.
@@ -131,7 +143,10 @@ define_copy_exact!(copy_64, 4); // 64 bytes
 ///
 /// `src` and `dst` must both be valid for `N` bytes. `BASE < N`.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-#[expect(clippy::inline_always, reason = "hot SIMD kernel — inlining eliminates call overhead")]
+#[expect(
+    clippy::inline_always,
+    reason = "hot SIMD kernel — inlining eliminates call overhead"
+)]
 #[inline(always)]
 unsafe fn copy_bucket<const BASE: usize, const N: usize>(dst: *mut u8, src: *const u8) {
     // SAFETY: caller guarantees src/dst valid for N >= BASE+1 bytes.
@@ -301,14 +316,10 @@ mod tests {
             #[test]
             fn $test_name() {
                 let src: $ty = $value;
-                let mut dst: core::mem::MaybeUninit<$ty> =
-                    core::mem::MaybeUninit::uninit();
+                let mut dst: core::mem::MaybeUninit<$ty> = core::mem::MaybeUninit::uninit();
                 // SAFETY: src is a valid initialized local; dst is a valid
                 // MaybeUninit allocation. addr_of! avoids creating a reference.
-                DefaultCopyPolicy::copy_in(
-                    dst.as_mut_ptr(),
-                    ptr::addr_of!(src),
-                );
+                DefaultCopyPolicy::copy_in(dst.as_mut_ptr(), ptr::addr_of!(src));
                 // SAFETY: copy_in has initialized dst.
                 let result = unsafe { dst.assume_init() };
                 assert_eq!(result, src);
@@ -359,10 +370,7 @@ mod tests {
         let mut dst = [0u8; 32];
         // SAFETY: src and dst are valid, aligned, non-overlapping 32-byte arrays.
         unsafe {
-            CopyDispatcher::<[u8; 32], 32>::copy(
-                dst.as_mut_ptr().cast(),
-                src.as_ptr().cast(),
-            );
+            CopyDispatcher::<[u8; 32], 32>::copy(dst.as_mut_ptr().cast(), src.as_ptr().cast());
         }
         assert_eq!(dst, src);
     }
@@ -376,8 +384,7 @@ mod tests {
             #[test]
             fn $test_name() {
                 let src: $ty = $value;
-                let mut dst: core::mem::MaybeUninit<$ty> =
-                    core::mem::MaybeUninit::uninit();
+                let mut dst: core::mem::MaybeUninit<$ty> = core::mem::MaybeUninit::uninit();
                 SimdCopyPolicy::copy_in(dst.as_mut_ptr(), ptr::addr_of!(src));
                 // SAFETY: copy_in has initialized dst.
                 let result = unsafe { dst.assume_init() };

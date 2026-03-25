@@ -35,10 +35,7 @@ mod proofs {
 
         // Verify FIFO: popped values match pushed values in order
         for i in 0..pop_count {
-            kani::assert(
-                popped[i] == pushed[i],
-                "FIFO ordering violation",
-            );
+            kani::assert(popped[i] == pushed[i], "FIFO ordering violation");
         }
     }
 
@@ -85,10 +82,7 @@ mod proofs {
             pop_count += 1;
         }
 
-        kani::assert(
-            push_count == pop_count,
-            "data loss: pushed != popped",
-        );
+        kani::assert(push_count == pop_count, "data loss: pushed != popped");
     }
 
     /// Index safety: wrapped indices never exceed storage bounds.
