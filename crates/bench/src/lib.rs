@@ -14,5 +14,6 @@
 pub mod bench_runner;
 pub mod counters;
 pub mod measurement;
+pub mod messages;
 pub mod report;
 pub mod workloads;

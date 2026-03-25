@@ -1,6 +1,6 @@
 //! Standardized workload shapes for SPSC ring benchmarks.
 
-use mantis_queue::SpscRing;
+use mantis_queue::{SpscRing, SpscRingCopy};
 
 /// Push 1, pop 1, repeat `n` times. Measures per-op latency.
 pub fn single_item<const N: usize>(ring: &mut SpscRing<u64, N>, n: usize) {
@@ -37,6 +37,48 @@ pub fn full_drain<const N: usize>(ring: &mut SpscRing<u64, N>, rounds: usize) {
     }
 }
 
+/// Single push+pop for copy ring.
+pub fn single_item_copy<T: Copy + Send + Default, const N: usize>(
+    ring: &mut SpscRingCopy<T, N>,
+    values: &[T],
+) {
+    let mut out = T::default();
+    for val in values {
+        let _ = ring.push(val);
+        let _ = ring.pop(&mut out);
+    }
+}
+
+/// Burst of single push+pop for copy ring.
+pub fn burst_copy<T: Copy + Send + Default, const N: usize>(
+    ring: &mut SpscRingCopy<T, N>,
+    values: &[T],
+    burst_size: usize,
+) {
+    let mut out = T::default();
+    for chunk in values.chunks(burst_size) {
+        for val in chunk {
+            let _ = ring.push(val);
+        }
+        for _ in 0..chunk.len() {
+            let _ = ring.pop(&mut out);
+        }
+    }
+}
+
+/// Batch push + batch pop for copy ring.
+pub fn batch_copy<T: Copy + Send + Default, const N: usize>(
+    ring: &mut SpscRingCopy<T, N>,
+    values: &[T],
+    batch_size: usize,
+) {
+    let mut out = vec![T::default(); batch_size];
+    for chunk in values.chunks(batch_size) {
+        let pushed = ring.push_batch(chunk);
+        let _ = ring.pop_batch(&mut out[..pushed]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,5 +99,26 @@ mod tests {
     fn full_drain_workload() {
         let mut ring = SpscRing::<u64, 64>::new();
         full_drain(&mut ring, 10);
+    }
+
+    #[test]
+    fn single_item_copy_workload() {
+        let mut ring = SpscRingCopy::<u64, 64>::new();
+        let vals: Vec<u64> = (0..100).collect();
+        single_item_copy(&mut ring, &vals);
+    }
+
+    #[test]
+    fn burst_copy_workload() {
+        let mut ring = SpscRingCopy::<u64, 128>::new();
+        let vals: Vec<u64> = (0..100).collect();
+        burst_copy(&mut ring, &vals, 50);
+    }
+
+    #[test]
+    fn batch_copy_workload() {
+        let mut ring = SpscRingCopy::<u64, 128>::new();
+        let vals: Vec<u64> = (0..100).collect();
+        batch_copy(&mut ring, &vals, 50);
     }
 }
