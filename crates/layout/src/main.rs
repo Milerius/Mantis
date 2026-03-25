@@ -6,7 +6,22 @@ fn main() {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     writeln!(out, "=== Mantis Layout Report ===\n").ok();
-    writeln!(out, "{}", mantis_layout::inspect::<mantis_types::QueueError>("QueueError")).ok();
-    writeln!(out, "{}", mantis_layout::inspect::<mantis_types::SeqNum>("SeqNum")).ok();
-    writeln!(out, "{}", mantis_layout::inspect::<mantis_types::SlotIndex>("SlotIndex")).ok();
+    writeln!(
+        out,
+        "{}",
+        mantis_layout::inspect::<mantis_types::QueueError>("QueueError")
+    )
+    .ok();
+    writeln!(
+        out,
+        "{}",
+        mantis_layout::inspect::<mantis_types::SeqNum>("SeqNum")
+    )
+    .ok();
+    writeln!(
+        out,
+        "{}",
+        mantis_layout::inspect::<mantis_types::SlotIndex>("SlotIndex")
+    )
+    .ok();
 }
