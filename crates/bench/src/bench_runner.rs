@@ -67,6 +67,11 @@ pub fn export_report(
     filename: &str,
     features: Vec<String>,
 ) {
+    // Gaussian z-score approximations (criterion doesn't store
+    // raw percentiles; adequate for single-threaded benches).
+    const Z_99: f64 = 2.326;
+    const Z_999: f64 = 3.090;
+
     let mut report = BenchReport::detect(implementation);
     "spsc".clone_into(&mut report.threading_model);
     report.features = features;
@@ -76,10 +81,6 @@ pub fn export_report(
         let mean_ns = estimates.map_or(0.0, |e| e.mean_ns);
         let median_ns = estimates.map_or(0.0, |e| e.median_ns);
         let std_dev = estimates.map_or(0.0, |e| e.std_dev_ns);
-        // Gaussian z-score approximations (criterion doesn't store
-        // raw percentiles; adequate for single-threaded benches).
-        const Z_99: f64 = 2.326;
-        const Z_999: f64 = 3.090;
         let p99_ns = mean_ns + Z_99 * std_dev;
         let p999_ns = mean_ns + Z_999 * std_dev;
         let ops_per_sec = if mean_ns > 0.0 {

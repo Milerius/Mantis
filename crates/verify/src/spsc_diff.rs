@@ -44,19 +44,10 @@ mod tests {
 
     #[test]
     fn portable_vs_instrumented_fixed() {
-        let mut ops = Vec::new();
-        for _ in 0..5 {
-            ops.push(true);
-        }
-        for _ in 0..3 {
-            ops.push(false);
-        }
-        for _ in 0..5 {
-            ops.push(true);
-        }
-        for _ in 0..10 {
-            ops.push(false);
-        }
+        let mut ops = vec![true; 5];
+        ops.extend(std::iter::repeat_n(false, 3));
+        ops.extend(std::iter::repeat_n(true, 5));
+        ops.extend(std::iter::repeat_n(false, 10));
         compare_inline_vs_instrumented(&ops);
     }
 

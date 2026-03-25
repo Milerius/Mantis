@@ -1,119 +1,119 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Godbolt ASM inspection for Mantis hot functions.
+# ASM inspection for Mantis hot-path functions.
 #
-# Usage: ./scripts/check-asm.sh [--baseline]
+# Uses `cargo-show-asm` against the asm_shim example to produce
+# inspectable assembly from the *actual* crate code — no hardcoded
+# source, no external APIs.
 #
-# Sends push/pop implementations to Godbolt Compiler Explorer API
-# for x86_64 and aarch64, saves output to target/asm/.
-# With --baseline, saves to target/asm/baseline/ for future diffs.
+# Usage:
+#   ./scripts/check-asm.sh                  # inspect all hot functions
+#   ./scripts/check-asm.sh --baseline       # save as baseline for diffs
+#   ./scripts/check-asm.sh --symbol <name>  # inspect a specific symbol
+#
+# Prerequisites: cargo install cargo-show-asm
+#
+# Output: target/asm/*.s (or target/asm/baseline/*.s with --baseline)
 
-GODBOLT_API="https://godbolt.org/api"
 ASM_DIR="target/asm"
 BASELINE_DIR="$ASM_DIR/baseline"
+OUTPUT_DIR="$ASM_DIR"
+CRATE="mantis-queue"
+EXAMPLE="asm_shim"
 
-if [[ "${1:-}" == "--baseline" ]]; then
-    OUTPUT_DIR="$BASELINE_DIR"
-else
-    OUTPUT_DIR="$ASM_DIR"
+# Functions exported by the asm_shim example
+SYMBOLS=(
+    "asm_shim::spsc_push_u64"
+    "asm_shim::spsc_pop_u64"
+    "asm_shim::spsc_push_bytes64"
+    "asm_shim::spsc_pop_bytes64"
+)
+
+SINGLE_SYMBOL=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --baseline)
+            OUTPUT_DIR="$BASELINE_DIR"
+            shift
+            ;;
+        --symbol)
+            SINGLE_SYMBOL="$2"
+            shift 2
+            ;;
+        *)
+            echo "Usage: $0 [--baseline] [--symbol <name>]" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Check cargo-show-asm is installed
+if ! cargo asm --version &>/dev/null; then
+    echo "ERROR: cargo-show-asm not installed." >&2
+    echo "Install: cargo install cargo-show-asm" >&2
+    exit 1
 fi
 
 mkdir -p "$OUTPUT_DIR"
 
-# Extract push/pop source for compilation
-PUSH_SOURCE=$(cat <<'RUST'
-use core::sync::atomic::{AtomicUsize, Ordering};
-use core::cell::Cell;
+# If a single symbol was requested, just show it
+if [[ -n "$SINGLE_SYMBOL" ]]; then
+    cargo asm -p "$CRATE" --example "$EXAMPLE" "$SINGLE_SYMBOL"
+    exit 0
+fi
 
-#[repr(align(128))]
-struct Padded<T>(T);
+# List available symbols
+echo "Available symbols:"
+cargo asm -p "$CRATE" --example "$EXAMPLE" 2>&1 | grep "asm_shim::" || true
+echo ""
 
-impl<T> core::ops::Deref for Padded<T> {
-    type Target = T;
-    fn deref(&self) -> &T { &self.0 }
-}
+# Extract each symbol
+for sym in "${SYMBOLS[@]}"; do
+    # Short name for the file (strip "asm_shim::" prefix)
+    short="${sym#asm_shim::}"
+    outfile="$OUTPUT_DIR/${short}.s"
 
-pub struct Ring {
-    head: Padded<AtomicUsize>,
-    tail: Padded<AtomicUsize>,
-    tail_cached: Padded<Cell<usize>>,
-    buf: *mut u64,
-    mask: usize,
-}
+    echo "Extracting: $sym"
+    if cargo asm -p "$CRATE" --example "$EXAMPLE" "$sym" > "$outfile" 2>/dev/null; then
+        lines=$(wc -l < "$outfile" | tr -d ' ')
+        echo "  -> $outfile ($lines lines)"
+    else
+        echo "  WARNING: failed to extract '$sym'" >&2
+        rm -f "$outfile"
+    fi
+done
 
-#[inline(never)]
-#[no_mangle]
-pub unsafe fn ring_push(ring: &Ring, value: u64) -> bool {
-    let head = ring.head.load(Ordering::Relaxed);
-    let next = (head + 1) & ring.mask;
-    if next == ring.tail_cached.get() {
-        let tail = ring.tail.load(Ordering::Acquire);
-        ring.tail_cached.set(tail);
-        if next == tail { return false; }
-    }
-    *ring.buf.add(head) = value;
-    ring.head.store(next, Ordering::Release);
-    true
-}
-RUST
-)
-
-# Compile for x86_64
-echo "Compiling for x86_64..."
-RESPONSE=$(curl -s -X POST "$GODBOLT_API/compiler/nightly/compile" \
-    -H "Content-Type: application/json" \
-    -H "Accept: application/json" \
-    -d "$(jq -n \
-        --arg source "$PUSH_SOURCE" \
-        '{
-            source: $source,
-            options: {
-                userArguments: "-C opt-level=3 -C target-cpu=x86-64-v3",
-                filters: { intel: true, directives: true, commentOnly: true, labels: true }
-            }
-        }')")
-
-echo "$RESPONSE" | jq -r '.asm[]?.text // empty' > "$OUTPUT_DIR/ring_push_x86_64.s"
-echo "Saved: $OUTPUT_DIR/ring_push_x86_64.s"
-
-# Compile for aarch64
-echo "Compiling for aarch64..."
-RESPONSE=$(curl -s -X POST "$GODBOLT_API/compiler/nightly/compile" \
-    -H "Content-Type: application/json" \
-    -H "Accept: application/json" \
-    -d "$(jq -n \
-        --arg source "$PUSH_SOURCE" \
-        '{
-            source: $source,
-            options: {
-                userArguments: "-C opt-level=3 --target aarch64-unknown-linux-gnu",
-                filters: { directives: true, commentOnly: true, labels: true }
-            }
-        }')")
-
-echo "$RESPONSE" | jq -r '.asm[]?.text // empty' > "$OUTPUT_DIR/ring_push_aarch64.s"
-echo "Saved: $OUTPUT_DIR/ring_push_aarch64.s"
-
-# Diff against baseline if exists
+# Diff against baseline if it exists
 if [[ -d "$BASELINE_DIR" && "$OUTPUT_DIR" != "$BASELINE_DIR" ]]; then
     echo ""
     echo "=== Diff against baseline ==="
+    changed=0
     for f in "$OUTPUT_DIR"/*.s; do
-        base="$BASELINE_DIR/$(basename "$f")"
+        name=$(basename "$f")
+        base="$BASELINE_DIR/$name"
         if [[ -f "$base" ]]; then
-            DIFF=$(diff "$base" "$f" || true)
+            DIFF=$(diff --unified=3 "$base" "$f" || true)
             if [[ -n "$DIFF" ]]; then
-                OLD_COUNT=$(wc -l < "$base" | tr -d ' ')
-                NEW_COUNT=$(wc -l < "$f" | tr -d ' ')
-                echo "CHANGED: $(basename "$f") ($OLD_COUNT -> $NEW_COUNT instructions)"
+                old_count=$(wc -l < "$base" | tr -d ' ')
+                new_count=$(wc -l < "$f" | tr -d ' ')
+                echo "CHANGED: $name ($old_count -> $new_count lines)"
                 echo "$DIFF"
+                changed=1
             else
-                echo "UNCHANGED: $(basename "$f")"
+                echo "UNCHANGED: $name"
             fi
+        else
+            echo "NEW: $name (no baseline)"
         fi
     done
+    if [[ $changed -eq 0 ]]; then
+        echo "No ASM changes detected."
+    fi
 fi
 
 echo ""
-echo "Done. Use --baseline to save current output as baseline."
+echo "Done. Output in $OUTPUT_DIR/"
+[[ "$OUTPUT_DIR" != "$BASELINE_DIR" ]] && \
+    echo "Use --baseline to save current output as baseline."

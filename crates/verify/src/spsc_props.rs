@@ -16,7 +16,7 @@ mod tests {
                 let mut popped = Vec::new();
                 let mut push_val = 0u64;
 
-                for &is_push in ops.iter() {
+                for &is_push in ops {
                     if is_push {
                         if ring.try_push(push_val).is_ok() {
                             pushed.push(push_val);
@@ -40,7 +40,7 @@ mod tests {
             });
     }
 
-    /// count_pushed - count_popped == ring.len() invariant.
+    /// `count_pushed - count_popped == ring.len()` invariant.
     #[test]
     fn len_invariant() {
         check!()
@@ -51,7 +51,7 @@ mod tests {
                 let mut count_popped = 0usize;
                 let mut push_val = 0u64;
 
-                for &is_push in ops.iter() {
+                for &is_push in ops {
                     if is_push {
                         if ring.try_push(push_val).is_ok() {
                             count_pushed += 1;
@@ -80,7 +80,7 @@ mod tests {
                 let cap = ring.capacity();
                 let mut push_val = 0u64;
 
-                for &is_push in ops.iter() {
+                for &is_push in ops {
                     if is_push {
                         if ring.len() < cap {
                             assert!(
@@ -107,11 +107,11 @@ mod tests {
                 let mut ring = SpscRing::<u64, 8>::new();
                 let mut push_val = 0u64;
 
-                for &is_push in ops.iter() {
+                for &is_push in ops {
                     if is_push {
                         let _ = ring.try_push(push_val);
                         push_val += 1;
-                    } else if ring.len() > 0 {
+                    } else if !ring.is_empty() {
                         assert!(
                             ring.try_pop().is_ok(),
                             "pop failed when ring had items",
