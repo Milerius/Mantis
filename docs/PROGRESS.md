@@ -49,9 +49,9 @@
 - [x] Preset type aliases (`SpscRing`, `SpscRingHeap`, `SpscRingInstrumented`)
 - [x] Unit tests (23 unit + 7 integration + 1 stress)
 - [x] Miri validation (31/31 tests pass, zero UB)
-- [ ] Kani bounded model checking proofs
-- [ ] Bolero property-based tests
-- [ ] Differential testing across strategy variants
+- [x] Kani bounded model checking proofs (4 proofs)
+- [x] Bolero property-based tests (4 properties)
+- [x] Differential testing across strategy variants (3 comparisons)
 
 ### 1.2 Benchmark Harness (`mantis-bench`)
 **Status: Complete**
@@ -143,4 +143,4 @@
 | `mantis-queue` | Active | yes | 31 | — | miri pass |
 | `mantis-bench` | Active | std | 11 | 6 benches + 4 contenders | — |
 | `mantis-layout` | Scaffold | std | 2 | — | — |
-| `mantis-verify` | Scaffold | std | 1 | — | — |
+| `mantis-verify` | Active | std | 7 | — | 4 kani proofs, 7 bolero/diff |
