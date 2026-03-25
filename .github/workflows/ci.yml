@@ -52,6 +52,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: cargo test --all-features
+      - name: Test with ASM feature
+        run: cargo test --features asm
+      - name: Test without ASM (portable fallback)
+        run: cargo test --no-default-features -p mantis-queue -p mantis-core -p mantis-types
 
   test-no-std:
     name: Test no_std (${{ matrix.os }})
