@@ -8,8 +8,8 @@ Benchmark harness and performance counter utilities for the Mantis SDK.
 
 ```
 ┌────────────────────────────────────────────┐
-│          Benchmark Binaries                │
-│  spsc_mantis.rs    spsc_contenders.rs      │
+│          Benchmark Binary                  │
+│  spsc.rs (mantis + contenders)             │
 └──────────────┬─────────────────────────────┘
                │ uses
 ┌──────────────▼─────────────────────────────┐
@@ -54,11 +54,11 @@ Benchmark harness and performance counter utilities for the Mantis SDK.
 ## Running Benchmarks
 
 ```bash
-# Mantis SPSC benchmarks
-cargo bench -p mantis-bench --bench spsc_mantis
+# All SPSC benchmarks (mantis only)
+cargo bench -p mantis-bench --bench spsc
 
 # With external contenders (rtrb, crossbeam)
-cargo bench -p mantis-bench --bench spsc_contenders --features bench-contenders
+cargo bench -p mantis-bench --bench spsc --features bench-contenders
 
 # Quick mode (fewer iterations, faster feedback)
 cargo bench -p mantis-bench -- --quick
@@ -67,7 +67,7 @@ cargo bench -p mantis-bench -- --quick
 ### Output
 
 - Console: summary table with ns/op, ops/s, p50, p99, cycles/op
-- JSON: `target/bench-report-mantis.json` and `target/bench-report-contenders.json`
+- JSON: `target/bench-report-spsc.json`
 - Criterion HTML: `target/criterion/` (open `report/index.html`)
 
 ## Report Schema

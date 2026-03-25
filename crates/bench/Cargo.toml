@@ -29,10 +29,5 @@ libc = { workspace = true }
 workspace = true
 
 [[bench]]
-name = "spsc_mantis"
+name = "spsc"
 harness = false
-
-[[bench]]
-name = "spsc_contenders"
-harness = false
-required-features = ["bench-contenders"]

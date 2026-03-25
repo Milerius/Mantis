@@ -100,7 +100,7 @@ mod tests {
                     let _ = ring.try_push(push_val);
                     push_val += 1;
                 } else if !ring.is_empty() {
-                    assert!(ring.try_pop().is_ok(), "pop failed when ring had items",);
+                    assert!(ring.try_pop().is_ok(), "pop failed when ring had items");
                 }
             }
         });

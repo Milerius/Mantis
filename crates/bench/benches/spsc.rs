@@ -1,10 +1,9 @@
-//! Criterion benchmarks for all Mantis SPSC ring presets.
+//! Unified Criterion benchmarks for all SPSC ring implementations.
 //!
-//! Uses `MantisMeasurement` with platform cycle counters instead of
-//! criterion's default `WallTime`. After all benchmarks complete,
-//! reads criterion's per-iteration estimates and combines them with
-//! cycle counter data to produce a `BenchReport` JSON at
-//! `target/bench-report-mantis.json`.
+//! Includes Mantis (inline + copy ring) and optionally external contenders
+//! (rtrb, crossbeam) behind the `bench-contenders` feature flag.
+//!
+//! Produces a single criterion output for CI benchmark regression tracking.
 
 #![allow(missing_docs, clippy::print_stderr)]
 
@@ -14,10 +13,11 @@ use mantis_bench::messages::{Message48, Message64, make_msg48, make_msg64};
 use mantis_bench::workloads::{batch_copy, burst_copy};
 use mantis_queue::{SpscRing, SpscRingCopy};
 
-fn bench_all(c: &mut MantisC) {
-    let mut descs: Vec<BenchDesc> = Vec::new();
+// ---------------------------------------------------------------------------
+// Mantis inline ring
+// ---------------------------------------------------------------------------
 
-    // -- u64 workloads --
+fn bench_inline(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
     descs.push(run_bench(
         c,
         "spsc/inline/single_item/u64",
@@ -84,7 +84,6 @@ fn bench_all(c: &mut MantisC) {
         },
     ));
 
-    // -- Larger payloads --
     descs.push(run_bench(
         c,
         "spsc/inline/single_item/[u8;64]",
@@ -112,20 +111,14 @@ fn bench_all(c: &mut MantisC) {
             });
         },
     ));
-
-    // -- Build and export report --
-    let mut features = Vec::new();
-    if cfg!(feature = "asm") {
-        features.push("asm".to_owned());
-    }
-    export_report(&descs, "SpscRing (inline)", "mantis", features);
 }
 
-#[expect(clippy::too_many_lines)]
-fn bench_copy_ring(c: &mut MantisC) {
-    let mut descs: Vec<BenchDesc> = Vec::new();
+// ---------------------------------------------------------------------------
+// Mantis copy ring
+// ---------------------------------------------------------------------------
 
-    // --- Copy ring: single push+pop ---
+fn bench_copy(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
+    // Single push+pop
     descs.push(run_bench(c, "copy/single/u64", "u64", 1024, |b| {
         let mut ring = SpscRingCopy::<u64, 1024>::new();
         b.iter(|| {
@@ -155,7 +148,7 @@ fn bench_copy_ring(c: &mut MantisC) {
         });
     }));
 
-    // --- Copy ring: burst ---
+    // Burst
     descs.push(run_bench(
         c,
         "copy/burst/100/msg48",
@@ -180,7 +173,7 @@ fn bench_copy_ring(c: &mut MantisC) {
         },
     ));
 
-    // --- Copy ring: batch push+pop ---
+    // Batch
     descs.push(run_bench(
         c,
         "copy/batch/100/msg48",
@@ -205,7 +198,7 @@ fn bench_copy_ring(c: &mut MantisC) {
         },
     ));
 
-    // --- General ring: Message comparison baselines ---
+    // General ring baselines for message types
     descs.push(run_bench(
         c,
         "general/single/msg48",
@@ -235,18 +228,164 @@ fn bench_copy_ring(c: &mut MantisC) {
             });
         },
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Contenders (behind feature flag)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "bench-contenders")]
+#[expect(clippy::too_many_lines)]
+fn bench_contenders(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
+    // -- rtrb --
+    descs.push(run_bench(
+        c,
+        "spsc/rtrb/single_item/u64",
+        "u64",
+        1024,
+        |b| {
+            let (mut tx, mut rx) = rtrb::RingBuffer::new(1024);
+            b.iter(|| {
+                let _ = tx.push(black_box(42u64));
+                let _ = black_box(rx.pop());
+            });
+        },
+    ));
+
+    descs.push(run_bench(c, "spsc/rtrb/burst_100/u64", "u64", 1024, |b| {
+        let (mut tx, mut rx) = rtrb::RingBuffer::new(1024);
+        b.iter(|| {
+            for i in 0..100u64 {
+                let _ = tx.push(black_box(i));
+            }
+            for _ in 0..100 {
+                let _ = black_box(rx.pop());
+            }
+        });
+    }));
+
+    descs.push(run_bench(
+        c,
+        "spsc/rtrb/single_item/msg48",
+        "Message48",
+        1024,
+        |b| {
+            let (mut tx, mut rx) = rtrb::RingBuffer::new(1024);
+            let msg = make_msg48(1);
+            b.iter(|| {
+                let _ = tx.push(black_box(msg));
+                let _ = black_box(rx.pop());
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/rtrb/single_item/msg64",
+        "Message64",
+        1024,
+        |b| {
+            let (mut tx, mut rx) = rtrb::RingBuffer::new(1024);
+            let msg = make_msg64(1);
+            b.iter(|| {
+                let _ = tx.push(black_box(msg));
+                let _ = black_box(rx.pop());
+            });
+        },
+    ));
+
+    // -- crossbeam --
+    descs.push(run_bench(
+        c,
+        "spsc/crossbeam/single_item/u64",
+        "u64",
+        1024,
+        |b| {
+            let q = crossbeam_queue::ArrayQueue::new(1024);
+            b.iter(|| {
+                let _ = q.push(black_box(42u64));
+                let _ = black_box(q.pop());
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/crossbeam/burst_100/u64",
+        "u64",
+        1024,
+        |b| {
+            let q = crossbeam_queue::ArrayQueue::new(1024);
+            b.iter(|| {
+                for i in 0..100u64 {
+                    let _ = q.push(black_box(i));
+                }
+                for _ in 0..100 {
+                    let _ = black_box(q.pop());
+                }
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/crossbeam/single_item/msg48",
+        "Message48",
+        1024,
+        |b| {
+            let q = crossbeam_queue::ArrayQueue::new(1024);
+            let msg = make_msg48(1);
+            b.iter(|| {
+                let _ = q.push(black_box(msg));
+                let _ = black_box(q.pop());
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/crossbeam/single_item/msg64",
+        "Message64",
+        1024,
+        |b| {
+            let q = crossbeam_queue::ArrayQueue::new(1024);
+            let msg = make_msg64(1);
+            b.iter(|| {
+                let _ = q.push(black_box(msg));
+                let _ = black_box(q.pop());
+            });
+        },
+    ));
+}
+
+#[cfg(not(feature = "bench-contenders"))]
+fn bench_contenders(_descs: &mut Vec<BenchDesc>, _c: &mut MantisC) {}
+
+// ---------------------------------------------------------------------------
+// Unified entry point
+// ---------------------------------------------------------------------------
+
+fn bench_spsc(c: &mut MantisC) {
+    let mut descs: Vec<BenchDesc> = Vec::new();
+
+    bench_inline(&mut descs, c);
+    bench_copy(&mut descs, c);
+    bench_contenders(&mut descs, c);
 
     let mut features = Vec::new();
     if cfg!(feature = "asm") {
         features.push("asm".to_owned());
     }
-    export_report(&descs, "SpscRingCopy (SIMD)", "copy-ring", features);
+    if cfg!(feature = "bench-contenders") {
+        features.push("bench-contenders".to_owned());
+    }
+    export_report(&descs, "SPSC Ring (all)", "spsc", features);
 }
 
 criterion_group! {
-    name = benches;
+    name = spsc;
     config = mantis_criterion();
-    targets = bench_all, bench_copy_ring
+    targets = bench_spsc
 }
 
-criterion::criterion_main!(benches);
+criterion::criterion_main!(spsc);
