@@ -27,3 +27,12 @@ libc = { workspace = true }
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "spsc_mantis"
+harness = false
+
+[[bench]]
+name = "spsc_contenders"
+harness = false
+required-features = ["bench-contenders"]
