@@ -35,18 +35,20 @@
 
 ## Phase 1 — Minimal Useful Core
 
-**Status: Not Started**
+**Status: In Progress** | Started: 2026-03-25
 
 ### 1.1 SPSC Ring Buffer (`mantis-queue`)
-- [ ] Core ring buffer engine with strategy pattern
-- [ ] `raw` submodule with unsafe slot operations
-- [ ] Power-of-2 masked index implementation
-- [ ] Cache-padded variant to prevent false sharing
-- [ ] Portable baseline implementation
-- [ ] Platform-specific atomics (x86_64 / ARM64)
-- [ ] Preset type aliases (`SpscRingPortable`, `SpscRingPadded`)
-- [ ] Unit tests (push/pop, full/empty, wraparound)
-- [ ] Miri validation
+**Status: Core Complete** | Verification pending (Plan 3)
+
+- [x] Core ring buffer engine with strategy pattern
+- [x] `raw` submodule with unsafe slot operations
+- [x] Power-of-2 masked index implementation
+- [x] Cache-padded variant to prevent false sharing
+- [x] Portable baseline implementation
+- [x] Platform-specific atomics (x86_64 / ARM64)
+- [x] Preset type aliases (`SpscRing`, `SpscRingHeap`, `SpscRingInstrumented`)
+- [x] Unit tests (23 unit + 7 integration + 1 stress)
+- [x] Miri validation (31/31 tests pass, zero UB)
 - [ ] Kani bounded model checking proofs
 - [ ] Bolero property-based tests
 - [ ] Differential testing across strategy variants
@@ -134,9 +136,9 @@
 
 | Crate | Status | no_std | Tests | Benchmarks | Verification |
 |---|---|---|---|---|---|
-| `mantis-core` | Scaffold | yes | 0 | — | — |
-| `mantis-types` | Scaffold | yes | 4 | — | — |
-| `mantis-queue` | Scaffold | yes | 0 | — | — |
+| `mantis-core` | Active | yes | 1 | — | — |
+| `mantis-types` | Active | yes | 5 | — | — |
+| `mantis-queue` | Active | yes | 31 | — | miri pass |
 | `mantis-bench` | Scaffold | std | 2 | — | — |
 | `mantis-layout` | Scaffold | std | 2 | — | — |
 | `mantis-verify` | Scaffold | std | 1 | — | — |
