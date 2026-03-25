@@ -5,4 +5,5 @@
 
 #![deny(unsafe_code)]
 
+mod spsc_diff;
 mod spsc_props;
