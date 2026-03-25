@@ -15,13 +15,15 @@
 //! This crate is `no_std` by default. Enable the `std` feature for
 //! standard library support.
 
-#![cfg_attr(feature = "nightly", feature(likely_unlikely))]
+#![cfg_attr(feature = "nightly", feature(generic_const_exprs, likely_unlikely))]
+#![cfg_attr(feature = "nightly", allow(incomplete_features))]
 #![no_std]
 #![deny(unsafe_code)]
 
 #[cfg(feature = "std")]
 extern crate std;
 
+pub(crate) mod copy_ring;
 pub(crate) mod engine;
 mod handle;
 mod pad;
