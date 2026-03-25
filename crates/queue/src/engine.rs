@@ -36,6 +36,18 @@ where
 
 // NOTE: `unsafe impl Sync` lives in `raw/mod.rs` per unsafe isolation policy.
 
+#[cold]
+#[inline(never)]
+fn slow_push_full<T>(value: T) -> Result<(), PushError<T>> {
+    Err(PushError::Full(value))
+}
+
+#[cold]
+#[inline(never)]
+fn slow_pop_empty<T>() -> Result<T, QueueError> {
+    Err(QueueError::Empty)
+}
+
 impl<T, S, I, P, Instr> RingEngine<T, S, I, P, Instr>
 where
     S: Storage<T>,
@@ -69,8 +81,10 @@ where
             let tail = self.tail.load(Ordering::Acquire);
             self.tail_cached.set(tail);
             if next_head == tail {
+                #[cfg(feature = "nightly")]
+                core::hint::cold_path();
                 self.instr.on_push_full();
-                return Err(PushError::Full(value));
+                return slow_push_full(value);
             }
         }
 
@@ -88,8 +102,10 @@ where
             let head = self.head.load(Ordering::Acquire);
             self.head_cached.set(head);
             if tail == head {
+                #[cfg(feature = "nightly")]
+                core::hint::cold_path();
                 self.instr.on_pop_empty();
-                return Err(QueueError::Empty);
+                return slow_pop_empty();
             }
         }
 
