@@ -22,12 +22,12 @@ allow = [
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = [
     "https://github.com/rust-lang/crates.io-index",
-    "https://index.crates.io",
 ]
 allow-git = []
