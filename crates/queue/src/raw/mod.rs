@@ -7,7 +7,7 @@
 //! `drop_range`) are provided for use by the engine.
 
 #![allow(unsafe_code)]
-// Engine (Task 6) will consume these; suppress until then.
+// RawRing (Task 7) will consume these via the engine; suppress until then.
 #![allow(dead_code)]
 
 pub(crate) mod slot;
@@ -64,3 +64,28 @@ pub(crate) fn drop_range<T, S: Storage<T>, I: IndexStrategy>(
         tail = I::wrap(tail + 1, cap);
     }
 }
+
+// --- unsafe impl Sync for RingEngine ---
+//
+// RingEngine contains Cell<usize> (tail_cached, head_cached), which
+// makes it !Sync. We need Sync for Arc<RingEngine> in split handles.
+//
+// SAFETY: The SPSC protocol guarantees disjoint access:
+// - Producer ONLY accesses: head (AtomicUsize), tail_cached (Cell)
+// - Consumer ONLY accesses: tail (AtomicUsize), head_cached (Cell)
+// - These two sides never touch each other's Cell
+// - Atomics are inherently Sync
+// - Storage is Sync (required by trait bound)
+// The split-handle design (Producer/Consumer) enforces this partition.
+// Validated by miri's data-race detection on every PR.
+use crate::engine::RingEngine;
+use mantis_core::{Instrumentation, PushPolicy};
+
+unsafe impl<T, S, I, P, Instr> Sync for RingEngine<T, S, I, P, Instr>
+where
+    T: Send,
+    S: Storage<T>,
+    I: IndexStrategy,
+    P: PushPolicy,
+    Instr: Instrumentation + Sync,
+{}

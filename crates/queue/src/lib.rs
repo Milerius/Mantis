@@ -21,6 +21,7 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+pub(crate) mod engine;
 mod pad;
 mod raw;
 pub mod storage;
