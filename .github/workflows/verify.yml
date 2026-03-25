@@ -1,0 +1,39 @@
+name: Verification
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  kani:
+    name: Kani Proofs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install Kani
+        uses: model-checking/kani-github-action@f838096619a707b0f6b2118cf435eaccfa33e51f # v1.1
+      - name: Run proofs
+        run: |
+          if find crates/verify/src -name '*.rs' -exec grep -l 'kani::proof' {} + 2>/dev/null; then
+            cargo kani -p mantis-verify
+          else
+            echo "No kani proofs found yet — skipping."
+          fi
+
+  bolero:
+    name: Bolero Property Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Run property tests
+        run: cargo test -p mantis-verify --all-features -- --test-threads=1
