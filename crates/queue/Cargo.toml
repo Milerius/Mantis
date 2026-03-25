@@ -9,7 +9,9 @@ repository.workspace = true
 
 [features]
 default = []
-std = []
+std = ["alloc"]
+alloc = []
+asm = []
 
 [dependencies]
 mantis-core = { workspace = true }

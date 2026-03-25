@@ -22,7 +22,11 @@
 extern crate std;
 
 mod pad;
+pub mod storage;
 
 pub use mantis_core::{ImmediatePush, NoInstr, Pow2Masked};
 pub use mantis_types::QueueError;
 pub use pad::CachePadded;
+pub use storage::{InlineStorage, Storage};
+#[cfg(feature = "alloc")]
+pub use storage::HeapStorage;
