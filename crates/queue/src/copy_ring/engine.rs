@@ -8,9 +8,8 @@ use core::cell::Cell;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use mantis_core::{CopyPolicy, IndexStrategy, Instrumentation, PushPolicy};
-
-use crate::pad::CachePadded;
+use mantis_core::{IndexStrategy, Instrumentation, PushPolicy};
+use mantis_platform::{CachePadded, CopyPolicy};
 use crate::storage::Storage;
 
 /// Cold slow-path for full ring. `#[cold]` tells LLVM to move this
@@ -228,7 +227,7 @@ mod tests {
         Pow2Masked,
         ImmediatePush,
         NoInstr,
-        crate::copy_ring::raw::simd::DefaultCopyPolicy,
+        mantis_platform::DefaultCopyPolicy,
     >;
 
     fn new_engine() -> TestEngine {
