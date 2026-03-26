@@ -477,4 +477,89 @@ mod tests {
         engine.pop(&mut out);
         assert_eq!(engine.len(), 0);
     }
+
+    #[test]
+    fn push_pop_batch_differential() {
+        // Verify contiguous batch produces same results as sequential push/pop
+        // for various batch sizes and fill levels.
+        for fill_first in 0..7 {
+            for batch_size in 1..=7 {
+                let engine = new_engine(); // capacity=8, usable=7
+
+                // Advance head/tail by fill_first positions
+                for i in 0..fill_first {
+                    assert!(engine.push(&(i as u64)));
+                }
+                let mut drain = vec![0u64; fill_first];
+                engine.pop_batch(&mut drain);
+
+                // Batch push
+                let src: Vec<u64> = (100..100 + batch_size as u64).collect();
+                let pushed = engine.push_batch(&src);
+
+                // Batch pop
+                let mut dst = vec![0u64; pushed];
+                let popped = engine.pop_batch(&mut dst);
+
+                assert_eq!(popped, pushed, "fill={fill_first} batch={batch_size}");
+                assert_eq!(
+                    dst,
+                    src[..pushed].to_vec(),
+                    "FIFO violated: fill={fill_first} batch={batch_size}"
+                );
+            }
+        }
+    }
+}
+
+// proptest uses `getcwd` for failure persistence, which Miri's isolation blocks.
+#[cfg(all(test, not(miri)))]
+mod proptest_tests {
+    use super::*;
+    use crate::storage::InlineStorage;
+    use mantis_core::{ImmediatePush, NoInstr, Pow2Masked};
+    use proptest::prelude::*;
+
+    extern crate std;
+    use std::vec;
+    use std::vec::Vec;
+
+    type TestEngine = CopyRingEngine<
+        u64,
+        InlineStorage<u64, 8>,
+        Pow2Masked,
+        ImmediatePush,
+        NoInstr,
+        mantis_platform::DefaultCopyPolicy,
+    >;
+
+    fn new_engine() -> TestEngine {
+        CopyRingEngine::new(InlineStorage::new(), NoInstr)
+    }
+
+    proptest! {
+        #[test]
+        fn batch_fifo_preserved(
+            fill_level in 0usize..7,
+            batch_size in 1usize..8,
+        ) {
+            let engine = new_engine();
+
+            // Advance to fill_level
+            for i in 0..fill_level {
+                engine.push(&(i as u64));
+            }
+            let mut drain = vec![0u64; fill_level];
+            engine.pop_batch(&mut drain);
+
+            let src: Vec<u64> = (0..batch_size as u64).collect();
+            let pushed = engine.push_batch(&src);
+
+            let mut dst = vec![0u64; pushed];
+            let popped = engine.pop_batch(&mut dst);
+
+            prop_assert_eq!(popped, pushed);
+            prop_assert_eq!(dst, src[..pushed].to_vec());
+        }
+    }
 }

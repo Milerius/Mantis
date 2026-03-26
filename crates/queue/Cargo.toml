@@ -20,5 +20,8 @@ mantis-core = { workspace = true }
 mantis-platform = { workspace = true }
 mantis-types = { workspace = true }
 
+[dev-dependencies]
+proptest = "1.11.0"
+
 [lints]
 workspace = true
