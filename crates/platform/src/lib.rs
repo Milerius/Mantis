@@ -47,6 +47,19 @@ pub use intrinsics::SimdCopyPolicy;
 pub use pad::CachePadded;
 pub use metering::{CycleCounter, Measurement};
 #[cfg(feature = "std")]
-pub use metering::{DefaultCounter, InstantCounter};
+pub use metering::InstantCounter;
+#[cfg(all(target_arch = "x86_64", feature = "asm", feature = "std"))]
+pub use metering::RdtscCounter;
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+pub use metering::KperfCounter;
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+pub use metering::PmuCounter;
+// DefaultCounter is available on all platforms where at least one counter is defined.
+#[cfg(any(
+    feature = "std",
+    all(target_arch = "aarch64", target_os = "macos"),
+    all(target_arch = "aarch64", target_os = "linux"),
+))]
+pub use metering::DefaultCounter;
 #[cfg(feature = "std")]
 pub use cpudetect::cpu_name;

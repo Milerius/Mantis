@@ -3,9 +3,12 @@
 //! Provides a platform-neutral [`CycleCounter`] trait and [`Measurement`] struct.
 //! The [`InstantCounter`] fallback is available with the `std` feature.
 //!
-//! Platform-specific counters (`RdtscCounter`, `KperfCounter`, `PmuCounter`)
-//! will be wired as [`DefaultCounter`] in future tasks. For now, [`DefaultCounter`]
-//! falls back to [`InstantCounter`] on all platforms.
+//! Platform-specific counters are wired as [`DefaultCounter`] based on the
+//! current target:
+//! - `x86_64` with `asm` + `std`: [`RdtscCounter`]
+//! - macOS ARM64: [`KperfCounter`] (`mach_absolute_time`)
+//! - Linux ARM64: [`PmuCounter`] (`clock_gettime(CLOCK_MONOTONIC)`)
+//! - All others (with `std`): [`InstantCounter`]
 
 #[cfg(feature = "std")]
 mod instant;
@@ -40,9 +43,32 @@ pub trait CycleCounter: Send + Sync {
     fn elapsed(&self, start: u64) -> Measurement;
 }
 
-/// Default counter selected at compile time (requires the `std` feature).
-///
-/// Platform-specific counters (`RdtscCounter`, `KperfCounter`, `PmuCounter`)
-/// will be wired here in Tasks 15-16. For now, falls back to [`InstantCounter`].
-#[cfg(feature = "std")]
-pub type DefaultCounter = InstantCounter;
+// DefaultCounter is selected at compile time (first match wins):
+//   1. x86_64 + `asm` + `std`: RdtscCounter
+//   2. macOS ARM64: KperfCounter
+//   3. Linux ARM64: PmuCounter
+//   4. Any platform with `std`: InstantCounter
+cfg_if::cfg_if! {
+    if #[cfg(all(target_arch = "x86_64", feature = "asm", feature = "std"))] {
+        /// Default counter: RDTSC on x86_64 with `asm` + `std` features.
+        pub type DefaultCounter = crate::isa_x86::rdtsc::RdtscCounter;
+    } else if #[cfg(all(target_arch = "aarch64", target_os = "macos"))] {
+        /// Default counter: `mach_absolute_time` on macOS ARM64.
+        pub type DefaultCounter = crate::isa_arm64::counters::KperfCounter;
+    } else if #[cfg(all(target_arch = "aarch64", target_os = "linux"))] {
+        /// Default counter: `clock_gettime` on Linux ARM64.
+        pub type DefaultCounter = crate::isa_arm64::counters::PmuCounter;
+    } else if #[cfg(feature = "std")] {
+        /// Default counter: `Instant`-based fallback.
+        pub type DefaultCounter = InstantCounter;
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "asm", feature = "std"))]
+pub use crate::isa_x86::rdtsc::RdtscCounter;
+
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+pub use crate::isa_arm64::counters::KperfCounter;
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+pub use crate::isa_arm64::counters::PmuCounter;
