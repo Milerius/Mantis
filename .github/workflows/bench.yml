@@ -24,8 +24,29 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Install gdb (Linux only)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y gdb
+      - name: Build SPSC benchmarks
+        run: cargo +nightly bench --bench spsc --all-features --no-run
+        env:
+          RUST_BACKTRACE: full
       - name: Run SPSC benchmarks
-        run: cargo +nightly bench --bench spsc --all-features
+        run: |
+          BENCH_BIN=$(cargo +nightly bench --bench spsc --all-features --no-run --message-format=json 2>/dev/null \
+            | jq -r 'select(.executable != null and .target.name == "spsc") | .executable')
+          echo "Bench binary: $BENCH_BIN"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            # Run under gdb to catch SIGILL with backtrace
+            gdb -batch -ex run -ex "thread apply all bt full" -ex quit --args "$BENCH_BIN" --bench || {
+              echo "::error::Benchmark crashed. See backtrace above."
+              exit 1
+            }
+          else
+            "$BENCH_BIN" --bench
+          fi
+        env:
+          RUST_BACKTRACE: full
       - name: Convert report for CI tracking
         run: |
           jq '[.results[] | {name: .workload, unit: "ns/op", value: .ns_per_op}]' \
