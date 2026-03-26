@@ -28,7 +28,7 @@
 // tests. The dead_code lint cannot trace through const-generic dispatch
 // branches, so it incorrectly marks them as unused.
 #![cfg_attr(
-    not(test),
+    not(any(test, feature = "nightly")),
     expect(
         dead_code,
         reason = "SIMD dispatch helpers are called through const-generic branches"
