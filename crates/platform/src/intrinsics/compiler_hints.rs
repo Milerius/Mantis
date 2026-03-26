@@ -36,10 +36,20 @@ pub enum PrefetchLocality {
 pub fn prefetch<T>(ptr: *const T, rw: PrefetchRW, locality: PrefetchLocality) {
     #[cfg(target_arch = "x86_64")]
     {
+        use core::arch::x86_64::{
+            _MM_HINT_NTA, _MM_HINT_T0, _MM_HINT_T1, _MM_HINT_T2, _mm_prefetch,
+        };
         let _ = rw;
+        let hint = ptr.cast::<i8>();
         // SAFETY: prefetch is a hint and never faults, even on invalid addresses.
+        // The locality must be a compile-time constant for _mm_prefetch.
         unsafe {
-            core::arch::x86_64::_mm_prefetch(ptr.cast::<i8>(), locality as i32);
+            match locality {
+                PrefetchLocality::NoTemporal => _mm_prefetch(hint, _MM_HINT_NTA),
+                PrefetchLocality::Low => _mm_prefetch(hint, _MM_HINT_T2),
+                PrefetchLocality::Moderate => _mm_prefetch(hint, _MM_HINT_T1),
+                PrefetchLocality::High => _mm_prefetch(hint, _MM_HINT_T0),
+            }
         }
     }
     #[cfg(not(target_arch = "x86_64"))]
