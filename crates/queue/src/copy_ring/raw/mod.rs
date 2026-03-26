@@ -59,6 +59,39 @@ pub(crate) fn read_slot_copy<T: Copy, S: Storage<T>, CP: CopyPolicy<T>>(
     }
 }
 
+/// Copy `src.len()` contiguous values from `src` into the ring's backing
+/// array starting at `start_index`.
+///
+/// Used by `push_batch` for the two-chunk contiguous write path.
+/// The caller must guarantee:
+/// - `start_index + src.len() <= storage.capacity()` (no wrapping).
+/// - The producer exclusively owns all slots in the range (SPSC invariant).
+///
+/// This is a safe wrapper: all safety requirements are upheld structurally
+/// by the call sites in `engine.rs` via SPSC protocol and index arithmetic.
+#[inline]
+pub(crate) fn write_batch_copy<T: Copy, S: Storage<T>>(storage: &S, start_index: usize, src: &[T]) {
+    let count = src.len();
+    if count == 0 {
+        return;
+    }
+    // SAFETY:
+    // - `base_ptr()` returns a pointer with provenance over all `capacity()`
+    //   slots (required by the `Storage` trait contract).
+    // - `start_index + count <= capacity` is guaranteed by the caller, so
+    //   `base_ptr().add(start_index)` through `+count` is in-bounds.
+    // - `MaybeUninit<T>` has the same size, alignment, and ABI as `T`
+    //   (stdlib guarantee), so casting `*mut MaybeUninit<T>` to `*mut T`
+    //   and writing `count` elements is valid.
+    // - The producer exclusively owns these slots under the SPSC protocol;
+    //   head is published with Release only after this write completes,
+    //   so no concurrent reader can observe uninitialized data.
+    unsafe {
+        let dst = storage.base_ptr().add(start_index).cast::<T>();
+        ptr::copy_nonoverlapping(src.as_ptr(), dst, count);
+    }
+}
+
 // --- unsafe impl Sync for CopyRingEngine ---
 //
 // CopyRingEngine contains Cell<usize> (tail_cached, head_cached), which

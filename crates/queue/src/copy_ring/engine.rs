@@ -139,13 +139,29 @@ where
         }
 
         let n = src.len().min(free);
-        let mut idx = head;
-        for item in &src[..n] {
-            crate::copy_ring::raw::write_slot_copy::<T, S, CP>(&self.storage, idx, item);
-            idx = I::wrap(idx + 1, cap);
+
+        // Two-chunk contiguous copy bypassing per-element CopyPolicy dispatch.
+        // `memcpy` auto-vectorizes for bulk transfers; per-element SIMD
+        // dispatch adds call overhead that dominates for large batches.
+        //
+        // `first_chunk`: slots from head to end of backing array (no wrap).
+        // `second_chunk`: remaining slots written from index 0 (wrap).
+        let first_chunk = n.min(cap - head);
+        let second_chunk = n - first_chunk;
+
+        // First chunk: slots head..head+first_chunk (no wrap).
+        // `head < cap` (ring invariant) and `first_chunk <= cap - head`,
+        // so `head + first_chunk <= cap`. Producer owns this range.
+        crate::copy_ring::raw::write_batch_copy::<T, S>(&self.storage, head, &src[..first_chunk]);
+
+        if second_chunk > 0 {
+            // Second chunk: wraps to slots 0..second_chunk.
+            // `second_chunk <= n - first_chunk <= free < cap`,
+            // so `second_chunk <= cap`. Producer owns this range.
+            crate::copy_ring::raw::write_batch_copy::<T, S>(&self.storage, 0, &src[first_chunk..n]);
         }
 
-        self.head.store(idx, Ordering::Release);
+        self.head.store(I::wrap(head + n, cap), Ordering::Release);
         n
     }
 
@@ -365,6 +381,27 @@ mod tests {
         let mut out = vec![0u64; 5];
         assert_eq!(engine.pop_batch(&mut out), 5);
         assert_eq!(out, vec![100, 101, 102, 103, 104]);
+    }
+
+    #[test]
+    fn push_batch_wraparound_contiguous() {
+        // Advance head to near end of buffer, then batch-push across wrap
+        let engine = new_engine(); // capacity=8, usable=7
+        // Fill 6, drain 6 — head and tail now at index 6
+        let fill: Vec<u64> = (0..6).collect();
+        engine.push_batch(&fill);
+        let mut drain = vec![0u64; 6];
+        engine.pop_batch(&mut drain);
+
+        // Now push 5 elements starting at index 6: wraps at index 8 -> 0
+        let wrap_src: Vec<u64> = (200..205).collect();
+        let pushed = engine.push_batch(&wrap_src);
+        assert_eq!(pushed, 5);
+
+        let mut out = vec![0u64; 5];
+        let popped = engine.pop_batch(&mut out);
+        assert_eq!(popped, 5);
+        assert_eq!(out, vec![200, 201, 202, 203, 204]);
     }
 
     #[test]
