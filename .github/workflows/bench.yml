@@ -23,9 +23,23 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
+      - name: Detect CPU model (cache key + diagnostics)
+        id: cpu
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            model=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)
+          else
+            model=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown")
+          fi
+          echo "model=$model"
+          echo "hash=$(echo "$model" | shasum -a 256 | cut -c1-8)" >> "$GITHUB_OUTPUT"
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          prefix-key: "bench-${{ steps.cpu.outputs.hash }}"
       - name: Run SPSC benchmarks
         run: cargo +nightly bench --bench spsc --all-features
+        env:
+          RUSTFLAGS: "-C target-cpu=native"
       - name: Convert report for CI tracking
         run: |
           jq '[.results[] | {name: .workload, unit: "ns/op", value: .ns_per_op}]' \
