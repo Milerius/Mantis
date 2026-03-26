@@ -24,7 +24,10 @@ pub mod intrinsics;
 pub mod isa_arm64;
 #[cfg(target_arch = "x86_64")]
 pub mod isa_x86;
+pub mod metering;
 pub mod pad;
+#[cfg(feature = "std")]
+pub mod cpudetect;
 
 // Top-level re-exports for convenience
 pub use constant_time::{Borrow, CTBool, Carry, Ct};
@@ -42,3 +45,8 @@ pub use intrinsics::DefaultCopyPolicy;
 #[cfg(feature = "nightly")]
 pub use intrinsics::SimdCopyPolicy;
 pub use pad::CachePadded;
+pub use metering::{CycleCounter, Measurement};
+#[cfg(feature = "std")]
+pub use metering::{DefaultCounter, InstantCounter};
+#[cfg(feature = "std")]
+pub use cpudetect::cpu_name;
