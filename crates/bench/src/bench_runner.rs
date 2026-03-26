@@ -140,11 +140,25 @@ pub fn export_report(
                 }
                 eprintln!();
                 for r in &report.results {
-                    eprintln!(
+                    eprint!(
                         "  {:40} {:>8.2} ns/op  {:>12.0} ops/s  \
                          p50={:.1}ns  p99={:.1}ns  cycles={:.0?}",
-                        r.workload, r.ns_per_op, r.ops_per_sec, r.p50_ns, r.p99_ns, r.cycles_per_op,
+                        r.workload, r.ns_per_op, r.ops_per_sec,
+                        r.p50_ns, r.p99_ns, r.cycles_per_op,
                     );
+                    if let Some(insns) = r.instructions_per_op {
+                        eprint!("  insns={insns:.0}");
+                    }
+                    if let Some(bm) = r.branch_misses_per_op {
+                        eprint!("  bmiss={bm:.1}");
+                    }
+                    if let Some(l1) = r.l1_misses_per_op {
+                        eprint!("  l1d={l1:.1}");
+                    }
+                    if let Some(llc) = r.llc_misses_per_op {
+                        eprint!("  llc={llc:.1}");
+                    }
+                    eprintln!();
                 }
                 eprintln!("\nFull report: {}", path.display());
             }
