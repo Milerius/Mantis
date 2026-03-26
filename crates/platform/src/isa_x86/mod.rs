@@ -1,4 +1,4 @@
-//! x86_64 platform support.
+//! `x86_64` platform support.
 
 pub mod assembler;
 pub mod simd;

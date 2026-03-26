@@ -1,5 +1,5 @@
 #![allow(unsafe_code)]
-//! x86_64 CPUID feature detection with load-time caching.
+//! `x86_64` CPUID feature detection with load-time caching.
 //!
 //! CPUID is ~70 cycles / ~120 latency. Results are cached in a static
 //! `OnceLock`, initialized on first feature query.
@@ -69,6 +69,7 @@ pub fn cpu_name_x86() -> std::string::String {
 }
 
 /// Cached CPU feature flags.
+#[allow(clippy::struct_excessive_bools)]
 struct CpuFeatures {
     has_sse2: bool,
     has_sse3: bool,
@@ -125,7 +126,7 @@ fn detect() -> &'static CpuFeatures {
     })
 }
 
-/// SSE2 support (always true on x86_64).
+/// SSE2 support (always true on `x86_64`).
 #[must_use]
 #[inline]
 pub fn has_sse2() -> bool {

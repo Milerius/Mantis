@@ -3,11 +3,11 @@
 //! Provides a platform-neutral [`CycleCounter`] trait and [`Measurement`] struct.
 //! The [`InstantCounter`] fallback is available with the `std` feature.
 //!
-//! Platform-specific counters are wired as [`DefaultCounter`] based on the
+//! Platform-specific counters are wired as `DefaultCounter` based on the
 //! current target:
-//! - `x86_64` with `asm` + `std`: [`RdtscCounter`]
-//! - macOS ARM64: [`KperfCounter`] (`mach_absolute_time`)
-//! - Linux ARM64: [`PmuCounter`] (`clock_gettime(CLOCK_MONOTONIC)`)
+//! - `x86_64` with `asm` + `std`: `RdtscCounter`
+//! - macOS ARM64: `KperfCounter` (`mach_absolute_time`)
+//! - Linux ARM64: `PmuCounter` (`clock_gettime(CLOCK_MONOTONIC)`)
 //! - All others (with `std`): [`InstantCounter`]
 
 #[cfg(feature = "std")]
@@ -50,7 +50,7 @@ pub trait CycleCounter: Send + Sync {
 //   4. Any platform with `std`: InstantCounter
 cfg_if::cfg_if! {
     if #[cfg(all(target_arch = "x86_64", feature = "asm", feature = "std"))] {
-        /// Default counter: RDTSC on x86_64 with `asm` + `std` features.
+        /// Default counter: RDTSC on `x86_64` with `asm` + `std` features.
         pub type DefaultCounter = crate::isa_x86::rdtsc::RdtscCounter;
     } else if #[cfg(all(target_arch = "aarch64", target_os = "macos"))] {
         /// Default counter: `mach_absolute_time` on macOS ARM64.

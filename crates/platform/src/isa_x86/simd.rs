@@ -1,4 +1,4 @@
-//! x86_64 SIMD utilities.
+//! `x86_64` SIMD utilities.
 //!
 //! SSE2 load/store kernels are currently in `intrinsics/copy_dispatch.rs`
 //! alongside the dispatch logic.

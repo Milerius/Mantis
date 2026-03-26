@@ -1,4 +1,4 @@
-//! x86_64 macro assembler types for structured assembly.
+//! `x86_64` macro assembler types for structured assembly.
 //!
 //! Type definitions for the compile-time assembler DSL.
 //! Maps from Constantine's `macro_assembler_x86_att.nim`.
@@ -64,7 +64,7 @@ pub enum MemIndirectAccess {
     ReadWrite,
 }
 
-/// x86_64 general-purpose registers.
+/// `x86_64` general-purpose registers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Register {
     /// Base register (callee-saved).

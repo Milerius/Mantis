@@ -1,8 +1,8 @@
 #![allow(unsafe_code)]
 //! aarch64 performance counters.
 //!
-//! - macOS: `mach_absolute_time` via [`KperfCounter`]
-//! - Linux: `clock_gettime(CLOCK_MONOTONIC)` via [`PmuCounter`]
+//! - macOS: `mach_absolute_time` via `KperfCounter`
+//! - Linux: `clock_gettime(CLOCK_MONOTONIC)` via `PmuCounter`
 
 use crate::metering::{CycleCounter, Measurement};
 
