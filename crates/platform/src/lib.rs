@@ -20,6 +20,10 @@ pub mod bithacks;
 pub mod config;
 pub mod constant_time;
 pub mod intrinsics;
+#[cfg(target_arch = "aarch64")]
+pub mod isa_arm64;
+#[cfg(target_arch = "x86_64")]
+pub mod isa_x86;
 pub mod pad;
 
 // Top-level re-exports for convenience
