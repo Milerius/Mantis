@@ -12,12 +12,16 @@ default = []
 std = []
 asm = []
 nightly = []
+perf-counters = ["dep:perf-event2"]
 
 [dependencies]
 cfg-if = { workspace = true }
 
 [target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
 libc = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+perf-event2 = { workspace = true, optional = true }
 
 [lints]
 workspace = true

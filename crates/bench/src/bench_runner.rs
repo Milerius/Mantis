@@ -8,7 +8,8 @@ use std::io::Write;
 use criterion::Criterion;
 
 use crate::measurement::{
-    DefaultMeasurement, read_criterion_estimates, reset_samples, take_samples,
+    DefaultMeasurement, read_criterion_estimates, read_criterion_sample_iters, reset_samples,
+    take_samples,
 };
 use crate::report::{BenchReport, WorkloadResult};
 
@@ -29,11 +30,22 @@ pub struct BenchDesc {
     pub element_type: &'static str,
     /// Ring capacity used.
     pub capacity: usize,
-    /// Mean cycles per sample from our counter.
-    pub mean_cycles_per_sample: Option<f64>,
+    /// Mean cycles per operation.
+    pub cycles_per_op: Option<f64>,
+    /// Mean instructions per operation (hw counters).
+    pub instructions_per_op: Option<f64>,
+    /// Mean branch misses per operation (hw counters).
+    pub branch_misses_per_op: Option<f64>,
+    /// Mean L1D cache misses per operation (hw counters).
+    pub l1d_misses_per_op: Option<f64>,
+    /// Mean LLC misses per operation (hw counters).
+    pub llc_misses_per_op: Option<f64>,
 }
 
 /// Run a single benchmark, capturing cycle samples alongside criterion.
+///
+/// After criterion finishes, reads the per-sample iteration counts from
+/// `sample.json` and normalizes all counter values to per-operation.
 pub fn run_bench(
     c: &mut MantisC,
     id: &'static str,
@@ -44,11 +56,16 @@ pub fn run_bench(
     reset_samples();
     c.bench_function(id, |b| f(b));
     let samples = take_samples();
+    let iters = read_criterion_sample_iters(id).unwrap_or_default();
     BenchDesc {
         id,
         element_type,
         capacity,
-        mean_cycles_per_sample: samples.mean_cycles_per_sample(),
+        cycles_per_op: samples.mean_cycles_per_op(&iters),
+        instructions_per_op: samples.mean_instructions_per_op(&iters),
+        branch_misses_per_op: samples.mean_branch_misses_per_op(&iters),
+        l1d_misses_per_op: samples.mean_l1d_misses_per_op(&iters),
+        llc_misses_per_op: samples.mean_llc_misses_per_op(&iters),
     }
 }
 
@@ -95,11 +112,11 @@ pub fn export_report(
             p50_ns: median_ns,
             p99_ns,
             p999_ns,
-            cycles_per_op: desc.mean_cycles_per_sample,
-            instructions_per_op: None,
-            branch_misses_per_op: None,
-            l1_misses_per_op: None,
-            llc_misses_per_op: None,
+            cycles_per_op: desc.cycles_per_op,
+            instructions_per_op: desc.instructions_per_op,
+            branch_misses_per_op: desc.branch_misses_per_op,
+            l1_misses_per_op: desc.l1d_misses_per_op,
+            llc_misses_per_op: desc.llc_misses_per_op,
             full_rate: None,
             empty_rate: None,
             mean_occupancy: None,
@@ -128,11 +145,24 @@ pub fn export_report(
                 }
                 eprintln!();
                 for r in &report.results {
-                    eprintln!(
+                    eprint!(
                         "  {:40} {:>8.2} ns/op  {:>12.0} ops/s  \
                          p50={:.1}ns  p99={:.1}ns  cycles={:.0?}",
                         r.workload, r.ns_per_op, r.ops_per_sec, r.p50_ns, r.p99_ns, r.cycles_per_op,
                     );
+                    if let Some(insns) = r.instructions_per_op {
+                        eprint!("  insns={insns:.0}");
+                    }
+                    if let Some(bm) = r.branch_misses_per_op {
+                        eprint!("  bmiss={bm:.1}");
+                    }
+                    if let Some(l1) = r.l1_misses_per_op {
+                        eprint!("  l1d={l1:.1}");
+                    }
+                    if let Some(llc) = r.llc_misses_per_op {
+                        eprint!("  llc={llc:.1}");
+                    }
+                    eprintln!();
                 }
                 eprintln!("\nFull report: {}", path.display());
             }

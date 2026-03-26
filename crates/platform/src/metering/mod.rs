@@ -10,8 +10,12 @@
 //! - Linux ARM64: `PmuCounter` (`clock_gettime(CLOCK_MONOTONIC)`)
 //! - All others (with `std`): [`InstantCounter`]
 
+pub mod hw_counters;
+
 #[cfg(feature = "std")]
 mod instant;
+
+pub use hw_counters::{HwCounterDeltas, HwCounters, NoopCounters};
 
 #[cfg(feature = "std")]
 pub use instant::InstantCounter;
@@ -23,6 +27,14 @@ pub struct Measurement {
     pub nanos: u64,
     /// CPU cycles (if available on this platform, else 0).
     pub cycles: u64,
+    /// Instructions retired (if available).
+    pub instructions: Option<u64>,
+    /// Branch misses (if available).
+    pub branch_misses: Option<u64>,
+    /// L1D cache read misses (if available).
+    pub l1d_misses: Option<u64>,
+    /// Last-level cache read misses (if available).
+    pub llc_misses: Option<u64>,
 }
 
 /// Trait for platform-specific cycle counting.
@@ -63,6 +75,33 @@ cfg_if::cfg_if! {
         pub type DefaultCounter = InstantCounter;
     }
 }
+
+// DefaultHwCounters is selected at compile time:
+//   1. Linux + `perf-counters`: PerfGroupCounters
+//   2. macOS ARM64 + `perf-counters`: KperfPmuCounters
+//   3. All others: NoopCounters
+cfg_if::cfg_if! {
+    if #[cfg(all(target_os = "linux", feature = "perf-counters"))] {
+        /// Default hw counters: `perf_event_open` grouped counters on Linux.
+        pub type DefaultHwCounters = perf_group::PerfGroupCounters;
+    } else if #[cfg(all(target_os = "macos", target_arch = "aarch64", feature = "perf-counters"))] {
+        /// Default hw counters: kperf PMU on macOS ARM64.
+        pub type DefaultHwCounters = kperf_pmu::KperfPmuCounters;
+    } else {
+        /// Default hw counters: no-op (counters unavailable).
+        pub type DefaultHwCounters = NoopCounters;
+    }
+}
+
+#[cfg(all(target_os = "linux", feature = "perf-counters"))]
+pub mod perf_group;
+
+#[cfg(all(
+    target_os = "macos",
+    target_arch = "aarch64",
+    feature = "perf-counters"
+))]
+pub mod kperf_pmu;
 
 #[cfg(all(target_arch = "x86_64", feature = "asm", feature = "std"))]
 pub use crate::isa_x86::rdtsc::RdtscCounter;

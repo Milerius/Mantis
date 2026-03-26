@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use criterion::measurement::{Measurement, ValueFormatter, WallTime};
 
-use mantis_platform::metering::{CycleCounter, DefaultCounter};
+use mantis_platform::metering::{CycleCounter, DefaultCounter, DefaultHwCounters, HwCounters};
 
 /// Collects cycle measurements from benchmark iterations.
 ///
@@ -24,6 +24,16 @@ pub struct SampleCollector {
     pub cycles: Vec<u64>,
     /// Wall-time nanoseconds from each sample.
     pub nanos: Vec<u64>,
+    /// Instructions retired per sample (empty if hw counters unavailable).
+    pub instructions: Vec<u64>,
+    /// Branch misses per sample.
+    pub branch_misses: Vec<u64>,
+    /// L1D cache read misses per sample.
+    pub l1d_misses: Vec<u64>,
+    /// LLC read misses per sample.
+    pub llc_misses: Vec<u64>,
+    /// Whether hardware counters were collected for these samples.
+    pub has_hw_counters: bool,
 }
 
 impl SampleCollector {
@@ -31,6 +41,11 @@ impl SampleCollector {
     pub fn reset(&mut self) {
         self.cycles.clear();
         self.nanos.clear();
+        self.instructions.clear();
+        self.branch_misses.clear();
+        self.l1d_misses.clear();
+        self.llc_misses.clear();
+        self.has_hw_counters = false;
     }
 
     /// Number of samples collected.
@@ -45,15 +60,66 @@ impl SampleCollector {
         self.cycles.is_empty()
     }
 
-    /// Mean cycles per sample (not per iteration).
-    #[must_use]
-    #[expect(clippy::cast_precision_loss, reason = "sample counts fit f64")]
-    pub fn mean_cycles_per_sample(&self) -> Option<f64> {
-        if self.cycles.is_empty() {
+    /// Weighted mean per-op for a counter vector, using iteration counts.
+    ///
+    /// Computes `sum(values) / sum(iters)` — a properly weighted average
+    /// that accounts for criterion's varying iteration counts per sample.
+    #[expect(clippy::cast_precision_loss, reason = "counter values fit f64")]
+    fn weighted_per_op(values: &[u64], iters: &[f64]) -> Option<f64> {
+        if values.is_empty() || iters.is_empty() {
             return None;
         }
-        let sum: u64 = self.cycles.iter().sum();
-        Some(sum as f64 / self.cycles.len() as f64)
+        let len = values.len().min(iters.len());
+        let total: f64 = values[..len].iter().map(|&v| v as f64).sum();
+        let total_iters: f64 = iters[..len].iter().sum();
+        if total_iters > 0.0 {
+            Some(total / total_iters)
+        } else {
+            None
+        }
+    }
+
+    /// Mean cycles per operation, normalized by criterion's iteration
+    /// counts from `sample.json`.
+    #[must_use]
+    pub fn mean_cycles_per_op(&self, iters: &[f64]) -> Option<f64> {
+        Self::weighted_per_op(&self.cycles, iters)
+    }
+
+    /// Mean instructions per operation.
+    #[must_use]
+    pub fn mean_instructions_per_op(&self, iters: &[f64]) -> Option<f64> {
+        if !self.has_hw_counters {
+            return None;
+        }
+        Self::weighted_per_op(&self.instructions, iters)
+    }
+
+    /// Mean branch misses per operation.
+    #[must_use]
+    pub fn mean_branch_misses_per_op(&self, iters: &[f64]) -> Option<f64> {
+        if !self.has_hw_counters {
+            return None;
+        }
+        Self::weighted_per_op(&self.branch_misses, iters)
+    }
+
+    /// Mean L1D cache misses per operation.
+    #[must_use]
+    pub fn mean_l1d_misses_per_op(&self, iters: &[f64]) -> Option<f64> {
+        if !self.has_hw_counters {
+            return None;
+        }
+        Self::weighted_per_op(&self.l1d_misses, iters)
+    }
+
+    /// Mean LLC misses per operation.
+    #[must_use]
+    pub fn mean_llc_misses_per_op(&self, iters: &[f64]) -> Option<f64> {
+        if !self.has_hw_counters {
+            return None;
+        }
+        Self::weighted_per_op(&self.llc_misses, iters)
     }
 }
 
@@ -76,42 +142,68 @@ pub fn take_samples() -> SampleCollector {
 /// Criterion measurement backed by a platform cycle counter.
 ///
 /// Wraps a [`CycleCounter`] and delegates formatting to [`WallTime`].
-/// On each `end()` call, stores cycle + nanos in the thread-local
-/// [`SampleCollector`] for later retrieval.
+/// Optionally collects hardware counters ([`DefaultHwCounters`]) when
+/// the `perf-counters` feature is enabled and the platform supports it.
+///
+/// On each `end()` call, stores cycle + nanos + hw counter deltas in
+/// the thread-local [`SampleCollector`] for later retrieval.
 pub struct MantisMeasurement<C: CycleCounter> {
     counter: C,
     wall: WallTime,
+    hw: Option<DefaultHwCounters>,
 }
 
+/// Hw counter snapshot type alias for readability.
+type HwSnapshot = <DefaultHwCounters as HwCounters>::Snapshot;
+
 impl<C: CycleCounter> MantisMeasurement<C> {
-    /// Create a new measurement with the given counter.
+    /// Create a new measurement with the given counter (no hw counters).
     pub fn new(counter: C) -> Self {
         Self {
             counter,
             wall: WallTime,
+            hw: None,
+        }
+    }
+
+    /// Create a measurement with both cycle counter and hw counters.
+    pub fn with_hw_counters(counter: C, hw: DefaultHwCounters) -> Self {
+        Self {
+            counter,
+            wall: WallTime,
+            hw: Some(hw),
         }
     }
 }
 
 impl<C: CycleCounter> Measurement for MantisMeasurement<C> {
-    type Intermediate = (u64, std::time::Instant);
+    type Intermediate = (u64, std::time::Instant, Option<HwSnapshot>);
     type Value = Duration;
 
     fn start(&self) -> Self::Intermediate {
+        let hw_snap = self.hw.as_ref().and_then(HwCounters::start);
         let cycles = self.counter.start();
         let wall_start = std::time::Instant::now();
-        (cycles, wall_start)
+        (cycles, wall_start, hw_snap)
     }
 
     fn end(&self, i: Self::Intermediate) -> Self::Value {
         let wall_elapsed = i.1.elapsed();
         let m = self.counter.elapsed(i.0);
+        let hw_deltas = self.hw.as_ref().and_then(|hw| hw.read(&i.2));
 
         // Store the sample for later retrieval
         SAMPLES.with(|s| {
             let mut collector = s.borrow_mut();
             collector.cycles.push(m.cycles);
             collector.nanos.push(m.nanos);
+            if let Some(d) = hw_deltas {
+                collector.instructions.push(d.instructions);
+                collector.branch_misses.push(d.branch_misses);
+                collector.l1d_misses.push(d.l1d_misses);
+                collector.llc_misses.push(d.llc_misses);
+                collector.has_hw_counters = true;
+            }
         });
 
         wall_elapsed
@@ -143,9 +235,28 @@ pub type DefaultMeasurement = MantisMeasurement<DefaultCounter>;
 
 impl DefaultMeasurement {
     /// Create a default measurement for the current platform.
+    ///
+    /// Attempts to initialize hardware counters if the `perf-counters`
+    /// feature is enabled. Falls back gracefully to cycles-only if
+    /// hw counter initialization fails (e.g. missing permissions,
+    /// unsupported platform).
     #[must_use]
+    #[expect(clippy::print_stderr, reason = "diagnostic output for benchmark setup")]
     pub fn platform_default() -> Self {
-        Self::new(DefaultCounter::default())
+        let counter = DefaultCounter::default();
+        match DefaultHwCounters::try_new() {
+            Ok(hw) => {
+                eprintln!("[mantis-bench] Hardware counters: enabled");
+                Self::with_hw_counters(counter, hw)
+            }
+            Err(e) => {
+                eprintln!(
+                    "[mantis-bench] Hardware counters: unavailable ({e}), \
+                     falling back to cycles-only"
+                );
+                Self::new(counter)
+            }
+        }
     }
 }
 
@@ -178,6 +289,31 @@ pub fn read_criterion_estimates(bench_id: &str) -> Option<CriterionEstimates> {
         median_ns: v["median"]["point_estimate"].as_f64()?,
         std_dev_ns: v["std_dev"]["point_estimate"].as_f64().unwrap_or(0.0),
     })
+}
+
+/// Read criterion's `sample.json` for a benchmark and extract the
+/// per-sample iteration counts.
+///
+/// Returns the `iters` array or `None` if the file doesn't exist.
+#[must_use]
+pub fn read_criterion_sample_iters(bench_id: &str) -> Option<Vec<f64>> {
+    let dir_name = bench_id.replace('/', "_");
+    let base = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_owned());
+    let workspace = std::path::Path::new(&base)
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap_or(std::path::Path::new("."));
+    let path = workspace
+        .join("target")
+        .join("criterion")
+        .join(&dir_name)
+        .join("new")
+        .join("sample.json");
+    let content = std::fs::read_to_string(&path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let arr = v["iters"].as_array()?;
+    let iters: Vec<f64> = arr.iter().filter_map(serde_json::Value::as_f64).collect();
+    if iters.is_empty() { None } else { Some(iters) }
 }
 
 /// Parsed criterion estimates for a benchmark.
@@ -217,9 +353,12 @@ mod tests {
     }
 
     #[test]
-    fn sample_collector_mean() {
+    fn sample_collector_per_op() {
         let mut collector = SampleCollector::default();
-        collector.cycles.extend_from_slice(&[10, 20, 30]);
-        assert!((collector.mean_cycles_per_sample().unwrap_or(0.0) - 20.0).abs() < 0.01);
+        collector.cycles.extend_from_slice(&[100, 400, 900]);
+        let iters = [10.0, 20.0, 30.0];
+        // weighted: (100+400+900)/(10+20+30) = 1400/60 ≈ 23.33
+        let per_op = collector.mean_cycles_per_op(&iters).unwrap_or(0.0);
+        assert!((per_op - 23.333).abs() < 0.01);
     }
 }

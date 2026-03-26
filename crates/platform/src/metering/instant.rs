@@ -37,6 +37,10 @@ impl CycleCounter for InstantCounter {
         Measurement {
             nanos: now.saturating_sub(start),
             cycles: 0,
+            instructions: None,
+            branch_misses: None,
+            l1d_misses: None,
+            llc_misses: None,
         }
     }
 }

@@ -376,6 +376,9 @@ fn bench_spsc(c: &mut MantisC) {
     if cfg!(feature = "asm") {
         features.push("asm".to_owned());
     }
+    if cfg!(feature = "perf-counters") {
+        features.push("perf-counters".to_owned());
+    }
     if cfg!(feature = "bench-contenders") {
         features.push("bench-contenders".to_owned());
     }
