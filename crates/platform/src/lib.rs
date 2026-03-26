@@ -33,4 +33,8 @@ pub use intrinsics::{
     SignedWideMul, WideMul, WideMulAdd1, WideMulAdd2,
     mul_acc, mul_acc32, mul_double_acc, mul_double_acc32,
 };
+pub use intrinsics::CopyPolicy;
+pub use intrinsics::DefaultCopyPolicy;
+#[cfg(feature = "nightly")]
+pub use intrinsics::SimdCopyPolicy;
 pub use pad::CachePadded;
