@@ -63,6 +63,34 @@ pub(crate) fn drop_range<T, S: Storage<T>, I: IndexStrategy>(
     }
 }
 
+/// Prefetch the slot at `index` for writing (producer side).
+///
+/// No-op when the `prefetch` feature is disabled.
+#[cfg(feature = "prefetch")]
+#[inline]
+pub(crate) fn prefetch_slot_write<T, S: Storage<T>>(storage: &S, index: usize) {
+    use mantis_platform::{PrefetchLocality, PrefetchRW, prefetch};
+    // SAFETY: index < capacity (guaranteed by IndexStrategy::wrap before this
+    // call). slot_ptr returns a valid pointer into owned storage. prefetch is
+    // a non-mutating memory hint with no observable side effects.
+    let slot = unsafe { storage.slot_ptr(index) };
+    prefetch(slot.cast::<u8>(), PrefetchRW::Write, PrefetchLocality::High);
+}
+
+/// Prefetch the slot at `index` for reading (consumer side).
+///
+/// No-op when the `prefetch` feature is disabled.
+#[cfg(feature = "prefetch")]
+#[inline]
+pub(crate) fn prefetch_slot_read<T, S: Storage<T>>(storage: &S, index: usize) {
+    use mantis_platform::{PrefetchLocality, PrefetchRW, prefetch};
+    // SAFETY: index < capacity (engine invariant: tail is always wrapped via
+    // IndexStrategy::wrap before reaching this call). slot_ptr returns a
+    // valid pointer. prefetch is a non-mutating hint with no side effects.
+    let slot = unsafe { storage.slot_ptr(index) };
+    prefetch(slot.cast::<u8>(), PrefetchRW::Read, PrefetchLocality::High);
+}
+
 // --- unsafe impl Sync for RingEngine ---
 //
 // RingEngine contains Cell<usize> (tail_cached, head_cached), which
