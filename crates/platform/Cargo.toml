@@ -1,0 +1,23 @@
+[package]
+name = "mantis-platform"
+description = "Platform abstractions, constant-time types, SIMD intrinsics, and cycle counters for the Mantis SDK"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+std = []
+asm = []
+nightly = []
+
+[dependencies]
+cfg-if = { workspace = true }
+
+[target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
+libc = { workspace = true }
+
+[lints]
+workspace = true

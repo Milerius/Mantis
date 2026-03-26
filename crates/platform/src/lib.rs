@@ -1,0 +1,17 @@
+//! Platform abstractions for the Mantis SDK.
+//!
+//! Consolidates all platform-specific code: constant-time types, compile-time
+//! ISA detection, SIMD copy kernels, cycle counters, cache-line padding,
+//! extended precision arithmetic, and bit operations. Full parity with
+//! Constantine's `platforms/` module.
+//!
+//! This crate is `no_std` by default. Enable `std` for `InstantCounter`,
+//! CPUID detection, and CPU name. Enable `asm` for `RdtscCounter` on x86_64.
+
+#![no_std]
+#![deny(unsafe_code)]
+#![cfg_attr(feature = "nightly", feature(generic_const_exprs))]
+#![cfg_attr(feature = "nightly", allow(incomplete_features))]
+
+#[cfg(feature = "std")]
+extern crate std;
