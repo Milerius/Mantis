@@ -38,11 +38,7 @@ jobs:
           prefix-key: "bench-${{ steps.cpu.outputs.hash }}"
       - name: Allow perf_event_open (Linux)
         if: runner.os == 'Linux'
-        run: |
-          sudo sysctl -w kernel.perf_event_paranoid=1
-          cat /proc/sys/kernel/perf_event_paranoid
-          ls -la /proc/sys/kernel/perf_event_* || true
-          perf stat -- true 2>&1 || true
+        run: sudo sysctl -w kernel.perf_event_paranoid=1
       - name: Run SPSC benchmarks
         run: cargo +nightly bench --bench spsc --all-features
         env:
