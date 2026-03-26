@@ -40,18 +40,12 @@ pub fn spsc_copy_pop_u64(ring: &mut SpscRingCopy<u64, 1024>, out: &mut u64) -> b
 }
 
 #[inline(never)]
-pub fn spsc_copy_push_batch_u64(
-    ring: &mut SpscRingCopy<u64, 1024>,
-    src: &[u64],
-) -> usize {
+pub fn spsc_copy_push_batch_u64(ring: &mut SpscRingCopy<u64, 1024>, src: &[u64]) -> usize {
     ring.push_batch(src)
 }
 
 #[inline(never)]
-pub fn spsc_copy_pop_batch_u64(
-    ring: &mut SpscRingCopy<u64, 1024>,
-    dst: &mut [u64],
-) -> usize {
+pub fn spsc_copy_pop_batch_u64(ring: &mut SpscRingCopy<u64, 1024>, dst: &mut [u64]) -> usize {
     ring.pop_batch(dst)
 }
 
