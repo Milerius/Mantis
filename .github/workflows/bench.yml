@@ -63,3 +63,38 @@ jobs:
           path: |
             target/bench-report-spsc.json
             bench-output.json
+
+  report:
+    name: Post benchmark report
+    needs: benchmark
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Download Linux results
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4
+        with:
+          name: benchmark-results-ubuntu-latest
+          path: results/linux
+        continue-on-error: true
+      - name: Download macOS results
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4
+        with:
+          name: benchmark-results-macos-latest
+          path: results/macos
+        continue-on-error: true
+      - name: Generate markdown report
+        run: |
+          linux_json="results/linux/target/bench-report-spsc.json"
+          macos_json="results/macos/target/bench-report-spsc.json"
+          bash .github/scripts/bench-report.sh "$linux_json" "$macos_json" > report.md
+      - name: Post PR comment
+        uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2.9.1
+        with:
+          header: benchmark-report
+          path: report.md
