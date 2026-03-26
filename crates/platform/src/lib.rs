@@ -6,7 +6,7 @@
 //! Constantine's `platforms/` module.
 //!
 //! This crate is `no_std` by default. Enable `std` for `InstantCounter`,
-//! CPUID detection, and CPU name. Enable `asm` for `RdtscCounter` on x86_64.
+//! CPUID detection, and CPU name. Enable `asm` for `RdtscCounter` on `x86_64`.
 
 #![no_std]
 #![deny(unsafe_code)]
@@ -15,3 +15,6 @@
 
 #[cfg(feature = "std")]
 extern crate std;
+
+pub mod bithacks;
+pub mod config;
