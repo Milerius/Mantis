@@ -241,11 +241,21 @@ impl DefaultMeasurement {
     /// hw counter initialization fails (e.g. missing permissions,
     /// unsupported platform).
     #[must_use]
+    #[expect(clippy::print_stderr, reason = "diagnostic output for benchmark setup")]
     pub fn platform_default() -> Self {
         let counter = DefaultCounter::default();
         match DefaultHwCounters::try_new() {
-            Ok(hw) => Self::with_hw_counters(counter, hw),
-            Err(_) => Self::new(counter),
+            Ok(hw) => {
+                eprintln!("[mantis-bench] Hardware counters: enabled");
+                Self::with_hw_counters(counter, hw)
+            }
+            Err(e) => {
+                eprintln!(
+                    "[mantis-bench] Hardware counters: unavailable ({e}), \
+                     falling back to cycles-only"
+                );
+                Self::new(counter)
+            }
         }
     }
 }
