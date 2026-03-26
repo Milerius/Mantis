@@ -5,7 +5,12 @@
 //!
 //! Usage: `cargo asm -p mantis-queue --example asm_shim <symbol>`
 
-#![expect(missing_docs, clippy::print_stdout, clippy::print_stderr, reason = "ASM inspection shim, not a real example")]
+#![expect(
+    missing_docs,
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "ASM inspection shim, not a real example"
+)]
 
 use mantis_queue::{SpscRing, SpscRingCopy};
 

@@ -1,6 +1,9 @@
 #![cfg_attr(
     target_arch = "x86_64",
-    expect(unsafe_code, reason = "constant-time multiplexers require x86_64 inline asm")
+    expect(
+        unsafe_code,
+        reason = "constant-time multiplexers require x86_64 inline asm"
+    )
 )]
 //! Constant-time multiplexers: select, conditional copy, and secret lookup.
 //!

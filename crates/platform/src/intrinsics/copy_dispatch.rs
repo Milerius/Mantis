@@ -29,12 +29,18 @@
 // branches, so it incorrectly marks them as unused.
 #![cfg_attr(
     not(test),
-    expect(dead_code, reason = "SIMD dispatch helpers are called through const-generic branches")
+    expect(
+        dead_code,
+        reason = "SIMD dispatch helpers are called through const-generic branches"
+    )
 )]
 // CopyPolicy trait methods are intentionally non-unsafe (declared safe to
 // satisfy `#![deny(unsafe_code)]` on the crate root). Implementations
 // dereference raw pointers under a documented safety contract.
-#![expect(clippy::not_unsafe_ptr_arg_deref, reason = "CopyPolicy methods are safe by design")]
+#![expect(
+    clippy::not_unsafe_ptr_arg_deref,
+    reason = "CopyPolicy methods are safe by design"
+)]
 
 use core::marker::PhantomData;
 use core::ptr;
