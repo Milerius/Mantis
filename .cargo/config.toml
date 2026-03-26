@@ -1,4 +1,4 @@
-# Enable native CPU features for benchmarks (NEON on aarch64, SSE2/AVX on x86_64).
-# This is a local config — CI overrides via RUSTFLAGS if needed.
-[target.'cfg(any(target_arch = "x86_64", target_arch = "aarch64"))']
-rustflags = ["-C", "target-cpu=native"]
+# Local developer overrides go here.
+# Do NOT set target-cpu=native here — it's committed to git and would affect CI.
+# Instead, set it in your shell: export RUSTFLAGS="-C target-cpu=native"
+# or use a .cargo/config-local.toml (not tracked by git).
