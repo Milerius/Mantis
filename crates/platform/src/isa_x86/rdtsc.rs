@@ -80,7 +80,7 @@ mod tests {
         let counter = RdtscCounter::new();
         let t0 = counter.start();
         // A small amount of work to ensure the TSC advances.
-        let _ = (0u64..1000).fold(0u64, |acc, x| acc.wrapping_add(x));
+        let _ = (0u64..1000).fold(0u64, u64::wrapping_add);
         let t1 = counter.start();
         assert!(t1 >= t0, "TSC must be monotonically non-decreasing");
     }
