@@ -19,6 +19,7 @@ extern crate std;
 pub mod bithacks;
 pub mod config;
 pub mod constant_time;
+pub mod intrinsics;
 pub mod pad;
 
 // Top-level re-exports for convenience
@@ -26,4 +27,5 @@ pub use constant_time::{Borrow, CTBool, Carry, Ct};
 pub use constant_time::{ccopy, ccopy32, ccopy_usize, mux, mux32, mux_bool, mux_bool32,
     mux_bool_usize, mux_usize, secret_lookup};
 pub use constant_time::{div2n1n, div2n1n_u32};
+pub use intrinsics::{AddCarryOp, SubBorrowOp};
 pub use pad::CachePadded;
