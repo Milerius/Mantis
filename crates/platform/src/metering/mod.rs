@@ -40,10 +40,9 @@ pub trait CycleCounter: Send + Sync {
     fn elapsed(&self, start: u64) -> Measurement;
 }
 
-/// Default counter selected at compile time.
+/// Default counter selected at compile time (requires the `std` feature).
 ///
 /// Platform-specific counters (`RdtscCounter`, `KperfCounter`, `PmuCounter`)
-/// will be wired here in Tasks 15-16. For now, falls back to [`InstantCounter`]
-/// on all platforms when the `std` feature is enabled.
+/// will be wired here in Tasks 15-16. For now, falls back to [`InstantCounter`].
 #[cfg(feature = "std")]
 pub type DefaultCounter = InstantCounter;

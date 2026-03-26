@@ -1,13 +1,12 @@
-//! Fallback counter using `std::time::Instant`.
+//! Fallback counter using [`std::time::Instant`].
 
 use std::time::Instant;
 
 use super::{CycleCounter, Measurement};
 
-/// Fallback counter using `std::time::Instant`.
+/// `Instant`-based counter for platforms without hardware cycle access.
 ///
-/// Reports nanoseconds; `cycles` is always 0. Use this on platforms where
-/// no hardware cycle counter is available or enabled.
+/// Reports nanoseconds via `Instant::elapsed`; `cycles` is always 0.
 pub struct InstantCounter {
     epoch: Instant,
 }
