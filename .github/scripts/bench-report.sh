@@ -83,9 +83,9 @@ render_comparison() {
       if [ -z "$cell" ]; then
         row="$row - |"
       else
-        # Bold the best value
+        # Bold the best value with trophy emoji
         if [ "$cell" = "$best" ]; then
-          row="$row **$cell** |"
+          row="$row **${cell}** 🏆 |"
         else
           row="$row $cell |"
         fi
@@ -136,7 +136,7 @@ render_insns_comparison() {
       if [ -z "$cell" ] || [ "$cell" = "null" ]; then
         row="$row - |"
       elif [ -n "$best" ] && [ "$cell" = "$best" ]; then
-        row="$row **$cell** |"
+        row="$row **${cell}** 🏆 |"
       else
         row="$row $cell |"
       fi
