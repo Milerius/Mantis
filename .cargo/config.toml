@@ -1,4 +1,0 @@
-# Enable native CPU features for benchmarks (NEON on aarch64, SSE2/AVX on x86_64).
-# CI overrides via RUSTFLAGS env which takes precedence over this config.
-[target.'cfg(any(target_arch = "x86_64", target_arch = "aarch64"))']
-rustflags = ["-C", "target-cpu=native"]

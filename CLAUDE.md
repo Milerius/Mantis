@@ -16,6 +16,7 @@ Deny:           cargo deny check
 Miri:           cargo +nightly miri test -p mantis-queue
 Careful:        cargo +nightly careful test
 Bench:          cargo bench --bench spsc
+Bench native:   RUSTFLAGS='-C target-cpu=native' cargo bench --bench spsc
 Bench + ext:    cargo bench --bench spsc --features bench-contenders
 Fuzz:           cargo +nightly fuzz run <target>
 Layout:         cargo run -p mantis-layout
