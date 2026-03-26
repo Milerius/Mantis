@@ -18,10 +18,7 @@ fn cpu_name_impl() -> String {
         .output()
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map_or_else(
-            || String::from("unknown"),
-            |s| s.trim().to_owned(),
-        )
+        .map_or_else(|| String::from("unknown"), |s| s.trim().to_owned())
 }
 
 #[cfg(target_os = "linux")]

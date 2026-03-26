@@ -148,14 +148,22 @@ mod tests {
     #[test]
     fn condition_code_all_variants() {
         let codes = [
-            ConditionCode::Eq, ConditionCode::Ne,
-            ConditionCode::Cs, ConditionCode::Hs,
-            ConditionCode::Cc, ConditionCode::Lo,
-            ConditionCode::Mi, ConditionCode::Pl,
-            ConditionCode::Vs, ConditionCode::Vc,
-            ConditionCode::Hi, ConditionCode::Ls,
-            ConditionCode::Ge, ConditionCode::Lt,
-            ConditionCode::Gt, ConditionCode::Le,
+            ConditionCode::Eq,
+            ConditionCode::Ne,
+            ConditionCode::Cs,
+            ConditionCode::Hs,
+            ConditionCode::Cc,
+            ConditionCode::Lo,
+            ConditionCode::Mi,
+            ConditionCode::Pl,
+            ConditionCode::Vs,
+            ConditionCode::Vc,
+            ConditionCode::Hi,
+            ConditionCode::Ls,
+            ConditionCode::Ge,
+            ConditionCode::Lt,
+            ConditionCode::Gt,
+            ConditionCode::Le,
             ConditionCode::Al,
         ];
         assert_eq!(codes.len(), 17);
@@ -165,9 +173,18 @@ mod tests {
     fn operand_construction() {
         let reg = Operand::Reg(Register::Xzr);
         let imm = Operand::Imm(-1);
-        let mem = Operand::Mem { base: Register::Xzr, offset: 16 };
+        let mem = Operand::Mem {
+            base: Register::Xzr,
+            offset: 16,
+        };
         assert_eq!(reg, Operand::Reg(Register::Xzr));
         assert_eq!(imm, Operand::Imm(-1));
-        assert_eq!(mem, Operand::Mem { base: Register::Xzr, offset: 16 });
+        assert_eq!(
+            mem,
+            Operand::Mem {
+                base: Register::Xzr,
+                offset: 16
+            }
+        );
     }
 }

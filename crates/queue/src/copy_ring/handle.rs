@@ -9,9 +9,9 @@ use mantis_core::{IndexStrategy, Instrumentation, PushPolicy};
 use mantis_platform::CopyPolicy;
 
 use crate::copy_ring::engine::CopyRingEngine;
-use mantis_platform::DefaultCopyPolicy;
 use crate::storage::{HeapStorage, InlineStorage};
 use mantis_core::{ImmediatePush, NoInstr, Pow2Masked};
+use mantis_platform::DefaultCopyPolicy;
 
 /// Producer handle for the copy-optimized SPSC ring.
 pub struct ProducerCopy<T: Copy, S, I, P, Instr, CP> {

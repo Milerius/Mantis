@@ -14,6 +14,6 @@ pub use copy_dispatch::DefaultCopyPolicy;
 pub use copy_dispatch::SimdCopyPolicy;
 pub use copy_policy::CopyPolicy;
 pub use extended_prec::{
-    SignedWideMul, WideMul, WideMulAdd1, WideMulAdd2,
-    mul_acc, mul_acc32, mul_double_acc, mul_double_acc32,
+    SignedWideMul, WideMul, WideMulAdd1, WideMulAdd2, mul_acc, mul_acc32, mul_double_acc,
+    mul_double_acc32,
 };

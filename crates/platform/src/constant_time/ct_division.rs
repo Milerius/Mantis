@@ -145,7 +145,10 @@ mod tests {
         // n_hi: upper half — shifting 128 right by 64 fits in u64.
         // n_lo: lower half — truncation is deliberate.
         let n_hi = (num_shifted >> 64) as u64;
-        #[expect(clippy::cast_possible_truncation, reason = "intentional: lower 64 bits of double-width dividend")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional: lower 64 bits of double-width dividend"
+        )]
         let n_lo = num_shifted as u64;
 
         let (q, r_norm) = div2n1n(Ct::new(n_hi), Ct::new(n_lo), Ct::new(d_norm));
@@ -162,7 +165,10 @@ mod tests {
         // n_hi: upper half — shifting 64 right by 32 fits in u32.
         // n_lo: lower half — truncation is deliberate.
         let n_hi = (num_shifted >> 32) as u32;
-        #[expect(clippy::cast_possible_truncation, reason = "intentional: lower 32 bits of double-width dividend")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional: lower 32 bits of double-width dividend"
+        )]
         let n_lo = num_shifted as u32;
 
         let (q, r_norm) = div2n1n_u32(Ct::new(n_hi), Ct::new(n_lo), Ct::new(d_norm));
@@ -220,9 +226,15 @@ mod tests {
         ];
         for &(num, denom) in cases {
             // expected values fit in u64 because num < 2^64 in all cases above.
-            #[expect(clippy::cast_possible_truncation, reason = "intentional: taking the low half of shifted double-width value")]
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "intentional: taking the low half of shifted double-width value"
+            )]
             let expected_q = (num / u128::from(denom)) as u64;
-            #[expect(clippy::cast_possible_truncation, reason = "intentional: taking the low half of shifted double-width value")]
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "intentional: taking the low half of shifted double-width value"
+            )]
             let expected_r = (num % u128::from(denom)) as u64;
             let (q, r) = div_u128_via_ct(num, denom);
             assert_eq!(q, expected_q, "q mismatch for {num}/{denom}");
@@ -288,9 +300,15 @@ mod tests {
         ];
         for &(num, denom) in cases {
             // expected values fit in u32 because num < 2^32 in all cases above.
-            #[expect(clippy::cast_possible_truncation, reason = "intentional: taking the low half of shifted double-width value")]
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "intentional: taking the low half of shifted double-width value"
+            )]
             let expected_q = (num / u64::from(denom)) as u32;
-            #[expect(clippy::cast_possible_truncation, reason = "intentional: taking the low half of shifted double-width value")]
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "intentional: taking the low half of shifted double-width value"
+            )]
             let expected_r = (num % u64::from(denom)) as u32;
             let (q, r) = div_u64_via_ct(num, denom);
             assert_eq!(q, expected_q, "q mismatch for {num}/{denom}");

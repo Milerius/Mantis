@@ -64,7 +64,10 @@ impl CycleCounter for RdtscCounter {
             .saturating_mul(cycles)
             .checked_div(epoch_cycles)
             .unwrap_or(0);
-        Measurement { nanos: interval_nanos, cycles }
+        Measurement {
+            nanos: interval_nanos,
+            cycles,
+        }
     }
 }
 

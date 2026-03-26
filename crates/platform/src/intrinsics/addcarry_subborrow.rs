@@ -20,12 +20,17 @@ pub trait SubBorrowOp: Sized {
 impl AddCarryOp for Ct<u32> {
     #[inline]
     fn add_c(self, rhs: Self, carry_in: Carry) -> (Self, Carry) {
-        let wide =
-            u64::from(self.inner()) + u64::from(rhs.inner()) + u64::from(carry_in.inner());
+        let wide = u64::from(self.inner()) + u64::from(rhs.inner()) + u64::from(carry_in.inner());
         // Intentional truncation: low 32 bits are the sum, high 32 bits hold carry (0 or 1).
-        #[expect(clippy::cast_possible_truncation, reason = "intentional widening-split pattern")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional widening-split pattern"
+        )]
         let sum = Ct::new(wide as u32);
-        #[expect(clippy::cast_possible_truncation, reason = "intentional widening-split pattern")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional widening-split pattern"
+        )]
         let carry_out = Ct::new((wide >> 32) as u8);
         (sum, carry_out)
     }
@@ -34,12 +39,14 @@ impl AddCarryOp for Ct<u32> {
 impl SubBorrowOp for Ct<u32> {
     #[inline]
     fn sub_b(self, rhs: Self, borrow_in: Borrow) -> (Self, Borrow) {
-        let wide =
-            u64::from(self.inner())
-                .wrapping_sub(u64::from(rhs.inner()))
-                .wrapping_sub(u64::from(borrow_in.inner()));
+        let wide = u64::from(self.inner())
+            .wrapping_sub(u64::from(rhs.inner()))
+            .wrapping_sub(u64::from(borrow_in.inner()));
         // Intentional truncation: low 32 bits are the difference; high word is all-ones on borrow.
-        #[expect(clippy::cast_possible_truncation, reason = "intentional widening-split pattern")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional widening-split pattern"
+        )]
         let diff = Ct::new(wide as u32);
         // Mask to extract the single borrow bit from the all-ones high word.
         // & 1 ensures the value is 0 or 1, which fits in u8 without truncation.
@@ -54,9 +61,15 @@ impl AddCarryOp for Ct<u64> {
         let wide =
             u128::from(self.inner()) + u128::from(rhs.inner()) + u128::from(carry_in.inner());
         // Intentional truncation: low 64 bits are the sum, high 64 bits hold carry (0 or 1).
-        #[expect(clippy::cast_possible_truncation, reason = "intentional widening-split pattern")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional widening-split pattern"
+        )]
         let sum = Ct::new(wide as u64);
-        #[expect(clippy::cast_possible_truncation, reason = "intentional widening-split pattern")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional widening-split pattern"
+        )]
         let carry_out = Ct::new((wide >> 64) as u8);
         (sum, carry_out)
     }
@@ -65,12 +78,14 @@ impl AddCarryOp for Ct<u64> {
 impl SubBorrowOp for Ct<u64> {
     #[inline]
     fn sub_b(self, rhs: Self, borrow_in: Borrow) -> (Self, Borrow) {
-        let wide =
-            u128::from(self.inner())
-                .wrapping_sub(u128::from(rhs.inner()))
-                .wrapping_sub(u128::from(borrow_in.inner()));
+        let wide = u128::from(self.inner())
+            .wrapping_sub(u128::from(rhs.inner()))
+            .wrapping_sub(u128::from(borrow_in.inner()));
         // Intentional truncation: low 64 bits are the difference; high word is all-ones on borrow.
-        #[expect(clippy::cast_possible_truncation, reason = "intentional widening-split pattern")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional widening-split pattern"
+        )]
         let diff = Ct::new(wide as u64);
         // Mask to extract the single borrow bit from the all-ones high word.
         // & 1 ensures the value is 0 or 1, which fits in u8 without truncation.

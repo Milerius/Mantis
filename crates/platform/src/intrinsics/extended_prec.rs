@@ -62,7 +62,10 @@ impl WideMul for Ct<u32> {
     fn wide_mul(self, rhs: Self) -> (Self, Self) {
         let wide = u64::from(self.inner()) * u64::from(rhs.inner());
         // Intentional truncation: low 32 bits are `lo`, high 32 bits are `hi`.
-        #[expect(clippy::cast_possible_truncation, reason = "intentional widening-split pattern")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional widening-split pattern"
+        )]
         let lo = Ct::new(wide as u32);
         let hi = Ct::new((wide >> 32) as u32);
         (hi, lo)
@@ -73,9 +76,11 @@ impl WideMulAdd1 for Ct<u32> {
     #[inline]
     fn muladd1(self, rhs: Self, c: Self) -> (Self, Self) {
         // max² + max = (0xFFFFFFFE_00000001) + 0xFFFFFFFF = 0xFFFFFFFF_00000000 — fits in u64.
-        let wide =
-            u64::from(self.inner()) * u64::from(rhs.inner()) + u64::from(c.inner());
-        #[expect(clippy::cast_possible_truncation, reason = "intentional widening-split pattern")]
+        let wide = u64::from(self.inner()) * u64::from(rhs.inner()) + u64::from(c.inner());
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional widening-split pattern"
+        )]
         let lo = Ct::new(wide as u32);
         let hi = Ct::new((wide >> 32) as u32);
         (hi, lo)
@@ -89,7 +94,10 @@ impl WideMulAdd2 for Ct<u32> {
         let wide = u64::from(self.inner()) * u64::from(rhs.inner())
             + u64::from(c1.inner())
             + u64::from(c2.inner());
-        #[expect(clippy::cast_possible_truncation, reason = "intentional widening-split pattern")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional widening-split pattern"
+        )]
         let lo = Ct::new(wide as u32);
         let hi = Ct::new((wide >> 32) as u32);
         (hi, lo)
@@ -107,11 +115,20 @@ impl SignedWideMul for Ct<u32> {
         )]
         let wide = i64::from(self.inner() as i32) * i64::from(rhs.inner() as i32);
         // Reinterpret result bits back as unsigned — sign-extended high word is correct.
-        #[expect(clippy::cast_sign_loss, reason = "intentional bit-reinterpretation: i32 -> u32")]
-        #[expect(clippy::cast_possible_truncation, reason = "intentional widening-split pattern")]
+        #[expect(
+            clippy::cast_sign_loss,
+            reason = "intentional bit-reinterpretation: i32 -> u32"
+        )]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional widening-split pattern"
+        )]
         let lo = Ct::new(wide as u32);
         // After shifting right 32 bits the i64 value fits in i32, so the only lint is sign loss.
-        #[expect(clippy::cast_sign_loss, reason = "intentional bit-reinterpretation: i32 -> u32")]
+        #[expect(
+            clippy::cast_sign_loss,
+            reason = "intentional bit-reinterpretation: i32 -> u32"
+        )]
         let hi = Ct::new((wide >> 32) as u32);
         (hi, lo)
     }
@@ -126,7 +143,10 @@ impl WideMul for Ct<u64> {
     fn wide_mul(self, rhs: Self) -> (Self, Self) {
         let wide = u128::from(self.inner()) * u128::from(rhs.inner());
         // Intentional truncation: low 64 bits are `lo`, high 64 bits are `hi`.
-        #[expect(clippy::cast_possible_truncation, reason = "intentional widening-split pattern")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional widening-split pattern"
+        )]
         let lo = Ct::new(wide as u64);
         let hi = Ct::new((wide >> 64) as u64);
         (hi, lo)
@@ -137,9 +157,11 @@ impl WideMulAdd1 for Ct<u64> {
     #[inline]
     fn muladd1(self, rhs: Self, c: Self) -> (Self, Self) {
         // max² + max fits in u128 — no overflow.
-        let wide =
-            u128::from(self.inner()) * u128::from(rhs.inner()) + u128::from(c.inner());
-        #[expect(clippy::cast_possible_truncation, reason = "intentional widening-split pattern")]
+        let wide = u128::from(self.inner()) * u128::from(rhs.inner()) + u128::from(c.inner());
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional widening-split pattern"
+        )]
         let lo = Ct::new(wide as u64);
         let hi = Ct::new((wide >> 64) as u64);
         (hi, lo)
@@ -153,7 +175,10 @@ impl WideMulAdd2 for Ct<u64> {
         let wide = u128::from(self.inner()) * u128::from(rhs.inner())
             + u128::from(c1.inner())
             + u128::from(c2.inner());
-        #[expect(clippy::cast_possible_truncation, reason = "intentional widening-split pattern")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional widening-split pattern"
+        )]
         let lo = Ct::new(wide as u64);
         let hi = Ct::new((wide >> 64) as u64);
         (hi, lo)
@@ -170,11 +195,20 @@ impl SignedWideMul for Ct<u64> {
             reason = "intentional bit-reinterpretation: u64 -> i64"
         )]
         let wide = i128::from(self.inner() as i64) * i128::from(rhs.inner() as i64);
-        #[expect(clippy::cast_sign_loss, reason = "intentional bit-reinterpretation: i64 -> u64")]
-        #[expect(clippy::cast_possible_truncation, reason = "intentional widening-split pattern")]
+        #[expect(
+            clippy::cast_sign_loss,
+            reason = "intentional bit-reinterpretation: i64 -> u64"
+        )]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "intentional widening-split pattern"
+        )]
         let lo = Ct::new(wide as u64);
         // After shifting right 64 bits the i128 value fits in i64, so only sign loss fires.
-        #[expect(clippy::cast_sign_loss, reason = "intentional bit-reinterpretation: i64 -> u64")]
+        #[expect(
+            clippy::cast_sign_loss,
+            reason = "intentional bit-reinterpretation: i64 -> u64"
+        )]
         let hi = Ct::new((wide >> 64) as u64);
         (hi, lo)
     }
@@ -193,13 +227,7 @@ impl SignedWideMul for Ct<u64> {
     clippy::many_single_char_names,
     reason = "canonical multi-limb accumulator notation from Constantine"
 )]
-pub fn mul_acc(
-    t: &mut Ct<u64>,
-    u: &mut Ct<u64>,
-    v: &mut Ct<u64>,
-    a: Ct<u64>,
-    b: Ct<u64>,
-) {
+pub fn mul_acc(t: &mut Ct<u64>, u: &mut Ct<u64>, v: &mut Ct<u64>, a: Ct<u64>, b: Ct<u64>) {
     let (uv_hi, uv_lo) = a.wide_mul(b);
     let (new_v, carry) = (*v).add_c(uv_lo, Carry::new(0));
     *v = new_v;
@@ -214,13 +242,7 @@ pub fn mul_acc(
     clippy::many_single_char_names,
     reason = "canonical multi-limb accumulator notation from Constantine"
 )]
-pub fn mul_acc32(
-    t: &mut Ct<u32>,
-    u: &mut Ct<u32>,
-    v: &mut Ct<u32>,
-    a: Ct<u32>,
-    b: Ct<u32>,
-) {
+pub fn mul_acc32(t: &mut Ct<u32>, u: &mut Ct<u32>, v: &mut Ct<u32>, a: Ct<u32>, b: Ct<u32>) {
     let (uv_hi, uv_lo) = a.wide_mul(b);
     let (new_v, carry) = (*v).add_c(uv_lo, Carry::new(0));
     *v = new_v;
@@ -238,13 +260,7 @@ pub fn mul_acc32(
     clippy::many_single_char_names,
     reason = "canonical multi-limb accumulator notation from Constantine"
 )]
-pub fn mul_double_acc(
-    t: &mut Ct<u64>,
-    u: &mut Ct<u64>,
-    v: &mut Ct<u64>,
-    a: Ct<u64>,
-    b: Ct<u64>,
-) {
+pub fn mul_double_acc(t: &mut Ct<u64>, u: &mut Ct<u64>, v: &mut Ct<u64>, a: Ct<u64>, b: Ct<u64>) {
     let (uv_hi, uv_lo) = a.wide_mul(b);
     // Double the product: UV = UV + UV (i.e. shift left by 1).
     let (uv_lo_d, carry_lo) = uv_lo.add_c(uv_lo, Carry::new(0));
@@ -266,13 +282,7 @@ pub fn mul_double_acc(
     clippy::many_single_char_names,
     reason = "canonical multi-limb accumulator notation from Constantine"
 )]
-pub fn mul_double_acc32(
-    t: &mut Ct<u32>,
-    u: &mut Ct<u32>,
-    v: &mut Ct<u32>,
-    a: Ct<u32>,
-    b: Ct<u32>,
-) {
+pub fn mul_double_acc32(t: &mut Ct<u32>, u: &mut Ct<u32>, v: &mut Ct<u32>, a: Ct<u32>, b: Ct<u32>) {
     let (uv_hi, uv_lo) = a.wide_mul(b);
     let (uv_lo_d, carry_lo) = uv_lo.add_c(uv_lo, Carry::new(0));
     let (uv_hi_d, carry_hi) = uv_hi.add_c(uv_hi, carry_lo);
@@ -323,7 +333,10 @@ mod tests {
         // 0xFFFFFFFF * 0xFFFFFFFF = 0xFFFFFFFE_00000001
         let (hi, lo) = Ct::new(u32::MAX).wide_mul(Ct::new(u32::MAX));
         let expected = u64::from(u32::MAX) * u64::from(u32::MAX);
-        assert_eq!(u64::from(hi.inner()) << 32 | u64::from(lo.inner()), expected);
+        assert_eq!(
+            u64::from(hi.inner()) << 32 | u64::from(lo.inner()),
+            expected
+        );
         assert_eq!(hi.inner(), 0xFFFF_FFFEu32);
         assert_eq!(lo.inner(), 0x0000_0001u32);
     }
@@ -377,10 +390,8 @@ mod tests {
     #[test]
     fn muladd1_u32_max_squared_plus_max() {
         // 0xFFFFFFFF² + 0xFFFFFFFF = 0xFFFFFFFF_00000000 — no overflow
-        let (hi, lo) =
-            Ct::new(u32::MAX).muladd1(Ct::new(u32::MAX), Ct::new(u32::MAX));
-        let expected =
-            u64::from(u32::MAX) * u64::from(u32::MAX) + u64::from(u32::MAX);
+        let (hi, lo) = Ct::new(u32::MAX).muladd1(Ct::new(u32::MAX), Ct::new(u32::MAX));
+        let expected = u64::from(u32::MAX) * u64::from(u32::MAX) + u64::from(u32::MAX);
         assert_eq!(
             u64::from(hi.inner()) << 32 | u64::from(lo.inner()),
             expected
@@ -389,10 +400,8 @@ mod tests {
 
     #[test]
     fn muladd1_u64_max_squared_plus_max() {
-        let (hi, lo) =
-            Ct::new(u64::MAX).muladd1(Ct::new(u64::MAX), Ct::new(u64::MAX));
-        let expected =
-            u128::from(u64::MAX) * u128::from(u64::MAX) + u128::from(u64::MAX);
+        let (hi, lo) = Ct::new(u64::MAX).muladd1(Ct::new(u64::MAX), Ct::new(u64::MAX));
+        let expected = u128::from(u64::MAX) * u128::from(u64::MAX) + u128::from(u64::MAX);
         assert_eq!(
             u128::from(hi.inner()) << 64 | u128::from(lo.inner()),
             expected
@@ -404,8 +413,7 @@ mod tests {
     #[test]
     fn muladd2_u32_basic() {
         // 2 * 3 + 1 + 2 = 9
-        let (hi, lo) =
-            Ct::new(2u32).muladd2(Ct::new(3u32), Ct::new(1u32), Ct::new(2u32));
+        let (hi, lo) = Ct::new(2u32).muladd2(Ct::new(3u32), Ct::new(1u32), Ct::new(2u32));
         assert_eq!(hi.inner(), 0u32);
         assert_eq!(lo.inner(), 9u32);
     }
@@ -414,9 +422,8 @@ mod tests {
     fn muladd2_u32_max_squared_plus_two_max() {
         let (hi, lo) =
             Ct::new(u32::MAX).muladd2(Ct::new(u32::MAX), Ct::new(u32::MAX), Ct::new(u32::MAX));
-        let expected = u64::from(u32::MAX) * u64::from(u32::MAX)
-            + u64::from(u32::MAX)
-            + u64::from(u32::MAX);
+        let expected =
+            u64::from(u32::MAX) * u64::from(u32::MAX) + u64::from(u32::MAX) + u64::from(u32::MAX);
         assert_eq!(
             u64::from(hi.inner()) << 32 | u64::from(lo.inner()),
             expected
@@ -554,7 +561,10 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::many_single_char_names, reason = "matches accumulator API signature")]
+    #[expect(
+        clippy::many_single_char_names,
+        reason = "matches accumulator API signature"
+    )]
     fn mul_acc_carry_into_t() {
         let mut t = Ct::new(0u64);
         let mut u = Ct::new(u64::MAX);

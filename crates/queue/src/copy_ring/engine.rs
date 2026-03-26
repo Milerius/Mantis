@@ -8,9 +8,9 @@ use core::cell::Cell;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::storage::Storage;
 use mantis_core::{IndexStrategy, Instrumentation, PushPolicy};
 use mantis_platform::{CachePadded, CopyPolicy};
-use crate::storage::Storage;
 
 /// Cold slow-path for full ring. `#[cold]` tells LLVM to move this
 /// out of the hot path even on stable.

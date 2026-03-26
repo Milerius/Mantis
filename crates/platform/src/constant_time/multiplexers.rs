@@ -115,11 +115,7 @@ pub fn mux_bool32(ctl: CTBool<u32>, x: CTBool<u32>, y: CTBool<u32>) -> CTBool<u3
 /// Constant-time select on `CTBool<usize>` values.
 #[must_use]
 #[inline]
-pub fn mux_bool_usize(
-    ctl: CTBool<usize>,
-    x: CTBool<usize>,
-    y: CTBool<usize>,
-) -> CTBool<usize> {
+pub fn mux_bool_usize(ctl: CTBool<usize>, x: CTBool<usize>, y: CTBool<usize>) -> CTBool<usize> {
     CTBool(mux_usize(ctl, x.0, y.0))
 }
 
@@ -219,40 +215,64 @@ mod tests {
 
     #[test]
     fn mux_true_returns_x() {
-        assert_eq!(mux(CTBool::<u64>::ctrue(), Ct::new(42u64), Ct::new(99u64)).inner(), 42u64);
+        assert_eq!(
+            mux(CTBool::<u64>::ctrue(), Ct::new(42u64), Ct::new(99u64)).inner(),
+            42u64
+        );
     }
 
     #[test]
     fn mux_false_returns_y() {
-        assert_eq!(mux(CTBool::<u64>::cfalse(), Ct::new(42u64), Ct::new(99u64)).inner(), 99u64);
+        assert_eq!(
+            mux(CTBool::<u64>::cfalse(), Ct::new(42u64), Ct::new(99u64)).inner(),
+            99u64
+        );
     }
 
     #[test]
     fn mux_boundary_values() {
-        assert_eq!(mux(CTBool::<u64>::ctrue(), Ct::new(0u64), Ct::new(u64::MAX)).inner(), 0u64);
+        assert_eq!(
+            mux(CTBool::<u64>::ctrue(), Ct::new(0u64), Ct::new(u64::MAX)).inner(),
+            0u64
+        );
         assert_eq!(
             mux(CTBool::<u64>::cfalse(), Ct::new(0u64), Ct::new(u64::MAX)).inner(),
             u64::MAX
         );
-        assert_eq!(mux(CTBool::<u64>::ctrue(), Ct::new(u64::MAX), Ct::new(0u64)).inner(), u64::MAX);
+        assert_eq!(
+            mux(CTBool::<u64>::ctrue(), Ct::new(u64::MAX), Ct::new(0u64)).inner(),
+            u64::MAX
+        );
     }
 
     #[test]
     fn mux_same_x_y() {
-        assert_eq!(mux(CTBool::<u64>::ctrue(), Ct::new(7u64), Ct::new(7u64)).inner(), 7u64);
-        assert_eq!(mux(CTBool::<u64>::cfalse(), Ct::new(7u64), Ct::new(7u64)).inner(), 7u64);
+        assert_eq!(
+            mux(CTBool::<u64>::ctrue(), Ct::new(7u64), Ct::new(7u64)).inner(),
+            7u64
+        );
+        assert_eq!(
+            mux(CTBool::<u64>::cfalse(), Ct::new(7u64), Ct::new(7u64)).inner(),
+            7u64
+        );
     }
 
     // --- mux u32 ---
 
     #[test]
     fn mux32_true_returns_x() {
-        assert_eq!(mux32(CTBool::<u32>::ctrue(), Ct::new(1u32), Ct::new(2u32)).inner(), 1u32);
+        assert_eq!(
+            mux32(CTBool::<u32>::ctrue(), Ct::new(1u32), Ct::new(2u32)).inner(),
+            1u32
+        );
     }
 
     #[test]
     fn mux32_false_returns_y() {
-        assert_eq!(mux32(CTBool::<u32>::cfalse(), Ct::new(1u32), Ct::new(2u32)).inner(), 2u32);
+        assert_eq!(
+            mux32(CTBool::<u32>::cfalse(), Ct::new(1u32), Ct::new(2u32)).inner(),
+            2u32
+        );
     }
 
     #[test]
@@ -261,7 +281,10 @@ mod tests {
             mux32(CTBool::<u32>::ctrue(), Ct::new(u32::MAX), Ct::new(0u32)).inner(),
             u32::MAX
         );
-        assert_eq!(mux32(CTBool::<u32>::cfalse(), Ct::new(u32::MAX), Ct::new(0u32)).inner(), 0u32);
+        assert_eq!(
+            mux32(CTBool::<u32>::cfalse(), Ct::new(u32::MAX), Ct::new(0u32)).inner(),
+            0u32
+        );
     }
 
     // --- mux usize ---
@@ -269,11 +292,21 @@ mod tests {
     #[test]
     fn mux_usize_selects_correctly() {
         assert_eq!(
-            mux_usize(CTBool::<usize>::ctrue(), Ct::new(100usize), Ct::new(200usize)).inner(),
+            mux_usize(
+                CTBool::<usize>::ctrue(),
+                Ct::new(100usize),
+                Ct::new(200usize)
+            )
+            .inner(),
             100usize
         );
         assert_eq!(
-            mux_usize(CTBool::<usize>::cfalse(), Ct::new(100usize), Ct::new(200usize)).inner(),
+            mux_usize(
+                CTBool::<usize>::cfalse(),
+                Ct::new(100usize),
+                Ct::new(200usize)
+            )
+            .inner(),
             200usize
         );
     }
@@ -282,13 +315,21 @@ mod tests {
 
     #[test]
     fn mux_bool_true_selects_x() {
-        let result = mux_bool(CTBool::<u64>::ctrue(), CTBool::<u64>::ctrue(), CTBool::<u64>::cfalse());
+        let result = mux_bool(
+            CTBool::<u64>::ctrue(),
+            CTBool::<u64>::ctrue(),
+            CTBool::<u64>::cfalse(),
+        );
         assert_eq!(result.inner(), 1u64);
     }
 
     #[test]
     fn mux_bool_false_selects_y() {
-        let result = mux_bool(CTBool::<u64>::cfalse(), CTBool::<u64>::ctrue(), CTBool::<u64>::cfalse());
+        let result = mux_bool(
+            CTBool::<u64>::cfalse(),
+            CTBool::<u64>::ctrue(),
+            CTBool::<u64>::cfalse(),
+        );
         assert_eq!(result.inner(), 0u64);
     }
 
@@ -440,14 +481,21 @@ mod tests {
     fn secret_lookup_all_indices() {
         let table: &[u64] = &[10, 20, 30, 40, 50];
         for (i, &expected) in table.iter().enumerate() {
-            assert_eq!(secret_lookup(table, Ct::new(i)).inner(), expected, "index {i}");
+            assert_eq!(
+                secret_lookup(table, Ct::new(i)).inner(),
+                expected,
+                "index {i}"
+            );
         }
     }
 
     #[test]
     fn secret_lookup_single_element() {
         let table: &[u64] = &[0xDEAD_BEEF_CAFE_1234];
-        assert_eq!(secret_lookup(table, Ct::new(0usize)).inner(), 0xDEAD_BEEF_CAFE_1234u64);
+        assert_eq!(
+            secret_lookup(table, Ct::new(0usize)).inner(),
+            0xDEAD_BEEF_CAFE_1234u64
+        );
     }
 
     #[test]

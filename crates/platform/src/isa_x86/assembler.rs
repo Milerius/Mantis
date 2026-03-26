@@ -145,13 +145,31 @@ mod tests {
     fn operand_construction() {
         let reg = Operand::Reg(Register::Rax);
         let imm = Operand::Imm(42);
-        let mem = Operand::Mem { base: Register::Rbx, offset: 8 };
-        let arr = Operand::FromArray { base: Register::Rdx, offset: 0 };
+        let mem = Operand::Mem {
+            base: Register::Rbx,
+            offset: 8,
+        };
+        let arr = Operand::FromArray {
+            base: Register::Rdx,
+            offset: 0,
+        };
 
         assert_eq!(reg, Operand::Reg(Register::Rax));
         assert_eq!(imm, Operand::Imm(42));
-        assert_eq!(mem, Operand::Mem { base: Register::Rbx, offset: 8 });
-        assert_eq!(arr, Operand::FromArray { base: Register::Rdx, offset: 0 });
+        assert_eq!(
+            mem,
+            Operand::Mem {
+                base: Register::Rbx,
+                offset: 8
+            }
+        );
+        assert_eq!(
+            arr,
+            Operand::FromArray {
+                base: Register::Rdx,
+                offset: 0
+            }
+        );
     }
 
     #[test]

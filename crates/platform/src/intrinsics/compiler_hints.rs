@@ -59,7 +59,11 @@ pub fn prefetch_large<T>(
     max_lines: usize,
 ) {
     let span = core::mem::size_of::<T>() / 64; // 64-byte cache lines
-    let n = if max_lines == 0 { span } else { span.min(max_lines) };
+    let n = if max_lines == 0 {
+        span
+    } else {
+        span.min(max_lines)
+    };
     for i in 0..n {
         // SAFETY: pointer arithmetic for prefetch hint; the resulting pointer
         // is never dereferenced, only passed to prefetch which is a no-op hint.
@@ -76,13 +80,22 @@ mod tests {
     fn prefetch_does_not_crash() {
         let value: u64 = 42;
         prefetch(&raw const value, PrefetchRW::Read, PrefetchLocality::High);
-        prefetch(&raw const value, PrefetchRW::Write, PrefetchLocality::NoTemporal);
+        prefetch(
+            &raw const value,
+            PrefetchRW::Write,
+            PrefetchLocality::NoTemporal,
+        );
     }
 
     #[test]
     fn prefetch_large_handles_big_type() {
         let big: [u8; 512] = [0u8; 512];
-        prefetch_large(big.as_ptr(), PrefetchRW::Read, PrefetchLocality::Moderate, 0);
+        prefetch_large(
+            big.as_ptr(),
+            PrefetchRW::Read,
+            PrefetchLocality::Moderate,
+            0,
+        );
         prefetch_large(big.as_ptr(), PrefetchRW::Read, PrefetchLocality::Low, 2);
     }
 

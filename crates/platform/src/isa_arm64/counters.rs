@@ -38,7 +38,9 @@ fn fetch_timebase() -> (u32, u32) {
     // The pointer is non-null for the duration of this call.
     // Failure mode: if the call fails it leaves `info` unchanged (defaults
     // keep numer/denom at 1/1, i.e., a 1:1 tick-to-nanosecond ratio).
-    unsafe { mach_timebase_info(core::ptr::addr_of_mut!(info)); }
+    unsafe {
+        mach_timebase_info(core::ptr::addr_of_mut!(info));
+    }
     (info.numer, info.denom)
 }
 
