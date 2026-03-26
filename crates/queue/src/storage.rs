@@ -1,6 +1,6 @@
 //! Storage backends for ring buffer slot arrays.
 
-#![allow(unsafe_code)]
+#![expect(unsafe_code, reason = "storage backends use raw pointers")]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;

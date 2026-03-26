@@ -1,4 +1,4 @@
-#![allow(unsafe_code)]
+#![expect(unsafe_code, reason = "FFI calls to mach_absolute_time / clock_gettime")]
 //! aarch64 performance counters.
 //!
 //! - macOS: `mach_absolute_time` via `KperfCounter`

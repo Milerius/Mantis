@@ -2,7 +2,7 @@
 //!
 //! Maps from Constantine's `compiler_optim_hints.nim`.
 
-#![allow(unsafe_code)]
+#![expect(unsafe_code, reason = "compiler intrinsics require unsafe")]
 
 /// Prefetch direction.
 #[repr(i32)]

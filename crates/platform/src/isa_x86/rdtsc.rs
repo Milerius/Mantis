@@ -1,4 +1,4 @@
-#![allow(unsafe_code)]
+#![expect(unsafe_code, reason = "RDTSC requires inline asm")]
 //! RDTSC-based cycle counter for `x86_64`.
 
 use std::time::Instant;

@@ -1,4 +1,4 @@
-#![allow(unsafe_code)]
+#![expect(unsafe_code, reason = "CPUID requires inline asm")]
 //! `x86_64` CPUID feature detection with load-time caching.
 //!
 //! CPUID is ~70 cycles / ~120 latency. Results are cached in a static
@@ -69,7 +69,7 @@ pub fn cpu_name_x86() -> std::string::String {
 }
 
 /// Cached CPU feature flags.
-#[allow(clippy::struct_excessive_bools)]
+#[expect(clippy::struct_excessive_bools, reason = "18 CPU feature flags")]
 struct CpuFeatures {
     has_sse2: bool,
     has_sse3: bool,

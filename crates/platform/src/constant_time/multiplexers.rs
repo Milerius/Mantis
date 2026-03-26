@@ -1,3 +1,7 @@
+#![cfg_attr(
+    target_arch = "x86_64",
+    expect(unsafe_code, reason = "constant-time multiplexers require x86_64 inline asm")
+)]
 //! Constant-time multiplexers: select, conditional copy, and secret lookup.
 //!
 //! Maps from Constantine's `multiplexers.nim` and `ct_routines.nim`.
@@ -7,7 +11,6 @@
 
 // The crate root has `#![deny(unsafe_code)]`; the asm implementations below
 // require unsafe blocks. We allow unsafe only in this file.
-#![allow(unsafe_code)]
 
 use super::ct_types::{CTBool, Ct};
 

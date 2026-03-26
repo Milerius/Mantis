@@ -27,11 +27,14 @@
 // only through CopyDispatcher::copy which is invoked by SimdCopyPolicy and
 // tests. The dead_code lint cannot trace through const-generic dispatch
 // branches, so it incorrectly marks them as unused.
-#![allow(dead_code)]
+#![cfg_attr(
+    not(test),
+    expect(dead_code, reason = "SIMD dispatch helpers are called through const-generic branches")
+)]
 // CopyPolicy trait methods are intentionally non-unsafe (declared safe to
 // satisfy `#![deny(unsafe_code)]` on the crate root). Implementations
 // dereference raw pointers under a documented safety contract.
-#![allow(clippy::not_unsafe_ptr_arg_deref)]
+#![expect(clippy::not_unsafe_ptr_arg_deref, reason = "CopyPolicy methods are safe by design")]
 
 use core::marker::PhantomData;
 use core::ptr;

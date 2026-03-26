@@ -3,7 +3,7 @@
 //! These functions operate on raw pointers obtained from a `Storage`
 //! implementation. Callers must uphold the single-writer invariant.
 
-#![allow(unsafe_code)]
+#![expect(unsafe_code, reason = "MaybeUninit slot operations require unsafe")]
 
 use core::ptr;
 
