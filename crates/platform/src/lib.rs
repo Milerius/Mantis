@@ -28,6 +28,7 @@ pub use constant_time::{ccopy, ccopy32, ccopy_usize, mux, mux32, mux_bool, mux_b
     mux_bool_usize, mux_usize, secret_lookup};
 pub use constant_time::{div2n1n, div2n1n_u32};
 pub use intrinsics::{AddCarryOp, SubBorrowOp};
+pub use intrinsics::{PrefetchLocality, PrefetchRW, prefetch, prefetch_large};
 pub use intrinsics::{
     SignedWideMul, WideMul, WideMulAdd1, WideMulAdd2,
     mul_acc, mul_acc32, mul_double_acc, mul_double_acc32,
