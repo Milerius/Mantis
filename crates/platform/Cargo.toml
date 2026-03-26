@@ -12,6 +12,7 @@ default = []
 std = []
 asm = []
 nightly = []
+perf-counters = []
 
 [dependencies]
 cfg-if = { workspace = true }
