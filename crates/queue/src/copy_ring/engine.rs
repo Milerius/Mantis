@@ -195,13 +195,37 @@ where
         }
 
         let n = dst.len().min(avail);
-        let mut idx = tail;
-        for out in &mut dst[..n] {
-            crate::copy_ring::raw::read_slot_copy::<T, S, CP>(&self.storage, idx, out);
-            idx = I::wrap(idx + 1, cap);
+
+        // Two-chunk contiguous copy symmetric to push_batch.
+        // `memcpy` auto-vectorizes for bulk transfers; per-element dispatch
+        // adds call overhead that dominates for large batches.
+        //
+        // `first_chunk`: slots from tail to end of backing array (no wrap).
+        // `second_chunk`: remaining slots read from index 0 (wrap).
+        let first_chunk = n.min(cap - tail);
+        let second_chunk = n - first_chunk;
+
+        // First chunk: slots tail..tail+first_chunk (no wrap).
+        // `tail < cap` (ring invariant) and `first_chunk <= cap - tail`,
+        // so `tail + first_chunk <= cap`. Consumer owns this range.
+        crate::copy_ring::raw::read_batch_copy::<T, S>(
+            &self.storage,
+            tail,
+            &mut dst[..first_chunk],
+        );
+
+        if second_chunk > 0 {
+            // Second chunk: wraps to slots 0..second_chunk.
+            // `second_chunk <= n - first_chunk <= avail < cap`,
+            // so `second_chunk <= cap`. Consumer owns this range.
+            crate::copy_ring::raw::read_batch_copy::<T, S>(
+                &self.storage,
+                0,
+                &mut dst[first_chunk..n],
+            );
         }
 
-        self.tail.store(idx, Ordering::Release);
+        self.tail.store(I::wrap(tail + n, cap), Ordering::Release);
         n
     }
 
@@ -381,6 +405,25 @@ mod tests {
         let mut out = vec![0u64; 5];
         assert_eq!(engine.pop_batch(&mut out), 5);
         assert_eq!(out, vec![100, 101, 102, 103, 104]);
+    }
+
+    #[test]
+    fn pop_batch_wraparound_contiguous() {
+        let engine = new_engine(); // capacity=8, usable=7
+        // Advance tail to near end
+        let fill: Vec<u64> = (0..6).collect();
+        engine.push_batch(&fill);
+        let mut drain = vec![0u64; 6];
+        engine.pop_batch(&mut drain);
+
+        // Push 5 (wraps around), then batch-pop all 5
+        let wrap_src: Vec<u64> = (300..305).collect();
+        engine.push_batch(&wrap_src);
+
+        let mut out = vec![0u64; 5];
+        let popped = engine.pop_batch(&mut out);
+        assert_eq!(popped, 5);
+        assert_eq!(out, vec![300, 301, 302, 303, 304]);
     }
 
     #[test]
