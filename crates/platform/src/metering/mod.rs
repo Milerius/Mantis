@@ -96,7 +96,11 @@ cfg_if::cfg_if! {
 #[cfg(all(target_os = "linux", feature = "perf-counters"))]
 pub mod perf_group;
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64", feature = "perf-counters"))]
+#[cfg(all(
+    target_os = "macos",
+    target_arch = "aarch64",
+    feature = "perf-counters"
+))]
 pub mod kperf_pmu;
 
 #[cfg(all(target_arch = "x86_64", feature = "asm", feature = "std"))]

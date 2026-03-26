@@ -4,7 +4,7 @@
 )]
 //! Linux `perf_event_open` grouped hardware counters.
 //!
-//! Uses the [`perf-event2`] crate to read instructions retired, branch misses,
+//! Uses the `perf-event2` crate to read instructions retired, branch misses,
 //! L1D cache read misses, and LLC read misses as an atomic group.
 //!
 //! Initialization fails gracefully if `perf_event_open` is denied
@@ -85,7 +85,6 @@ impl PerfGroupCounters {
             llc_misses,
         })
     }
-
 }
 
 impl HwCounters for PerfGroupCounters {

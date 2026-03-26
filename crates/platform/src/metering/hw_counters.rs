@@ -53,6 +53,7 @@ impl NoopCounters {
     /// # Errors
     ///
     /// Never fails; always returns `Ok(Self)`.
+    #[cfg(feature = "std")]
     pub fn try_new() -> Result<Self, std::io::Error> {
         Ok(Self)
     }

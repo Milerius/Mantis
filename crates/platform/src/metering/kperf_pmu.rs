@@ -13,7 +13,7 @@
 
 extern crate std;
 
-use std::ffi::{c_char, c_int, c_void, CStr};
+use std::ffi::{CStr, c_char, c_int, c_void};
 use std::format;
 use std::io;
 use std::ptr;
@@ -29,10 +29,8 @@ const KPC_MAX_COUNTERS_U32: u32 = 32;
 const KPC_CLASS_CONFIGURABLE_MASK: u32 = 1 << 1;
 const RTLD_LAZY: c_int = 1;
 
-const KPERF_PATH: &CStr =
-    c"/System/Library/PrivateFrameworks/kperf.framework/kperf";
-const KPERFDATA_PATH: &CStr =
-    c"/System/Library/PrivateFrameworks/kperfdata.framework/kperfdata";
+const KPERF_PATH: &CStr = c"/System/Library/PrivateFrameworks/kperf.framework/kperf";
+const KPERFDATA_PATH: &CStr = c"/System/Library/PrivateFrameworks/kperfdata.framework/kperfdata";
 
 /// Event name fallback chains from `/usr/share/kpep/<cpu>.plist`.
 const INSTRUCTIONS_NAMES: &[&CStr] = &[
@@ -62,30 +60,15 @@ type FnSetU32 = unsafe extern "C" fn(u32) -> c_int;
 type FnThreadCtrs = unsafe extern "C" fn(u32, u32, *mut u64) -> c_int;
 
 // kperfdata function signatures
-type FnDbCreate =
-    unsafe extern "C" fn(*const c_char, *mut *mut c_void) -> c_int;
-type FnDbEvent = unsafe extern "C" fn(
-    *mut c_void,
-    *const c_char,
-    *mut *mut c_void,
-) -> c_int;
-type FnCfgCreate =
-    unsafe extern "C" fn(*mut c_void, *mut *mut c_void) -> c_int;
-type FnCfgAddEv = unsafe extern "C" fn(
-    *mut c_void,
-    *mut *mut c_void,
-    u32,
-    *mut u32,
-) -> c_int;
+type FnDbCreate = unsafe extern "C" fn(*const c_char, *mut *mut c_void) -> c_int;
+type FnDbEvent = unsafe extern "C" fn(*mut c_void, *const c_char, *mut *mut c_void) -> c_int;
+type FnCfgCreate = unsafe extern "C" fn(*mut c_void, *mut *mut c_void) -> c_int;
+type FnCfgAddEv = unsafe extern "C" fn(*mut c_void, *mut *mut c_void, u32, *mut u32) -> c_int;
 type FnCfgVoid = unsafe extern "C" fn(*mut c_void) -> c_int;
-type FnCfgBuf =
-    unsafe extern "C" fn(*mut c_void, *mut u64, usize) -> c_int;
-type FnCfgUsize =
-    unsafe extern "C" fn(*mut c_void, *mut usize) -> c_int;
-type FnCfgU32 =
-    unsafe extern "C" fn(*mut c_void, *mut u32) -> c_int;
-type FnCfgMap =
-    unsafe extern "C" fn(*mut c_void, *mut usize, usize) -> c_int;
+type FnCfgBuf = unsafe extern "C" fn(*mut c_void, *mut u64, usize) -> c_int;
+type FnCfgUsize = unsafe extern "C" fn(*mut c_void, *mut usize) -> c_int;
+type FnCfgU32 = unsafe extern "C" fn(*mut c_void, *mut u32) -> c_int;
+type FnCfgMap = unsafe extern "C" fn(*mut c_void, *mut usize, usize) -> c_int;
 
 // ---------------------------------------------------------------------------
 // FFI: dlopen / dlsym
@@ -102,10 +85,7 @@ unsafe extern "C" {
 ///
 /// `handle` must be a valid `dlopen` handle. The caller must ensure that
 /// `T` matches the actual signature of the symbol named `name`.
-unsafe fn load_sym<T: Copy>(
-    handle: *mut c_void,
-    name: &CStr,
-) -> Result<T, io::Error> {
+unsafe fn load_sym<T: Copy>(handle: *mut c_void, name: &CStr) -> Result<T, io::Error> {
     // SAFETY: handle is a valid dlopen handle, name is a null-terminated
     // C string pointing to a symbol in the loaded framework.
     let ptr = unsafe { dlsym(handle, name.as_ptr()) };
@@ -189,45 +169,29 @@ impl KperfPmuCounters {
             }
 
             // --- Load kperf symbols ---
-            let kpc_force_all_ctrs_get: FnCtrsGet =
-                load_sym(kperf, c"kpc_force_all_ctrs_get")?;
-            let kpc_force_all_ctrs_set: FnCtrsSet =
-                load_sym(kperf, c"kpc_force_all_ctrs_set")?;
-            let kpc_set_config: FnSetCfg =
-                load_sym(kperf, c"kpc_set_config")?;
-            let kpc_set_counting: FnSetU32 =
-                load_sym(kperf, c"kpc_set_counting")?;
-            let kpc_set_thread_counting: FnSetU32 =
-                load_sym(kperf, c"kpc_set_thread_counting")?;
-            let get_thread_counters: FnThreadCtrs =
-                load_sym(kperf, c"kpc_get_thread_counters")?;
+            let kpc_force_all_ctrs_get: FnCtrsGet = load_sym(kperf, c"kpc_force_all_ctrs_get")?;
+            let kpc_force_all_ctrs_set: FnCtrsSet = load_sym(kperf, c"kpc_force_all_ctrs_set")?;
+            let kpc_set_config: FnSetCfg = load_sym(kperf, c"kpc_set_config")?;
+            let kpc_set_counting: FnSetU32 = load_sym(kperf, c"kpc_set_counting")?;
+            let kpc_set_thread_counting: FnSetU32 = load_sym(kperf, c"kpc_set_thread_counting")?;
+            let get_thread_counters: FnThreadCtrs = load_sym(kperf, c"kpc_get_thread_counters")?;
 
             // --- Load kperfdata symbols ---
-            let kpep_db_create: FnDbCreate =
-                load_sym(kperfdata, c"kpep_db_create")?;
-            let kpep_db_event: FnDbEvent =
-                load_sym(kperfdata, c"kpep_db_event")?;
-            let kpep_config_create: FnCfgCreate =
-                load_sym(kperfdata, c"kpep_config_create")?;
-            let kpep_config_add_event: FnCfgAddEv =
-                load_sym(kperfdata, c"kpep_config_add_event")?;
+            let kpep_db_create: FnDbCreate = load_sym(kperfdata, c"kpep_db_create")?;
+            let kpep_db_event: FnDbEvent = load_sym(kperfdata, c"kpep_db_event")?;
+            let kpep_config_create: FnCfgCreate = load_sym(kperfdata, c"kpep_config_create")?;
+            let kpep_config_add_event: FnCfgAddEv = load_sym(kperfdata, c"kpep_config_add_event")?;
             let kpep_config_force_counters: FnCfgVoid =
                 load_sym(kperfdata, c"kpep_config_force_counters")?;
-            let kpep_config_kpc: FnCfgBuf =
-                load_sym(kperfdata, c"kpep_config_kpc")?;
-            let kpep_config_kpc_count: FnCfgUsize =
-                load_sym(kperfdata, c"kpep_config_kpc_count")?;
+            let kpep_config_kpc: FnCfgBuf = load_sym(kperfdata, c"kpep_config_kpc")?;
+            let kpep_config_kpc_count: FnCfgUsize = load_sym(kperfdata, c"kpep_config_kpc_count")?;
             let kpep_config_kpc_classes: FnCfgU32 =
                 load_sym(kperfdata, c"kpep_config_kpc_classes")?;
-            let kpep_config_kpc_map: FnCfgMap =
-                load_sym(kperfdata, c"kpep_config_kpc_map")?;
+            let kpep_config_kpc_map: FnCfgMap = load_sym(kperfdata, c"kpep_config_kpc_map")?;
 
             // --- Check permission (requires root) ---
             let mut force_ctrs: c_int = 0;
-            if kpc_force_all_ctrs_get(
-                &raw mut force_ctrs,
-            ) != 0
-            {
+            if kpc_force_all_ctrs_get(&raw mut force_ctrs) != 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     "kpc_force_all_ctrs_get failed (root required)",
@@ -237,22 +201,16 @@ impl KperfPmuCounters {
             // --- Open PMC database for current CPU ---
             let mut db: *mut c_void = ptr::null_mut();
             if kpep_db_create(ptr::null(), &raw mut db) != 0 {
-                return Err(io::Error::other(
-                    "kpep_db_create failed",
-                ));
+                return Err(io::Error::other("kpep_db_create failed"));
             }
 
             // --- Create kpep config ---
             let mut cfg: *mut c_void = ptr::null_mut();
             if kpep_config_create(db, &raw mut cfg) != 0 {
-                return Err(io::Error::other(
-                    "kpep_config_create failed",
-                ));
+                return Err(io::Error::other("kpep_config_create failed"));
             }
             if kpep_config_force_counters(cfg) != 0 {
-                return Err(io::Error::other(
-                    "kpep_config_force_counters failed",
-                ));
+                return Err(io::Error::other("kpep_config_force_counters failed"));
             }
 
             // --- Find events with fallback chains ---
@@ -260,9 +218,7 @@ impl KperfPmuCounters {
             for (i, names) in EVENT_ALIASES.iter().enumerate() {
                 for name in *names {
                     let mut ev: *mut c_void = ptr::null_mut();
-                    if kpep_db_event(db, name.as_ptr(), &raw mut ev)
-                        == 0
-                    {
+                    if kpep_db_event(db, name.as_ptr(), &raw mut ev) == 0 {
                         ev_ptrs[i] = ev;
                         break;
                     }
@@ -270,25 +226,15 @@ impl KperfPmuCounters {
                 if ev_ptrs[i].is_null() {
                     return Err(io::Error::new(
                         io::ErrorKind::NotFound,
-                        format!(
-                            "kperf: no event found for alias group {i}"
-                        ),
+                        format!("kperf: no event found for alias group {i}"),
                     ));
                 }
             }
 
             // --- Add events to config ---
             for ev_ptr in &mut ev_ptrs {
-                if kpep_config_add_event(
-                    cfg,
-                    ev_ptr,
-                    0,
-                    ptr::null_mut(),
-                ) != 0
-                {
-                    return Err(io::Error::other(
-                        "kpep_config_add_event failed",
-                    ));
+                if kpep_config_add_event(cfg, ev_ptr, 0, ptr::null_mut()) != 0 {
+                    return Err(io::Error::other("kpep_config_add_event failed"));
                 }
             }
 
@@ -303,17 +249,10 @@ impl KperfPmuCounters {
 
             if kpep_config_kpc_classes(cfg, &raw mut classes) != 0
                 || kpep_config_kpc_count(cfg, &raw mut reg_count) != 0
-                || kpep_config_kpc_map(
-                    cfg,
-                    counter_map.as_mut_ptr(),
-                    map_size,
-                ) != 0
-                || kpep_config_kpc(cfg, regs.as_mut_ptr(), regs_size)
-                    != 0
+                || kpep_config_kpc_map(cfg, counter_map.as_mut_ptr(), map_size) != 0
+                || kpep_config_kpc(cfg, regs.as_mut_ptr(), regs_size) != 0
             {
-                return Err(io::Error::other(
-                    "kpep_config_kpc setup failed",
-                ));
+                return Err(io::Error::other("kpep_config_kpc setup failed"));
             }
 
             // --- Program kernel PMU ---
@@ -329,23 +268,15 @@ impl KperfPmuCounters {
             {
                 return Err(io::Error::other("kpc_set_config failed"));
             }
-            if kpc_set_counting(classes) != 0
-                || kpc_set_thread_counting(classes) != 0
-            {
-                return Err(io::Error::other(
-                    "kpc_set_counting failed",
-                ));
+            if kpc_set_counting(classes) != 0 || kpc_set_thread_counting(classes) != 0 {
+                return Err(io::Error::other("kpc_set_counting failed"));
             }
 
             // --- Validate counter_map indices ---
             let instructions_idx = counter_map[0];
             let branch_misses_idx = counter_map[1];
-            if instructions_idx >= KPC_MAX_COUNTERS
-                || branch_misses_idx >= KPC_MAX_COUNTERS
-            {
-                return Err(io::Error::other(
-                    "invalid counter_map indices from kpep",
-                ));
+            if instructions_idx >= KPC_MAX_COUNTERS || branch_misses_idx >= KPC_MAX_COUNTERS {
+                return Err(io::Error::other("invalid counter_map indices from kpep"));
             }
 
             Ok(Self {
@@ -361,13 +292,7 @@ impl KperfPmuCounters {
         let mut buf = [0u64; KPC_MAX_COUNTERS];
         // SAFETY: buf is a valid KPC_MAX_COUNTERS-element array.
         // kpc_get_thread_counters reads the calling thread's counters.
-        let ret = unsafe {
-            (self.get_thread_counters)(
-                0,
-                KPC_MAX_COUNTERS_U32,
-                buf.as_mut_ptr(),
-            )
-        };
+        let ret = unsafe { (self.get_thread_counters)(0, KPC_MAX_COUNTERS_U32, buf.as_mut_ptr()) };
         if ret != 0 {
             return None;
         }
@@ -390,17 +315,12 @@ impl HwCounters for KperfPmuCounters {
         })
     }
 
-    fn read(
-        &self,
-        snapshot: &Option<Self::Snapshot>,
-    ) -> Option<HwCounterDeltas> {
+    fn read(&self, snapshot: &Option<Self::Snapshot>) -> Option<HwCounterDeltas> {
         let base = snapshot.as_ref()?;
         let counters = self.read_counters()?;
         Some(HwCounterDeltas {
-            instructions: counters[self.instructions_idx]
-                .saturating_sub(base.instructions),
-            branch_misses: counters[self.branch_misses_idx]
-                .saturating_sub(base.branch_misses),
+            instructions: counters[self.instructions_idx].saturating_sub(base.instructions),
+            branch_misses: counters[self.branch_misses_idx].saturating_sub(base.branch_misses),
             l1d_misses: 0,
             llc_misses: 0,
         })

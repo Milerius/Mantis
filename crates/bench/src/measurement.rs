@@ -10,9 +10,7 @@ use std::time::Duration;
 
 use criterion::measurement::{Measurement, ValueFormatter, WallTime};
 
-use mantis_platform::metering::{
-    CycleCounter, DefaultCounter, DefaultHwCounters, HwCounters,
-};
+use mantis_platform::metering::{CycleCounter, DefaultCounter, DefaultHwCounters, HwCounters};
 
 /// Collects cycle measurements from benchmark iterations.
 ///
@@ -290,8 +288,7 @@ pub fn read_criterion_estimates(bench_id: &str) -> Option<CriterionEstimates> {
 #[must_use]
 pub fn read_criterion_sample_iters(bench_id: &str) -> Option<Vec<f64>> {
     let dir_name = bench_id.replace('/', "_");
-    let base = std::env::var("CARGO_MANIFEST_DIR")
-        .unwrap_or_else(|_| ".".to_owned());
+    let base = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_owned());
     let workspace = std::path::Path::new(&base)
         .parent()
         .and_then(|p| p.parent())

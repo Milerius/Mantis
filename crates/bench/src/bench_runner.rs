@@ -8,8 +8,8 @@ use std::io::Write;
 use criterion::Criterion;
 
 use crate::measurement::{
-    DefaultMeasurement, read_criterion_estimates, read_criterion_sample_iters,
-    reset_samples, take_samples,
+    DefaultMeasurement, read_criterion_estimates, read_criterion_sample_iters, reset_samples,
+    take_samples,
 };
 use crate::report::{BenchReport, WorkloadResult};
 
@@ -148,8 +148,7 @@ pub fn export_report(
                     eprint!(
                         "  {:40} {:>8.2} ns/op  {:>12.0} ops/s  \
                          p50={:.1}ns  p99={:.1}ns  cycles={:.0?}",
-                        r.workload, r.ns_per_op, r.ops_per_sec,
-                        r.p50_ns, r.p99_ns, r.cycles_per_op,
+                        r.workload, r.ns_per_op, r.ops_per_sec, r.p50_ns, r.p99_ns, r.cycles_per_op,
                     );
                     if let Some(insns) = r.instructions_per_op {
                         eprint!("  insns={insns:.0}");
