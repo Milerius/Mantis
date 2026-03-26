@@ -33,3 +33,6 @@ flamegraph.svg
 # Coverage
 lcov.info
 tarpaulin-report.html
+
+# Local cargo config (target-cpu=native etc. — per-developer)
+.cargo/config.toml

@@ -6,7 +6,7 @@
 //! Safe wrappers (`write_slot`, `read_slot`, `drop_occupied_slot`,
 //! `drop_range`) are provided for use by the engine.
 
-#![allow(unsafe_code)]
+#![expect(unsafe_code, reason = "raw slot operations require unsafe")]
 
 pub(crate) mod slot;
 

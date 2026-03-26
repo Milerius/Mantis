@@ -1,19 +1,18 @@
-//! Fallback counter using `std::time::Instant`.
+//! Fallback counter using [`std::time::Instant`].
 
 use std::time::Instant;
 
-use crate::counters::{CycleCounter, Measurement};
+use super::{CycleCounter, Measurement};
 
-/// Fallback counter using `std::time::Instant`.
+/// `Instant`-based counter for platforms without hardware cycle access.
 ///
-/// Reports nanoseconds; `cycles` is always 0.
+/// Reports nanoseconds via `Instant::elapsed`; `cycles` is always 0.
 pub struct InstantCounter {
-    /// Reference point for elapsed calculations.
     epoch: Instant,
 }
 
 impl InstantCounter {
-    /// Create a new counter with current time as epoch.
+    /// Create a new counter with the current time as epoch.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -51,11 +50,21 @@ mod tests {
         let counter = InstantCounter::new();
         let start = counter.start();
         let mut sum = 0u64;
-        for i in 0..1000 {
+        for i in 0..1000u64 {
             sum = sum.wrapping_add(i);
         }
         let _sum = std::hint::black_box(sum);
         let m = counter.elapsed(start);
         assert_eq!(m.cycles, 0, "fallback counter has no cycle info");
+    }
+
+    #[test]
+    fn instant_counter_default() {
+        let counter = InstantCounter::default();
+        let start = counter.start();
+        let m = counter.elapsed(start);
+        assert_eq!(m.cycles, 0);
+        // nanos should be a small non-negative number (saturating_sub guarantees >= 0)
+        let _ = m.nanos;
     }
 }

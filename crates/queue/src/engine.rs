@@ -7,11 +7,10 @@ use core::cell::Cell;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use mantis_core::{IndexStrategy, Instrumentation, PushPolicy};
-use mantis_types::{PushError, QueueError};
-
-use crate::pad::CachePadded;
 use crate::storage::Storage;
+use mantis_core::{IndexStrategy, Instrumentation, PushPolicy};
+use mantis_platform::CachePadded;
+use mantis_types::{PushError, QueueError};
 
 /// Generic SPSC ring engine. Not public -- use `RawRing` or split handles.
 ///

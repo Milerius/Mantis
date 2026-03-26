@@ -3,8 +3,6 @@
 //! Provides the common `BenchDesc`, `run_bench`, and `export_report`
 //! used by both Mantis and contender benchmark binaries.
 
-#![allow(clippy::print_stderr)]
-
 use std::io::Write;
 
 use criterion::Criterion;

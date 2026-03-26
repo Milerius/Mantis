@@ -26,7 +26,6 @@ extern crate std;
 pub(crate) mod copy_ring;
 pub(crate) mod engine;
 mod handle;
-mod pad;
 mod presets;
 mod raw;
 pub mod storage;
@@ -38,8 +37,8 @@ pub use handle::{Consumer, Producer, RawRing};
 #[cfg(feature = "alloc")]
 pub use handle::{spsc_ring, spsc_ring_heap};
 pub use mantis_core::{CountingInstr, ImmediatePush, NoInstr, Pow2Masked};
+pub use mantis_platform::CachePadded;
 pub use mantis_types::{PushError, QueueError};
-pub use pad::CachePadded;
 pub use presets::*;
 #[cfg(feature = "alloc")]
 pub use storage::HeapStorage;

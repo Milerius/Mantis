@@ -8,13 +8,9 @@
 
 #![expect(unsafe_code, reason = "raw slot access requires unsafe")]
 
-pub(crate) mod simd;
-
-pub(crate) use simd::DefaultCopyPolicy;
-
 use core::ptr;
 
-use mantis_core::CopyPolicy;
+use mantis_platform::CopyPolicy;
 
 use crate::storage::Storage;
 

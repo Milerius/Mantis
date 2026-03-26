@@ -58,7 +58,7 @@ impl<T: Send, const N: usize> Default for SpscRingInstrumented<T, N> {
 }
 
 use crate::copy_ring::RawRingCopy;
-use crate::copy_ring::raw::DefaultCopyPolicy;
+use mantis_platform::DefaultCopyPolicy;
 
 // ─── Copy-optimized presets (T: Copy only) ──────────────────────────────────
 

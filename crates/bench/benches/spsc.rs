@@ -5,9 +5,9 @@
 //!
 //! Produces a single criterion output for CI benchmark regression tracking.
 
-#![allow(missing_docs, clippy::print_stderr)]
+use std::hint::black_box;
 
-use criterion::{black_box, criterion_group};
+use criterion::criterion_group;
 use mantis_bench::bench_runner::{BenchDesc, MantisC, export_report, mantis_criterion, run_bench};
 use mantis_bench::messages::{Message48, Message64, make_msg48, make_msg64};
 use mantis_bench::workloads::{batch_copy, burst_copy};

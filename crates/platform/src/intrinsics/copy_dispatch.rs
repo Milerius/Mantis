@@ -1,5 +1,7 @@
 //! SIMD copy kernels and `DefaultCopyPolicy` for the copy-optimized ring.
 //!
+// FIXME: SSE2/NEON kernels should move to isa_x86/simd.rs and isa_arm64/simd.rs
+//!
 //! # Dispatch strategy
 //!
 //! `CopyDispatcher<T, N>` selects a kernel at compile time based on `N =
@@ -25,12 +27,25 @@
 // only through CopyDispatcher::copy which is invoked by SimdCopyPolicy and
 // tests. The dead_code lint cannot trace through const-generic dispatch
 // branches, so it incorrectly marks them as unused.
-#![allow(dead_code)]
+#![cfg_attr(
+    not(any(test, feature = "nightly")),
+    expect(
+        dead_code,
+        reason = "SIMD dispatch helpers are called through const-generic branches"
+    )
+)]
+// CopyPolicy trait methods are intentionally non-unsafe (declared safe to
+// satisfy `#![deny(unsafe_code)]` on the crate root). Implementations
+// dereference raw pointers under a documented safety contract.
+#![expect(
+    clippy::not_unsafe_ptr_arg_deref,
+    reason = "CopyPolicy methods are safe by design"
+)]
 
 use core::marker::PhantomData;
 use core::ptr;
 
-use mantis_core::CopyPolicy;
+use super::copy_policy::CopyPolicy;
 
 // ── platform intrinsics ───────────────────────────────────────────────────────
 

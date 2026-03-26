@@ -16,6 +16,7 @@ Deny:           cargo deny check
 Miri:           cargo +nightly miri test -p mantis-queue
 Careful:        cargo +nightly careful test
 Bench:          cargo bench --bench spsc
+Bench native:   RUSTFLAGS='-C target-cpu=native' cargo bench --bench spsc
 Bench + ext:    cargo bench --bench spsc --features bench-contenders
 Fuzz:           cargo +nightly fuzz run <target>
 Layout:         cargo run -p mantis-layout
@@ -41,12 +42,13 @@ See `docs/PROGRESS.md` for current project status and phase tracking.
 ## Workspace Layout
 
 ```
-crates/core/    mantis-core    Traits, strategy definitions           (no_std)
-crates/types/   mantis-types   IDs, newtypes, error types             (no_std)
-crates/queue/   mantis-queue   SPSC ring + queue primitives           (no_std)
-crates/bench/   mantis-bench   Criterion + custom perf harness        (std)
-crates/layout/  mantis-layout  Struct layout / cache-line inspector   (std)
-crates/verify/  mantis-verify  Kani proofs, bolero property tests     (std)
+crates/core/     mantis-core      Traits, strategy definitions           (no_std)
+crates/types/    mantis-types     IDs, newtypes, error types             (no_std)
+crates/queue/    mantis-queue     SPSC ring + queue primitives           (no_std)
+crates/platform/ mantis-platform  Platform abstractions, CT types, SIMD, counters  (no_std)
+crates/bench/    mantis-bench     Criterion + custom perf harness        (std)
+crates/layout/   mantis-layout    Struct layout / cache-line inspector   (std)
+crates/verify/   mantis-verify    Kani proofs, bolero property tests     (std)
 ```
 
 ## no_std Rules

@@ -8,7 +8,8 @@ pub(crate) mod engine;
 pub(crate) mod handle;
 pub(crate) mod raw;
 
-use mantis_core::{CopyPolicy, IndexStrategy, Instrumentation, PushPolicy};
+use mantis_core::{IndexStrategy, Instrumentation, PushPolicy};
+use mantis_platform::CopyPolicy;
 
 use crate::storage::Storage;
 use engine::CopyRingEngine;
