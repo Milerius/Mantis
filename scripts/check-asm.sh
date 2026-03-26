@@ -28,6 +28,10 @@ SYMBOLS=(
     "asm_shim::spsc_pop_u64"
     "asm_shim::spsc_push_bytes64"
     "asm_shim::spsc_pop_bytes64"
+    "asm_shim::spsc_copy_push_u64"
+    "asm_shim::spsc_copy_pop_u64"
+    "asm_shim::spsc_copy_push_batch_u64"
+    "asm_shim::spsc_copy_pop_batch_u64"
 )
 
 SINGLE_SYMBOL=""
