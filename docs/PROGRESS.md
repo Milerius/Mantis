@@ -68,6 +68,29 @@
 - [x] Benchmark workload shapes: single-item, burst, full-drain
 - [x] Godbolt ASM inspection script
 
+### 1.8 Platform Abstractions (`mantis-platform`)
+**Status: Complete**
+
+- [x] Constant-time types (Ct<T>, CTBool<T>, Carry, Borrow)
+- [x] Constant-time arithmetic (ct_routines: eq, ne, lt, le, cneg, is_zero, is_msb_set)
+- [x] Multiplexers with x86_64 cmov assembly (mux, ccopy, secret_lookup)
+- [x] BearSSL constant-time division (div2n1n)
+- [x] Carry/borrow arithmetic (addC, subB via widening)
+- [x] Extended precision (WideMul, mul_acc, mul_double_acc)
+- [x] Compiler hints (prefetch, prefetch_large)
+- [x] Copy policies (CopyPolicy trait, DefaultCopyPolicy, SimdCopyPolicy)
+- [x] Bit manipulation utilities (bithacks)
+- [x] Platform configuration (config)
+- [x] ISA assembler types (x86_64 + ARM64)
+- [x] CPUID feature detection with OnceLock caching (x86_64)
+- [x] RDTSC cycle counter (x86_64, moved from bench)
+- [x] KperfCounter + PmuCounter (ARM64, moved from bench)
+- [x] CycleCounter trait + Measurement + DefaultCounter
+- [x] CachePadded (128-byte alignment)
+- [x] CPU name detection
+- [x] Migration: mantis-core, mantis-queue, mantis-bench updated to use platform
+- [x] 162 tests, Miri validation, clippy clean
+
 ### 1.3 Canonical Event Model
 - [ ] `BookDelta`, `Trade`, `Quote` types
 - [ ] `OrderIntent`, `Fill` types
@@ -141,7 +164,7 @@
 | `mantis-core` | Active | yes | 1 | — | — |
 | `mantis-types` | Active | yes | 6 | — | — |
 | `mantis-queue` | Active | yes | 31 | — | miri pass |
-| `mantis-platform` | In Progress | yes | 0 | — | — |
+| `mantis-platform` | Active | yes | 162 | — | miri pass |
 | `mantis-bench` | Active | std | 11 | 6 benches + 4 contenders | — |
 | `mantis-layout` | Scaffold | std | 2 | — | — |
 | `mantis-verify` | Active | std | 7 | — | 4 kani proofs, 7 bolero/diff |
