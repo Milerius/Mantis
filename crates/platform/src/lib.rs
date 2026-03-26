@@ -18,7 +18,9 @@ extern crate std;
 
 pub mod bithacks;
 pub mod config;
+pub mod constant_time;
 pub mod pad;
 
 // Top-level re-exports for convenience
+pub use constant_time::{Borrow, CTBool, Carry, Ct};
 pub use pad::CachePadded;
