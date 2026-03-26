@@ -8,7 +8,8 @@ use std::io::Write;
 use criterion::Criterion;
 
 use crate::measurement::{
-    DefaultMeasurement, read_criterion_estimates, reset_samples, take_samples,
+    DefaultMeasurement, read_criterion_estimates, read_criterion_sample_iters,
+    reset_samples, take_samples,
 };
 use crate::report::{BenchReport, WorkloadResult};
 
@@ -29,19 +30,22 @@ pub struct BenchDesc {
     pub element_type: &'static str,
     /// Ring capacity used.
     pub capacity: usize,
-    /// Mean cycles per sample from our counter.
-    pub mean_cycles_per_sample: Option<f64>,
-    /// Mean instructions per sample (hw counters).
-    pub mean_instructions_per_sample: Option<f64>,
-    /// Mean branch misses per sample (hw counters).
-    pub mean_branch_misses_per_sample: Option<f64>,
-    /// Mean L1D cache misses per sample (hw counters).
-    pub mean_l1d_misses_per_sample: Option<f64>,
-    /// Mean LLC misses per sample (hw counters).
-    pub mean_llc_misses_per_sample: Option<f64>,
+    /// Mean cycles per operation.
+    pub cycles_per_op: Option<f64>,
+    /// Mean instructions per operation (hw counters).
+    pub instructions_per_op: Option<f64>,
+    /// Mean branch misses per operation (hw counters).
+    pub branch_misses_per_op: Option<f64>,
+    /// Mean L1D cache misses per operation (hw counters).
+    pub l1d_misses_per_op: Option<f64>,
+    /// Mean LLC misses per operation (hw counters).
+    pub llc_misses_per_op: Option<f64>,
 }
 
 /// Run a single benchmark, capturing cycle samples alongside criterion.
+///
+/// After criterion finishes, reads the per-sample iteration counts from
+/// `sample.json` and normalizes all counter values to per-operation.
 pub fn run_bench(
     c: &mut MantisC,
     id: &'static str,
@@ -52,15 +56,16 @@ pub fn run_bench(
     reset_samples();
     c.bench_function(id, |b| f(b));
     let samples = take_samples();
+    let iters = read_criterion_sample_iters(id).unwrap_or_default();
     BenchDesc {
         id,
         element_type,
         capacity,
-        mean_cycles_per_sample: samples.mean_cycles_per_sample(),
-        mean_instructions_per_sample: samples.mean_instructions_per_sample(),
-        mean_branch_misses_per_sample: samples.mean_branch_misses_per_sample(),
-        mean_l1d_misses_per_sample: samples.mean_l1d_misses_per_sample(),
-        mean_llc_misses_per_sample: samples.mean_llc_misses_per_sample(),
+        cycles_per_op: samples.mean_cycles_per_op(&iters),
+        instructions_per_op: samples.mean_instructions_per_op(&iters),
+        branch_misses_per_op: samples.mean_branch_misses_per_op(&iters),
+        l1d_misses_per_op: samples.mean_l1d_misses_per_op(&iters),
+        llc_misses_per_op: samples.mean_llc_misses_per_op(&iters),
     }
 }
 
@@ -107,11 +112,11 @@ pub fn export_report(
             p50_ns: median_ns,
             p99_ns,
             p999_ns,
-            cycles_per_op: desc.mean_cycles_per_sample,
-            instructions_per_op: desc.mean_instructions_per_sample,
-            branch_misses_per_op: desc.mean_branch_misses_per_sample,
-            l1_misses_per_op: desc.mean_l1d_misses_per_sample,
-            llc_misses_per_op: desc.mean_llc_misses_per_sample,
+            cycles_per_op: desc.cycles_per_op,
+            instructions_per_op: desc.instructions_per_op,
+            branch_misses_per_op: desc.branch_misses_per_op,
+            l1_misses_per_op: desc.l1d_misses_per_op,
+            llc_misses_per_op: desc.llc_misses_per_op,
             full_rate: None,
             empty_rate: None,
             mean_occupancy: None,

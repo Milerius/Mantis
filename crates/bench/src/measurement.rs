@@ -62,49 +62,66 @@ impl SampleCollector {
         self.cycles.is_empty()
     }
 
-    /// Mean cycles per sample (not per iteration).
-    #[must_use]
-    #[expect(clippy::cast_precision_loss, reason = "sample counts fit f64")]
-    pub fn mean_cycles_per_sample(&self) -> Option<f64> {
-        if self.cycles.is_empty() {
+    /// Weighted mean per-op for a counter vector, using iteration counts.
+    ///
+    /// Computes `sum(values) / sum(iters)` — a properly weighted average
+    /// that accounts for criterion's varying iteration counts per sample.
+    #[expect(clippy::cast_precision_loss, reason = "counter values fit f64")]
+    fn weighted_per_op(values: &[u64], iters: &[f64]) -> Option<f64> {
+        if values.is_empty() || iters.is_empty() {
             return None;
         }
-        let sum: u64 = self.cycles.iter().sum();
-        Some(sum as f64 / self.cycles.len() as f64)
+        let len = values.len().min(iters.len());
+        let total: f64 = values[..len].iter().map(|&v| v as f64).sum();
+        let total_iters: f64 = iters[..len].iter().sum();
+        if total_iters > 0.0 {
+            Some(total / total_iters)
+        } else {
+            None
+        }
     }
 
-    /// Mean of a hw counter vector per sample, or `None` if hw counters inactive.
-    #[expect(clippy::cast_precision_loss, reason = "sample counts fit f64")]
-    fn mean_hw_counter(&self, values: &[u64]) -> Option<f64> {
-        if !self.has_hw_counters || values.is_empty() {
+    /// Mean cycles per operation, normalized by criterion's iteration
+    /// counts from `sample.json`.
+    #[must_use]
+    pub fn mean_cycles_per_op(&self, iters: &[f64]) -> Option<f64> {
+        Self::weighted_per_op(&self.cycles, iters)
+    }
+
+    /// Mean instructions per operation.
+    #[must_use]
+    pub fn mean_instructions_per_op(&self, iters: &[f64]) -> Option<f64> {
+        if !self.has_hw_counters {
             return None;
         }
-        let sum: u64 = values.iter().sum();
-        Some(sum as f64 / values.len() as f64)
+        Self::weighted_per_op(&self.instructions, iters)
     }
 
-    /// Mean instructions per sample.
+    /// Mean branch misses per operation.
     #[must_use]
-    pub fn mean_instructions_per_sample(&self) -> Option<f64> {
-        self.mean_hw_counter(&self.instructions)
+    pub fn mean_branch_misses_per_op(&self, iters: &[f64]) -> Option<f64> {
+        if !self.has_hw_counters {
+            return None;
+        }
+        Self::weighted_per_op(&self.branch_misses, iters)
     }
 
-    /// Mean branch misses per sample.
+    /// Mean L1D cache misses per operation.
     #[must_use]
-    pub fn mean_branch_misses_per_sample(&self) -> Option<f64> {
-        self.mean_hw_counter(&self.branch_misses)
+    pub fn mean_l1d_misses_per_op(&self, iters: &[f64]) -> Option<f64> {
+        if !self.has_hw_counters {
+            return None;
+        }
+        Self::weighted_per_op(&self.l1d_misses, iters)
     }
 
-    /// Mean L1D cache misses per sample.
+    /// Mean LLC misses per operation.
     #[must_use]
-    pub fn mean_l1d_misses_per_sample(&self) -> Option<f64> {
-        self.mean_hw_counter(&self.l1d_misses)
-    }
-
-    /// Mean LLC misses per sample.
-    #[must_use]
-    pub fn mean_llc_misses_per_sample(&self) -> Option<f64> {
-        self.mean_hw_counter(&self.llc_misses)
+    pub fn mean_llc_misses_per_op(&self, iters: &[f64]) -> Option<f64> {
+        if !self.has_hw_counters {
+            return None;
+        }
+        Self::weighted_per_op(&self.llc_misses, iters)
     }
 }
 
@@ -266,6 +283,32 @@ pub fn read_criterion_estimates(bench_id: &str) -> Option<CriterionEstimates> {
     })
 }
 
+/// Read criterion's `sample.json` for a benchmark and extract the
+/// per-sample iteration counts.
+///
+/// Returns the `iters` array or `None` if the file doesn't exist.
+#[must_use]
+pub fn read_criterion_sample_iters(bench_id: &str) -> Option<Vec<f64>> {
+    let dir_name = bench_id.replace('/', "_");
+    let base = std::env::var("CARGO_MANIFEST_DIR")
+        .unwrap_or_else(|_| ".".to_owned());
+    let workspace = std::path::Path::new(&base)
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap_or(std::path::Path::new("."));
+    let path = workspace
+        .join("target")
+        .join("criterion")
+        .join(&dir_name)
+        .join("new")
+        .join("sample.json");
+    let content = std::fs::read_to_string(&path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let arr = v["iters"].as_array()?;
+    let iters: Vec<f64> = arr.iter().filter_map(serde_json::Value::as_f64).collect();
+    if iters.is_empty() { None } else { Some(iters) }
+}
+
 /// Parsed criterion estimates for a benchmark.
 #[derive(Debug, Clone, Copy)]
 pub struct CriterionEstimates {
@@ -303,9 +346,12 @@ mod tests {
     }
 
     #[test]
-    fn sample_collector_mean() {
+    fn sample_collector_per_op() {
         let mut collector = SampleCollector::default();
-        collector.cycles.extend_from_slice(&[10, 20, 30]);
-        assert!((collector.mean_cycles_per_sample().unwrap_or(0.0) - 20.0).abs() < 0.01);
+        collector.cycles.extend_from_slice(&[100, 400, 900]);
+        let iters = [10.0, 20.0, 30.0];
+        // weighted: (100+400+900)/(10+20+30) = 1400/60 ≈ 23.33
+        let per_op = collector.mean_cycles_per_op(&iters).unwrap_or(0.0);
+        assert!((per_op - 23.333).abs() < 0.01);
     }
 }
