@@ -63,6 +63,9 @@ where
         let head = self.head.load(Ordering::Relaxed);
         let next_head = I::wrap(head + 1, self.storage.capacity());
 
+        #[cfg(feature = "prefetch")]
+        crate::raw::prefetch_slot_write(&self.storage, next_head);
+
         if next_head == self.tail_cached.get() {
             let tail = self.tail.load(Ordering::Acquire);
             self.tail_cached.set(tail);
@@ -82,6 +85,9 @@ where
     #[inline]
     pub(crate) fn pop(&self, out: &mut T) -> bool {
         let tail = self.tail.load(Ordering::Relaxed);
+
+        #[cfg(feature = "prefetch")]
+        crate::raw::prefetch_slot_read(&self.storage, tail);
 
         if tail == self.head_cached.get() {
             let head = self.head.load(Ordering::Acquire);
