@@ -10,7 +10,9 @@ use std::time::Duration;
 
 use criterion::measurement::{Measurement, ValueFormatter, WallTime};
 
-use mantis_platform::metering::{CycleCounter, DefaultCounter};
+use mantis_platform::metering::{
+    CycleCounter, DefaultCounter, DefaultHwCounters, HwCounters,
+};
 
 /// Collects cycle measurements from benchmark iterations.
 ///
@@ -24,6 +26,16 @@ pub struct SampleCollector {
     pub cycles: Vec<u64>,
     /// Wall-time nanoseconds from each sample.
     pub nanos: Vec<u64>,
+    /// Instructions retired per sample (empty if hw counters unavailable).
+    pub instructions: Vec<u64>,
+    /// Branch misses per sample.
+    pub branch_misses: Vec<u64>,
+    /// L1D cache read misses per sample.
+    pub l1d_misses: Vec<u64>,
+    /// LLC read misses per sample.
+    pub llc_misses: Vec<u64>,
+    /// Whether hardware counters were collected for these samples.
+    pub has_hw_counters: bool,
 }
 
 impl SampleCollector {
@@ -31,6 +43,11 @@ impl SampleCollector {
     pub fn reset(&mut self) {
         self.cycles.clear();
         self.nanos.clear();
+        self.instructions.clear();
+        self.branch_misses.clear();
+        self.l1d_misses.clear();
+        self.llc_misses.clear();
+        self.has_hw_counters = false;
     }
 
     /// Number of samples collected.
@@ -55,6 +72,40 @@ impl SampleCollector {
         let sum: u64 = self.cycles.iter().sum();
         Some(sum as f64 / self.cycles.len() as f64)
     }
+
+    /// Mean of a hw counter vector per sample, or `None` if hw counters inactive.
+    #[expect(clippy::cast_precision_loss, reason = "sample counts fit f64")]
+    fn mean_hw_counter(&self, values: &[u64]) -> Option<f64> {
+        if !self.has_hw_counters || values.is_empty() {
+            return None;
+        }
+        let sum: u64 = values.iter().sum();
+        Some(sum as f64 / values.len() as f64)
+    }
+
+    /// Mean instructions per sample.
+    #[must_use]
+    pub fn mean_instructions_per_sample(&self) -> Option<f64> {
+        self.mean_hw_counter(&self.instructions)
+    }
+
+    /// Mean branch misses per sample.
+    #[must_use]
+    pub fn mean_branch_misses_per_sample(&self) -> Option<f64> {
+        self.mean_hw_counter(&self.branch_misses)
+    }
+
+    /// Mean L1D cache misses per sample.
+    #[must_use]
+    pub fn mean_l1d_misses_per_sample(&self) -> Option<f64> {
+        self.mean_hw_counter(&self.l1d_misses)
+    }
+
+    /// Mean LLC misses per sample.
+    #[must_use]
+    pub fn mean_llc_misses_per_sample(&self) -> Option<f64> {
+        self.mean_hw_counter(&self.llc_misses)
+    }
 }
 
 thread_local! {
@@ -76,42 +127,68 @@ pub fn take_samples() -> SampleCollector {
 /// Criterion measurement backed by a platform cycle counter.
 ///
 /// Wraps a [`CycleCounter`] and delegates formatting to [`WallTime`].
-/// On each `end()` call, stores cycle + nanos in the thread-local
-/// [`SampleCollector`] for later retrieval.
+/// Optionally collects hardware counters ([`DefaultHwCounters`]) when
+/// the `perf-counters` feature is enabled and the platform supports it.
+///
+/// On each `end()` call, stores cycle + nanos + hw counter deltas in
+/// the thread-local [`SampleCollector`] for later retrieval.
 pub struct MantisMeasurement<C: CycleCounter> {
     counter: C,
     wall: WallTime,
+    hw: Option<DefaultHwCounters>,
 }
 
+/// Hw counter snapshot type alias for readability.
+type HwSnapshot = <DefaultHwCounters as HwCounters>::Snapshot;
+
 impl<C: CycleCounter> MantisMeasurement<C> {
-    /// Create a new measurement with the given counter.
+    /// Create a new measurement with the given counter (no hw counters).
     pub fn new(counter: C) -> Self {
         Self {
             counter,
             wall: WallTime,
+            hw: None,
+        }
+    }
+
+    /// Create a measurement with both cycle counter and hw counters.
+    pub fn with_hw_counters(counter: C, hw: DefaultHwCounters) -> Self {
+        Self {
+            counter,
+            wall: WallTime,
+            hw: Some(hw),
         }
     }
 }
 
 impl<C: CycleCounter> Measurement for MantisMeasurement<C> {
-    type Intermediate = (u64, std::time::Instant);
+    type Intermediate = (u64, std::time::Instant, Option<HwSnapshot>);
     type Value = Duration;
 
     fn start(&self) -> Self::Intermediate {
+        let hw_snap = self.hw.as_ref().and_then(HwCounters::start);
         let cycles = self.counter.start();
         let wall_start = std::time::Instant::now();
-        (cycles, wall_start)
+        (cycles, wall_start, hw_snap)
     }
 
     fn end(&self, i: Self::Intermediate) -> Self::Value {
         let wall_elapsed = i.1.elapsed();
         let m = self.counter.elapsed(i.0);
+        let hw_deltas = self.hw.as_ref().and_then(|hw| hw.read(&i.2));
 
         // Store the sample for later retrieval
         SAMPLES.with(|s| {
             let mut collector = s.borrow_mut();
             collector.cycles.push(m.cycles);
             collector.nanos.push(m.nanos);
+            if let Some(d) = hw_deltas {
+                collector.instructions.push(d.instructions);
+                collector.branch_misses.push(d.branch_misses);
+                collector.l1d_misses.push(d.l1d_misses);
+                collector.llc_misses.push(d.llc_misses);
+                collector.has_hw_counters = true;
+            }
         });
 
         wall_elapsed
@@ -143,6 +220,10 @@ pub type DefaultMeasurement = MantisMeasurement<DefaultCounter>;
 
 impl DefaultMeasurement {
     /// Create a default measurement for the current platform.
+    ///
+    /// Attempts to initialize hardware counters if the `perf-counters`
+    /// feature is enabled. Falls back gracefully to cycles-only if
+    /// hw counter initialization fails.
     #[must_use]
     pub fn platform_default() -> Self {
         Self::new(DefaultCounter::default())

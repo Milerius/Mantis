@@ -31,6 +31,14 @@ pub struct BenchDesc {
     pub capacity: usize,
     /// Mean cycles per sample from our counter.
     pub mean_cycles_per_sample: Option<f64>,
+    /// Mean instructions per sample (hw counters).
+    pub mean_instructions_per_sample: Option<f64>,
+    /// Mean branch misses per sample (hw counters).
+    pub mean_branch_misses_per_sample: Option<f64>,
+    /// Mean L1D cache misses per sample (hw counters).
+    pub mean_l1d_misses_per_sample: Option<f64>,
+    /// Mean LLC misses per sample (hw counters).
+    pub mean_llc_misses_per_sample: Option<f64>,
 }
 
 /// Run a single benchmark, capturing cycle samples alongside criterion.
@@ -49,6 +57,10 @@ pub fn run_bench(
         element_type,
         capacity,
         mean_cycles_per_sample: samples.mean_cycles_per_sample(),
+        mean_instructions_per_sample: samples.mean_instructions_per_sample(),
+        mean_branch_misses_per_sample: samples.mean_branch_misses_per_sample(),
+        mean_l1d_misses_per_sample: samples.mean_l1d_misses_per_sample(),
+        mean_llc_misses_per_sample: samples.mean_llc_misses_per_sample(),
     }
 }
 
@@ -96,10 +108,10 @@ pub fn export_report(
             p99_ns,
             p999_ns,
             cycles_per_op: desc.mean_cycles_per_sample,
-            instructions_per_op: None,
-            branch_misses_per_op: None,
-            l1_misses_per_op: None,
-            llc_misses_per_op: None,
+            instructions_per_op: desc.mean_instructions_per_sample,
+            branch_misses_per_op: desc.mean_branch_misses_per_sample,
+            l1_misses_per_op: desc.mean_l1d_misses_per_sample,
+            llc_misses_per_op: desc.mean_llc_misses_per_sample,
             full_rate: None,
             empty_rate: None,
             mean_occupancy: None,
