@@ -12,6 +12,7 @@ default = []
 std = []
 asm = []
 nightly = []
+prefetch = []
 perf-counters = ["dep:perf-event2"]
 
 [dependencies]
