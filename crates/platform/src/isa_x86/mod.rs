@@ -3,4 +3,8 @@
 pub mod assembler;
 pub mod simd;
 
-// rdtsc and cpudetect added in later tasks
+#[cfg(all(feature = "asm", feature = "std"))]
+pub mod rdtsc;
+
+#[cfg(feature = "std")]
+pub mod cpudetect;
