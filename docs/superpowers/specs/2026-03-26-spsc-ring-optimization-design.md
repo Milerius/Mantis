@@ -122,7 +122,7 @@ This API already handles x86_64 (`_mm_prefetch` with locality mapping). No new t
 2. **aarch64 support**: Currently a no-op on non-x86_64. Add inline asm for aarch64:
    - Read: `asm!("prfm pldl1keep, [{ptr}]", ptr = in(reg) ptr, options(nostack, preserves_flags))`
    - Write: `asm!("prfm pstl1keep, [{ptr}]", ptr = in(reg) ptr, options(nostack, preserves_flags))`
-   - This requires nightly for `asm!` in `no_std` — gate behind `#[cfg(target_arch = "aarch64")]` with nightly feature flag. On stable aarch64, fall back to no-op (Apple Silicon's HW prefetcher handles sequential access well).
+   - `asm!` is stable since Rust 1.59 and works in `no_std` — gate behind `#[cfg(target_arch = "aarch64")]`, no nightly required.
 
 | Architecture | Read Prefetch | Write Prefetch |
 |---|---|---|
