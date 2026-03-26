@@ -18,3 +18,7 @@ extern crate std;
 
 pub mod bithacks;
 pub mod config;
+pub mod pad;
+
+// Top-level re-exports for convenience
+pub use pad::CachePadded;
