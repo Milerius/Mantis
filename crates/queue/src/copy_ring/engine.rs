@@ -258,6 +258,7 @@ where
 }
 
 #[cfg(test)]
+#[expect(clippy::cast_sign_loss, reason = "test-only usize→u64 conversions")]
 mod tests {
     extern crate std;
     use std::vec;
@@ -494,7 +495,7 @@ mod tests {
                 engine.pop_batch(&mut drain);
 
                 // Batch push
-                let src: Vec<u64> = (100..100 + batch_size as u64).collect();
+                let src: Vec<u64> = (100_u64..100 + batch_size as u64).collect();
                 let pushed = engine.push_batch(&src);
 
                 // Batch pop
