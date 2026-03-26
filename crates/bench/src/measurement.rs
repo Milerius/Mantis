@@ -223,10 +223,15 @@ impl DefaultMeasurement {
     ///
     /// Attempts to initialize hardware counters if the `perf-counters`
     /// feature is enabled. Falls back gracefully to cycles-only if
-    /// hw counter initialization fails.
+    /// hw counter initialization fails (e.g. missing permissions,
+    /// unsupported platform).
     #[must_use]
     pub fn platform_default() -> Self {
-        Self::new(DefaultCounter::default())
+        let counter = DefaultCounter::default();
+        match DefaultHwCounters::try_new() {
+            Ok(hw) => Self::with_hw_counters(counter, hw),
+            Err(_) => Self::new(counter),
+        }
     }
 }
 

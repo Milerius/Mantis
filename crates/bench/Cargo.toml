@@ -10,6 +10,7 @@ repository.workspace = true
 [features]
 default = []
 asm = ["mantis-platform/asm"]
+perf-counters = ["mantis-platform/perf-counters"]
 bench-contenders = ["dep:rtrb", "dep:crossbeam-queue"]
 
 [dependencies]

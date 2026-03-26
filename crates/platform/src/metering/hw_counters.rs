@@ -47,6 +47,15 @@ impl NoopCounters {
     pub fn new() -> Self {
         Self
     }
+
+    /// Fallible constructor matching the API of platform-specific counters.
+    ///
+    /// # Errors
+    ///
+    /// Never fails; always returns `Ok(Self)`.
+    pub fn try_new() -> Result<Self, std::io::Error> {
+        Ok(Self)
+    }
 }
 
 impl Default for NoopCounters {
