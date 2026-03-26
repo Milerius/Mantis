@@ -49,6 +49,7 @@ A modular, `no_std`-first Rust foundation for low-latency financial systems acro
 | [`mantis-core`](crates/core/) | Strategy traits (`IndexStrategy`, `PushPolicy`, `Instrumentation`) | yes |
 | [`mantis-types`](crates/types/) | Newtypes and error types (`SeqNum`, `PushError`, `QueueError`) | yes |
 | [`mantis-queue`](crates/queue/) | Lock-free SPSC ring buffer with modular strategies | yes |
+| [`mantis-platform`](crates/platform/) | Platform abstractions: CT types, cycle counters, ISA primitives | yes |
 | [`mantis-bench`](crates/bench/) | Criterion benchmarks + platform cycle counters + JSON reports | no |
 | [`mantis-layout`](crates/layout/) | Struct layout and cache-line inspector | no |
 | [`mantis-verify`](crates/verify/) | Kani proofs, Bolero property tests, differential testing | no |

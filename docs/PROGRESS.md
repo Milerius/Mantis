@@ -141,6 +141,7 @@
 | `mantis-core` | Active | yes | 1 | — | — |
 | `mantis-types` | Active | yes | 6 | — | — |
 | `mantis-queue` | Active | yes | 31 | — | miri pass |
+| `mantis-platform` | In Progress | yes | 0 | — | — |
 | `mantis-bench` | Active | std | 11 | 6 benches + 4 contenders | — |
 | `mantis-layout` | Scaffold | std | 2 | — | — |
 | `mantis-verify` | Active | std | 7 | — | 4 kani proofs, 7 bolero/diff |
