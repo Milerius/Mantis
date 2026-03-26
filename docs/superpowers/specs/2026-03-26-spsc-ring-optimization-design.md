@@ -61,12 +61,17 @@ Sources studied (mratsim/weave SPSC research + linked papers):
 
 ## Architecture
 
-### Three Ring Implementations, Shared Engine
+### Three Ring Implementations, Two Engines
 
-All three ring types share the same `RingEngine` core:
+The codebase has two separate engine implementations with identical SPSC protocol:
+
+- **`RingEngine`** (`crates/queue/src/engine.rs`): For general `T` (move semantics, `MaybeUninit` slots, Drop support)
+- **`CopyRingEngine`** (`crates/queue/src/copy_ring/engine.rs`): For `T: Copy` (SIMD-optimized via `CopyPolicy`, returns `bool` not `Result`)
+
+Both share the same structural layout:
 
 ```
-RingEngine<T, S, I, P, Instr>
+[Copy]RingEngine<T, S, I, P, Instr[, CP]>
 ├── head: CachePadded<AtomicUsize>
 ├── tail: CachePadded<AtomicUsize>
 ├── tail_cached: CachePadded<Cell<usize>>
@@ -75,18 +80,20 @@ RingEngine<T, S, I, P, Instr>
 └── instr: Instr
 ```
 
-- **Inline ring** (`SpscRing`): `RawRing<T, InlineStorage, ...>` — takes ownership, drops on Drop
-- **Copy ring** (`SpscRingCopy`): `RawRingCopy<T, InlineStorage, ..., CopyPolicy>` — T: Copy, SIMD-optimized
-- **General ring**: Uses same `RawRing` with `HeapStorage`
+Public types:
 
-Prefetch changes go into the shared engine — all 3 benefit automatically.
-Contiguous batch changes go into Copy ring only (requires T: Copy for bulk memcpy).
+- **Inline ring** (`SpscRing`): `RawRing<T, InlineStorage, ...>` — general T, takes ownership
+- **Copy ring** (`SpscRingCopy`): `RawRingCopy<T, InlineStorage, ..., CopyPolicy>` — T: Copy, SIMD
+- **General ring**: `RawRing` with `HeapStorage`
+
+Prefetch changes must be added to **both** engine files independently (same pattern, same call sites).
+Contiguous batch changes go into `CopyRingEngine` only (requires `T: Copy` for bulk memcpy).
 
 ## Phase 0: Codegen Baseline Capture
 
-**Deliverable:** Script that dumps and archives hot-path assembly.
+**Deliverable:** Extend existing `scripts/check-asm.sh` to archive hot-path assembly.
 
-- Add `scripts/check-asm.sh` that runs `cargo asm` on `asm_shim` for key functions
+- Extend existing `scripts/check-asm.sh` (already runs `cargo asm` on `asm_shim`) with baseline archiving
 - Capture baseline for: `spsc_push_u64`, `spsc_pop_u64`, `spsc_copy_push_u64`, `spsc_copy_pop_u64`
 - Store instruction counts as reference for regression detection
 - Target both aarch64 and x86_64 (via `--target` flag or native)
@@ -99,32 +106,42 @@ When a slot's cache line is cold (not in L1), the store/load on the slot stalls 
 
 ### Design
 
-**New module:** `crates/platform/src/intrinsics/prefetch.rs`
+**Existing API:** `crates/platform/src/intrinsics/compiler_hints.rs` already provides:
 
 ```rust
-pub trait SlotPrefetch {
-    fn prefetch_read(ptr: *const u8);
-    fn prefetch_write(ptr: *mut u8);
-}
+pub fn prefetch<T>(ptr: *const T, rw: PrefetchRW, locality: PrefetchLocality);
+pub fn prefetch_large<T>(ptr: *const T, rw: PrefetchRW, locality: PrefetchLocality, max_lines: usize);
 ```
 
-**Compile-time dispatch per architecture:**
+This API already handles x86_64 (`_mm_prefetch` with locality mapping). No new trait needed.
+
+**Required changes to existing prefetch:**
+
+1. **x86_64 write prefetch**: Currently ignores `PrefetchRW` (`let _ = rw;`). For write prefetch, use `_MM_HINT_ET0` (exclusive hint) to bring the cache line in Modified state, avoiding a subsequent RFO (Read For Ownership) on the store. Read prefetch continues using `_MM_HINT_T0`.
+
+2. **aarch64 support**: Currently a no-op on non-x86_64. Add inline asm for aarch64:
+   - Read: `asm!("prfm pldl1keep, [{ptr}]", ptr = in(reg) ptr, options(nostack, preserves_flags))`
+   - Write: `asm!("prfm pstl1keep, [{ptr}]", ptr = in(reg) ptr, options(nostack, preserves_flags))`
+   - This requires nightly for `asm!` in `no_std` — gate behind `#[cfg(target_arch = "aarch64")]` with nightly feature flag. On stable aarch64, fall back to no-op (Apple Silicon's HW prefetcher handles sequential access well).
 
 | Architecture | Read Prefetch | Write Prefetch |
 |---|---|---|
-| x86_64 | `_mm_prefetch(ptr, _MM_HINT_T0)` | `_mm_prefetch(ptr, _MM_HINT_T0)` |
-| aarch64 | `core::arch::aarch64::__pld(ptr)` | `PRFM PSTL1KEEP` via inline asm |
+| x86_64 | `_mm_prefetch(ptr, _MM_HINT_T0)` | `_mm_prefetch(ptr, _MM_HINT_ET0)` |
+| aarch64 (nightly) | `PRFM PLDL1KEEP` via inline asm | `PRFM PSTL1KEEP` via inline asm |
 | Fallback | no-op | no-op |
 
-**Integration into engine:**
+**Integration into both engines:**
 
-- Push: prefetch the slot at `next_head` before writing the value
-- Pop: prefetch the slot at `tail` before reading the value
-- The prefetch fires ~5-10 instructions before the actual access, giving the memory subsystem time to fetch
+- Push (`RingEngine` + `CopyRingEngine`): prefetch the slot at `next_head` before writing the value
+- Pop (`RingEngine` + `CopyRingEngine`): prefetch the slot at `tail` before reading the value
+- Use `PrefetchRW::Write` for push, `PrefetchRW::Read` for pop
+- The prefetch fires ~5-10 instructions before the actual access
 
-**Feature flag:** `prefetch` feature in `mantis-queue` (forwarded to `mantis-platform`). Enabled by default in bench builds, opt-in for library users.
+**Feature flag:** `prefetch` feature in `mantis-queue` (forwarded to `mantis-platform`). Off by default for library users; enabled in bench builds.
 
-**Risk:** Apple M-series has strong hardware prefetchers for sequential access. Software prefetch may be redundant or even harmful (polluting L1). Benchmarks will determine whether to keep it enabled by default.
+**Risk:** Apple M-series has strong hardware prefetchers for sequential access. Software prefetch may be redundant or even harmful (polluting L1).
+
+**Rollback criteria:** If benchmarks show >2% regression on any workload (single-op or burst) on aarch64, disable prefetch on that platform by default. The feature flag provides the rollback mechanism.
 
 ### Expected Impact
 
@@ -149,10 +166,15 @@ For a 1000-element burst, that's 1000 individual slot copies with per-element in
 
 ### Design
 
-Replace per-element loop with contiguous-region calculation:
+Replace per-element loop with contiguous-region calculation.
+
+**Storage contiguity invariant:** Both `InlineStorage` (array of `UnsafeCell<MaybeUninit<T>>`) and `HeapStorage` (boxed slice) store slots contiguously in memory. The `Storage::slot_ptr(index)` returns a `*mut MaybeUninit<T>`, and `slot_ptr(i+1)` is exactly `size_of::<MaybeUninit<T>>()` bytes after `slot_ptr(i)`. This is guaranteed by Rust's array/slice layout. We rely on this for bulk `copy_nonoverlapping`.
+
+**`push_batch` pseudocode:**
 
 ```rust
 pub(crate) fn push_batch(&self, src: &[T]) -> usize {
+    // ... available space calculation (unchanged) ...
     let head = self.head.load(Relaxed);
     let wrapped = I::wrap(head, cap);
 
@@ -160,19 +182,49 @@ pub(crate) fn push_batch(&self, src: &[T]) -> usize {
     let first_chunk = min(n, cap - wrapped);
     let second_chunk = n - first_chunk;
 
-    // Bulk copy first contiguous region
-    copy_nonoverlapping(src.as_ptr(), storage.slot_ptr(wrapped), first_chunk);
+    // SAFETY: Storage slots are contiguous. slot_ptr(wrapped) through
+    // slot_ptr(wrapped + first_chunk - 1) are adjacent in memory.
+    unsafe {
+        let dst = self.storage.slot_ptr(wrapped).cast::<T>();
+        copy_nonoverlapping(src.as_ptr(), dst, first_chunk);
+    }
 
-    // Bulk copy wrap-around region (if any)
     if second_chunk > 0 {
-        copy_nonoverlapping(
-            src[first_chunk..].as_ptr(),
-            storage.slot_ptr(0),
-            second_chunk,
-        );
+        unsafe {
+            let dst = self.storage.slot_ptr(0).cast::<T>();
+            copy_nonoverlapping(src[first_chunk..].as_ptr(), dst, second_chunk);
+        }
     }
 
     self.head.store(I::wrap(head + n, cap), Release);
+    n
+}
+```
+
+**`pop_batch` pseudocode (symmetric):**
+
+```rust
+pub(crate) fn pop_batch(&self, dst: &mut [T]) -> usize {
+    // ... available items calculation (unchanged) ...
+    let tail = self.tail.load(Relaxed);
+    let wrapped = I::wrap(tail, cap);
+
+    let first_chunk = min(n, cap - wrapped);
+    let second_chunk = n - first_chunk;
+
+    unsafe {
+        let src = self.storage.slot_ptr(wrapped).cast::<T>();
+        copy_nonoverlapping(src, dst.as_mut_ptr(), first_chunk);
+    }
+
+    if second_chunk > 0 {
+        unsafe {
+            let src = self.storage.slot_ptr(0).cast::<T>();
+            copy_nonoverlapping(src, dst[first_chunk..].as_mut_ptr(), second_chunk);
+        }
+    }
+
+    self.tail.store(I::wrap(tail + n, cap), Release);
     n
 }
 ```
@@ -183,6 +235,7 @@ pub(crate) fn push_batch(&self, src: &[T]) -> usize {
 - For SIMD-sized types (16-64B), we can use the existing `CopyPolicy` on each chunk
 - At most 2 copies per batch (one before wrap, one after) vs N individual copies
 - Available space calculation unchanged from current implementation
+- The `.cast::<T>()` on `*mut MaybeUninit<T>` is safe because `MaybeUninit<T>` has the same layout as `T`
 
 ### Expected Impact
 
@@ -223,11 +276,16 @@ Deferred to a separate spec. Overview:
 | Sparse data | Skip | Cached indices already solve near-empty contention |
 | Hugepages | Phase 4 | Orthogonal to prefetch/batch; typical sizes fit in few pages |
 | Branchless rewrites | Skip | Hot path has only 2 well-predicted branches, no cmov benefit |
-| Scope | All 3 rings | Shared engine means prefetch benefits all; batch is Copy-only |
+| Scope | All 3 rings | Prefetch added to both engines independently; batch is Copy-only |
 
 ## Testing Strategy
 
 - **Correctness:** Existing Miri tests cover push/pop/batch. Add Miri tests for prefetch (must be no-op under Miri since Miri doesn't support prefetch intrinsics).
+- **Contiguous batch correctness:**
+  - Unit tests for wrap-around batch copy (push N items straddling the end of the backing array, pop and verify order)
+  - Miri validation of `copy_nonoverlapping` calls (UB detection for the `MaybeUninit` cast)
+  - Differential tests: old per-element loop vs new contiguous copy produce identical results for all batch sizes
+  - Property-based tests (proptest): random batch sizes, random fill levels, verify FIFO ordering preserved
 - **Performance:** A/B benchmarks via `cargo bench --bench spsc` comparing before/after for each phase. Use `target/bench-report-spsc.json` for automated comparison.
 - **Regression:** `scripts/check-asm.sh` as codegen regression gate.
 - **Platform coverage:** CI runs on both x86_64 (ubuntu-latest) and aarch64 (macos-latest).
