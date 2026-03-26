@@ -92,6 +92,10 @@ impl CycleCounter for KperfCounter {
         Measurement {
             nanos: self.ticks_to_nanos(ticks),
             cycles: ticks,
+            instructions: None,
+            branch_misses: None,
+            l1d_misses: None,
+            llc_misses: None,
         }
     }
 }
@@ -152,6 +156,10 @@ impl CycleCounter for PmuCounter {
         Measurement {
             nanos: now.saturating_sub(start),
             cycles: 0,
+            instructions: None,
+            branch_misses: None,
+            l1d_misses: None,
+            llc_misses: None,
         }
     }
 }

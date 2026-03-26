@@ -23,6 +23,14 @@ pub struct Measurement {
     pub nanos: u64,
     /// CPU cycles (if available on this platform, else 0).
     pub cycles: u64,
+    /// Instructions retired (if available).
+    pub instructions: Option<u64>,
+    /// Branch misses (if available).
+    pub branch_misses: Option<u64>,
+    /// L1D cache read misses (if available).
+    pub l1d_misses: Option<u64>,
+    /// Last-level cache read misses (if available).
+    pub llc_misses: Option<u64>,
 }
 
 /// Trait for platform-specific cycle counting.

@@ -67,6 +67,10 @@ impl CycleCounter for RdtscCounter {
         Measurement {
             nanos: interval_nanos,
             cycles,
+            instructions: None,
+            branch_misses: None,
+            l1d_misses: None,
+            llc_misses: None,
         }
     }
 }
