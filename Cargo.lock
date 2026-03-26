@@ -435,8 +435,8 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "crossbeam-queue",
- "libc",
  "mantis-core",
+ "mantis-platform",
  "mantis-queue",
  "mantis-types",
  "rtrb",
@@ -458,10 +458,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mantis-platform"
+version = "0.1.0"
+dependencies = [
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "mantis-queue"
 version = "0.1.0"
 dependencies = [
  "mantis-core",
+ "mantis-platform",
  "mantis-types",
 ]
 

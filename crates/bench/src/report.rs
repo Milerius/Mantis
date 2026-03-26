@@ -85,7 +85,7 @@ impl BenchReport {
             implementation: implementation.to_owned(),
             arch: std::env::consts::ARCH.to_owned(),
             os: std::env::consts::OS.to_owned(),
-            cpu: detect_cpu_name(),
+            cpu: mantis_platform::cpu_name(),
             compiler: detect_rustc_version(),
             features: Vec::new(),
             compiler_flags: String::new(),
@@ -101,34 +101,6 @@ impl BenchReport {
     /// Returns an error if serialization fails.
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
-    }
-}
-
-fn detect_cpu_name() -> String {
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("sysctl")
-            .args(["-n", "machdep.cpu.brand_string"])
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map_or_else(|| "unknown".to_owned(), |s| s.trim().to_owned())
-    }
-    #[cfg(target_os = "linux")]
-    {
-        std::fs::read_to_string("/proc/cpuinfo")
-            .ok()
-            .and_then(|s| {
-                s.lines()
-                    .find(|l| l.starts_with("model name"))
-                    .and_then(|l| l.split(':').nth(1))
-                    .map(|n| n.trim().to_owned())
-            })
-            .unwrap_or_else(|| "unknown".to_owned())
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        "unknown".to_owned()
     }
 }
 

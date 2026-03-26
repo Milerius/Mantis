@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use criterion::measurement::{Measurement, ValueFormatter, WallTime};
 
-use crate::counters::{CycleCounter, DefaultCounter};
+use mantis_platform::metering::{CycleCounter, DefaultCounter};
 
 /// Collects cycle measurements from benchmark iterations.
 ///
@@ -194,7 +194,7 @@ pub struct CriterionEstimates {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::counters::InstantCounter;
+    use mantis_platform::metering::InstantCounter;
 
     #[test]
     fn measurement_creation() {
