@@ -15,25 +15,13 @@ unsafe extern "C" {
 
     fn drogalis_msg48_create(capacity: usize) -> *mut core::ffi::c_void;
     fn drogalis_msg48_destroy(q: *mut core::ffi::c_void);
-    fn drogalis_msg48_try_push(
-        q: *mut core::ffi::c_void,
-        value: *const Message48,
-    ) -> bool;
-    fn drogalis_msg48_try_pop(
-        q: *mut core::ffi::c_void,
-        out: *mut Message48,
-    ) -> bool;
+    fn drogalis_msg48_try_push(q: *mut core::ffi::c_void, value: *const Message48) -> bool;
+    fn drogalis_msg48_try_pop(q: *mut core::ffi::c_void, out: *mut Message48) -> bool;
 
     fn drogalis_msg64_create(capacity: usize) -> *mut core::ffi::c_void;
     fn drogalis_msg64_destroy(q: *mut core::ffi::c_void);
-    fn drogalis_msg64_try_push(
-        q: *mut core::ffi::c_void,
-        value: *const Message64,
-    ) -> bool;
-    fn drogalis_msg64_try_pop(
-        q: *mut core::ffi::c_void,
-        out: *mut Message64,
-    ) -> bool;
+    fn drogalis_msg64_try_push(q: *mut core::ffi::c_void, value: *const Message64) -> bool;
+    fn drogalis_msg64_try_pop(q: *mut core::ffi::c_void, out: *mut Message64) -> bool;
 }
 
 /// Safe wrapper around `dro::SPSCQueue<u64>`.
