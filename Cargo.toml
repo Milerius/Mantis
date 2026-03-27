@@ -49,6 +49,6 @@ mantis-verify = { path = "crates/verify", version = "0.1.0" }
 mantis-platform = { path = "crates/platform", version = "0.1.0" }
 cfg-if = "1"
 criterion = { version = "0.8", features = ["html_reports"] }
-bolero = "0.11"
+bolero = "0.13"
 libc = "0.2.169"
 perf-event2 = "0.7"
