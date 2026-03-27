@@ -14,12 +14,14 @@ use mantis_types::{PushError, QueueError};
 
 /// Producer-local cache line: own head position + remote tail cache.
 pub(crate) struct ProducerCache {
+    #[cfg(target_arch = "aarch64")]
     pub(crate) head_local: Cell<usize>,
     pub(crate) tail_remote: Cell<usize>,
 }
 
 /// Consumer-local cache line: own tail position + remote head cache.
 pub(crate) struct ConsumerCache {
+    #[cfg(target_arch = "aarch64")]
     pub(crate) tail_local: Cell<usize>,
     pub(crate) head_remote: Cell<usize>,
 }
@@ -71,10 +73,12 @@ where
             head: CachePadded::new(AtomicUsize::new(0)),
             tail: CachePadded::new(AtomicUsize::new(0)),
             producer: CachePadded::new(ProducerCache {
+                #[cfg(target_arch = "aarch64")]
                 head_local: Cell::new(0),
                 tail_remote: Cell::new(0),
             }),
             consumer: CachePadded::new(ConsumerCache {
+                #[cfg(target_arch = "aarch64")]
                 tail_local: Cell::new(0),
                 head_remote: Cell::new(0),
             }),

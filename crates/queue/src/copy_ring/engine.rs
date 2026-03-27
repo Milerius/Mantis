@@ -32,7 +32,8 @@ fn slow_empty() -> bool {
 /// Both fields are only accessed by the producer thread, so they
 /// share a single cache line without false sharing.
 pub(crate) struct ProducerCache {
-    /// Local copy of head — avoids atomic load of own position.
+    /// Local copy of head — avoids atomic load of own position (ARM only).
+    #[cfg(target_arch = "aarch64")]
     pub(crate) head_local: Cell<usize>,
     /// Cached snapshot of consumer's tail — avoids cross-thread read.
     pub(crate) tail_remote: Cell<usize>,
@@ -43,7 +44,8 @@ pub(crate) struct ProducerCache {
 /// Both fields are only accessed by the consumer thread, so they
 /// share a single cache line without false sharing.
 pub(crate) struct ConsumerCache {
-    /// Local copy of tail — avoids atomic load of own position.
+    /// Local copy of tail — avoids atomic load of own position (ARM only).
+    #[cfg(target_arch = "aarch64")]
     pub(crate) tail_local: Cell<usize>,
     /// Cached snapshot of producer's head — avoids cross-thread read.
     pub(crate) head_remote: Cell<usize>,
@@ -73,10 +75,12 @@ where
             head: CachePadded::new(AtomicUsize::new(0)),
             tail: CachePadded::new(AtomicUsize::new(0)),
             producer: CachePadded::new(ProducerCache {
+                #[cfg(target_arch = "aarch64")]
                 head_local: Cell::new(0),
                 tail_remote: Cell::new(0),
             }),
             consumer: CachePadded::new(ConsumerCache {
+                #[cfg(target_arch = "aarch64")]
                 tail_local: Cell::new(0),
                 head_remote: Cell::new(0),
             }),
