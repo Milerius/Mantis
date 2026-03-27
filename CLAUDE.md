@@ -28,8 +28,6 @@ Coverage:       cargo llvm-cov --all-features
 
 ## Architecture
 
-See `philosophy/fin_sdk_oss_blueprint.md` for full SDK vision.
-See `philosophy/benchmark_tooling_modular_strategy_design.md` for container strategy.
 See `.claude/memory/constantine-reference.md` for reference architecture patterns.
 See `docs/PROGRESS.md` for current project status and phase tracking.
 
