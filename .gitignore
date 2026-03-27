@@ -36,3 +36,10 @@ tarpaulin-report.html
 
 # Local cargo config (target-cpu=native etc. — per-developer)
 .cargo/config.toml
+
+# Internal development artifacts (kept locally)
+docs/plans/
+docs/specs/
+docs/brainstorms/
+docs/superpowers/
+philosophy/
