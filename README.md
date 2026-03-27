@@ -13,8 +13,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/mantis-sdk/mantis/actions/workflows/ci.yml"><img src="https://github.com/mantis-sdk/mantis/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://codecov.io/gh/mantis-sdk/mantis"><img src="https://codecov.io/gh/mantis-sdk/mantis/graph/badge.svg" alt="codecov"></a>
+  <a href="https://github.com/Milerius/Mantis/actions/workflows/ci.yml"><img src="https://github.com/Milerius/Mantis/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://codecov.io/gh/Milerius/Mantis"><img src="https://codecov.io/gh/Milerius/Mantis/graph/badge.svg" alt="codecov"></a>
 </p>
 
 ## Architecture

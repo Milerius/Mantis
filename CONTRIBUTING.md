@@ -81,4 +81,4 @@ Benchmark protocol:
 
 ## Reporting Issues
 
-Use [GitHub Issues](https://github.com/mantis-sdk/mantis/issues) for bug reports and feature requests. For security vulnerabilities, see [SECURITY.md](SECURITY.md).
+Use [GitHub Issues](https://github.com/Milerius/Mantis/issues) for bug reports and feature requests. For security vulnerabilities, see [SECURITY.md](SECURITY.md).
