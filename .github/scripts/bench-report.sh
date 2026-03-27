@@ -19,6 +19,7 @@ normalize='
     elif .workload | startswith("general/") then "mantis/general"
     elif .workload | startswith("spsc/rtrb/") then "rtrb"
     elif .workload | startswith("spsc/crossbeam/") then "crossbeam"
+    elif .workload | startswith("spsc/rigtorp/") then "rigtorp-cpp"
     else "other"
     end
   ),

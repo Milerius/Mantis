@@ -2,6 +2,10 @@
 //!
 //! `RingEngine` is the internal engine that implements the
 //! Acquire/Release ring buffer protocol with cached remote indices.
+//!
+//! See `copy_ring::engine` module docs for the rationale behind
+//! architecture-conditional local position caching (`head_local`/
+//! `tail_local` on aarch64 only).
 
 use core::cell::Cell;
 use core::marker::PhantomData;
@@ -11,6 +15,20 @@ use crate::storage::Storage;
 use mantis_core::{IndexStrategy, Instrumentation, PushPolicy};
 use mantis_platform::CachePadded;
 use mantis_types::{PushError, QueueError};
+
+/// Producer-local cache line: own head position + remote tail cache.
+pub(crate) struct ProducerCache {
+    #[cfg(target_arch = "aarch64")]
+    pub(crate) head_local: Cell<usize>,
+    pub(crate) tail_remote: Cell<usize>,
+}
+
+/// Consumer-local cache line: own tail position + remote head cache.
+pub(crate) struct ConsumerCache {
+    #[cfg(target_arch = "aarch64")]
+    pub(crate) tail_local: Cell<usize>,
+    pub(crate) head_remote: Cell<usize>,
+}
 
 /// Generic SPSC ring engine. Not public -- use `RawRing` or split handles.
 ///
@@ -26,8 +44,8 @@ where
 {
     head: CachePadded<AtomicUsize>,
     tail: CachePadded<AtomicUsize>,
-    tail_cached: CachePadded<Cell<usize>>,
-    head_cached: CachePadded<Cell<usize>>,
+    producer: CachePadded<ProducerCache>,
+    consumer: CachePadded<ConsumerCache>,
     storage: S,
     instr: Instr,
     _marker: PhantomData<(T, I, P)>,
@@ -58,8 +76,16 @@ where
         Self {
             head: CachePadded::new(AtomicUsize::new(0)),
             tail: CachePadded::new(AtomicUsize::new(0)),
-            tail_cached: CachePadded::new(Cell::new(0)),
-            head_cached: CachePadded::new(Cell::new(0)),
+            producer: CachePadded::new(ProducerCache {
+                #[cfg(target_arch = "aarch64")]
+                head_local: Cell::new(0),
+                tail_remote: Cell::new(0),
+            }),
+            consumer: CachePadded::new(ConsumerCache {
+                #[cfg(target_arch = "aarch64")]
+                tail_local: Cell::new(0),
+                head_remote: Cell::new(0),
+            }),
             storage,
             instr,
             _marker: PhantomData,
@@ -73,18 +99,21 @@ where
 
     #[inline]
     pub(crate) fn try_push(&self, value: T) -> Result<(), PushError<T>> {
+        // On ARM, Cell read avoids implicit ordering overhead of atomic
+        // self-load. On x86 (TSO), Relaxed atomic is already a plain mov.
+        #[cfg(target_arch = "aarch64")]
+        let head = self.producer.head_local.get();
+        #[cfg(not(target_arch = "aarch64"))]
         let head = self.head.load(Ordering::Relaxed);
+
         let next_head = I::wrap(head + 1, self.storage.capacity());
 
-        // One-ahead prefetch: bring next call's target slot into cache while
-        // this call does its work. Fires before the capacity check so the
-        // memory subsystem has maximum time to fetch the line.
         #[cfg(feature = "prefetch")]
         crate::raw::prefetch_slot_write(&self.storage, next_head);
 
-        if next_head == self.tail_cached.get() {
+        if next_head == self.producer.tail_remote.get() {
             let tail = self.tail.load(Ordering::Acquire);
-            self.tail_cached.set(tail);
+            self.producer.tail_remote.set(tail);
             if next_head == tail {
                 core::hint::cold_path();
                 self.instr.on_push_full();
@@ -94,22 +123,25 @@ where
 
         crate::raw::write_slot(&self.storage, head, value);
         self.head.store(next_head, Ordering::Release);
+        #[cfg(target_arch = "aarch64")]
+        self.producer.head_local.set(next_head);
         self.instr.on_push();
         Ok(())
     }
 
     #[inline]
     pub(crate) fn try_pop(&self) -> Result<T, QueueError> {
+        #[cfg(target_arch = "aarch64")]
+        let tail = self.consumer.tail_local.get();
+        #[cfg(not(target_arch = "aarch64"))]
         let tail = self.tail.load(Ordering::Relaxed);
 
-        // Prefetch the slot we're about to read — fires early to overlap
-        // with the cache-miss check.
         #[cfg(feature = "prefetch")]
         crate::raw::prefetch_slot_read(&self.storage, tail);
 
-        if tail == self.head_cached.get() {
+        if tail == self.consumer.head_remote.get() {
             let head = self.head.load(Ordering::Acquire);
-            self.head_cached.set(head);
+            self.consumer.head_remote.set(head);
             if tail == head {
                 core::hint::cold_path();
                 self.instr.on_pop_empty();
@@ -120,6 +152,8 @@ where
         let value = crate::raw::read_slot(&self.storage, tail);
         let next_tail = I::wrap(tail + 1, self.storage.capacity());
         self.tail.store(next_tail, Ordering::Release);
+        #[cfg(target_arch = "aarch64")]
+        self.consumer.tail_local.set(next_tail);
         self.instr.on_pop();
         Ok(value)
     }

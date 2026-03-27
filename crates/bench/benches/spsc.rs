@@ -9,14 +9,14 @@
 //!
 //! Every implementation tests the same shapes for fair comparison:
 //!
-//! | Workload      | u64 | msg48 | msg64 | inline | copy | rtrb | crossbeam |
-//! |---------------|-----|-------|-------|--------|------|------|-----------|
-//! | single        |  x  |   x   |   x   |   x    |  x   |  x   |     x     |
-//! | burst_100     |  x  |   x   |   x   |   x    |  x   |  x   |     x     |
-//! | burst_1000    |  x  |   x   |   x   |   x    |  x   |  x   |     x     |
-//! | batch_100     |  x  |   x   |       |        |  x   |      |           |
-//! | batch_1000    |  x  |   x   |       |        |  x   |      |           |
-//! | full_drain    |  x  |       |       |   x    |      |      |           |
+//! | Workload      | u64 | msg48 | msg64 | inline | copy | rtrb | crossbeam | rigtorp |
+//! |---------------|-----|-------|-------|--------|------|------|-----------|---------|
+//! | single        |  x  |   x   |   x   |   x    |  x   |  x   |     x     |    x    |
+//! | burst_100     |  x  |   x   |   x   |   x    |  x   |  x   |     x     |    x    |
+//! | burst_1000    |  x  |   x   |   x   |   x    |  x   |  x   |     x     |    x    |
+//! | batch_100     |  x  |   x   |       |        |  x   |      |           |         |
+//! | batch_1000    |  x  |   x   |       |        |  x   |      |           |         |
+//! | full_drain    |  x  |       |       |   x    |      |      |           |         |
 
 use std::hint::black_box;
 
@@ -744,6 +744,196 @@ fn bench_crossbeam_burst_1000(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
 fn bench_contenders(_descs: &mut Vec<BenchDesc>, _c: &mut MantisC) {}
 
 // ---------------------------------------------------------------------------
+// C++ contenders (behind feature flag)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "bench-contenders-cpp")]
+fn bench_cpp_contenders(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
+    bench_rigtorp_single(descs, c);
+    bench_rigtorp_burst(descs, c);
+}
+
+#[cfg(feature = "bench-contenders-cpp")]
+fn bench_rigtorp_single(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
+    use mantis_bench::rigtorp_ffi::{RigtorpMsg48, RigtorpMsg64, RigtorpU64};
+
+    descs.push(run_bench(
+        c,
+        "spsc/rigtorp/single_item/u64",
+        "u64",
+        1024,
+        |b| {
+            let mut q = RigtorpU64::new(1024);
+            b.iter(|| {
+                let _ = q.try_push(black_box(42u64));
+                let _ = black_box(q.try_pop());
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/rigtorp/single_item/msg48",
+        "Message48",
+        1024,
+        |b| {
+            let mut q = RigtorpMsg48::new(1024);
+            let msg = make_msg48(1);
+            b.iter(|| {
+                let _ = q.try_push(black_box(&msg));
+                let _ = black_box(q.try_pop());
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/rigtorp/single_item/msg64",
+        "Message64",
+        1024,
+        |b| {
+            let mut q = RigtorpMsg64::new(1024);
+            let msg = make_msg64(1);
+            b.iter(|| {
+                let _ = q.try_push(black_box(&msg));
+                let _ = black_box(q.try_pop());
+            });
+        },
+    ));
+}
+
+#[cfg(feature = "bench-contenders-cpp")]
+fn bench_rigtorp_burst(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
+    bench_rigtorp_burst_100(descs, c);
+    bench_rigtorp_burst_1000(descs, c);
+}
+
+#[cfg(feature = "bench-contenders-cpp")]
+fn bench_rigtorp_burst_100(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
+    use mantis_bench::rigtorp_ffi::{RigtorpMsg48, RigtorpMsg64, RigtorpU64};
+
+    descs.push(run_bench(
+        c,
+        "spsc/rigtorp/burst_100/u64",
+        "u64",
+        1024,
+        |b| {
+            let mut q = RigtorpU64::new(1024);
+            b.iter(|| {
+                for i in 0..100u64 {
+                    let _ = q.try_push(black_box(i));
+                }
+                for _ in 0..100 {
+                    let _ = black_box(q.try_pop());
+                }
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/rigtorp/burst_100/msg48",
+        "Message48",
+        1024,
+        |b| {
+            let mut q = RigtorpMsg48::new(1024);
+            let msgs: Vec<Message48> = (0..100).map(make_msg48).collect();
+            b.iter(|| {
+                for msg in &msgs {
+                    let _ = q.try_push(black_box(msg));
+                }
+                for _ in 0..100 {
+                    let _ = black_box(q.try_pop());
+                }
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/rigtorp/burst_100/msg64",
+        "Message64",
+        1024,
+        |b| {
+            let mut q = RigtorpMsg64::new(1024);
+            let msgs: Vec<Message64> = (0..100).map(make_msg64).collect();
+            b.iter(|| {
+                for msg in &msgs {
+                    let _ = q.try_push(black_box(msg));
+                }
+                for _ in 0..100 {
+                    let _ = black_box(q.try_pop());
+                }
+            });
+        },
+    ));
+}
+
+#[cfg(feature = "bench-contenders-cpp")]
+fn bench_rigtorp_burst_1000(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
+    use mantis_bench::rigtorp_ffi::{RigtorpMsg48, RigtorpMsg64, RigtorpU64};
+
+    descs.push(run_bench(
+        c,
+        "spsc/rigtorp/burst_1000/u64",
+        "u64",
+        2048,
+        |b| {
+            let mut q = RigtorpU64::new(2048);
+            b.iter(|| {
+                for i in 0..1000u64 {
+                    let _ = q.try_push(black_box(i));
+                }
+                for _ in 0..1000 {
+                    let _ = black_box(q.try_pop());
+                }
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/rigtorp/burst_1000/msg48",
+        "Message48",
+        2048,
+        |b| {
+            let mut q = RigtorpMsg48::new(2048);
+            let msgs: Vec<Message48> = (0..1000).map(make_msg48).collect();
+            b.iter(|| {
+                for msg in &msgs {
+                    let _ = q.try_push(black_box(msg));
+                }
+                for _ in 0..1000 {
+                    let _ = black_box(q.try_pop());
+                }
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/rigtorp/burst_1000/msg64",
+        "Message64",
+        2048,
+        |b| {
+            let mut q = RigtorpMsg64::new(2048);
+            let msgs: Vec<Message64> = (0..1000).map(make_msg64).collect();
+            b.iter(|| {
+                for msg in &msgs {
+                    let _ = q.try_push(black_box(msg));
+                }
+                for _ in 0..1000 {
+                    let _ = black_box(q.try_pop());
+                }
+            });
+        },
+    ));
+}
+
+#[cfg(not(feature = "bench-contenders-cpp"))]
+fn bench_cpp_contenders(_descs: &mut Vec<BenchDesc>, _c: &mut MantisC) {}
+
+// ---------------------------------------------------------------------------
 // Unified entry point
 // ---------------------------------------------------------------------------
 
@@ -753,6 +943,7 @@ fn bench_spsc(c: &mut MantisC) {
     bench_inline(&mut descs, c);
     bench_copy(&mut descs, c);
     bench_contenders(&mut descs, c);
+    bench_cpp_contenders(&mut descs, c);
 
     let mut features = Vec::new();
     if cfg!(feature = "asm") {
@@ -763,6 +954,9 @@ fn bench_spsc(c: &mut MantisC) {
     }
     if cfg!(feature = "bench-contenders") {
         features.push("bench-contenders".to_owned());
+    }
+    if cfg!(feature = "bench-contenders-cpp") {
+        features.push("bench-contenders-cpp".to_owned());
     }
     export_report(&descs, "SPSC Ring (all)", "spsc", features);
 }
