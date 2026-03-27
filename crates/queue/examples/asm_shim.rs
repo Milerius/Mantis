@@ -39,6 +39,16 @@ pub fn spsc_copy_pop_u64(ring: &mut SpscRingCopy<u64, 1024>, out: &mut u64) -> b
     ring.pop(out)
 }
 
+#[inline(never)]
+pub fn spsc_copy_push_batch_u64(ring: &mut SpscRingCopy<u64, 1024>, src: &[u64]) -> usize {
+    ring.push_batch(src)
+}
+
+#[inline(never)]
+pub fn spsc_copy_pop_batch_u64(ring: &mut SpscRingCopy<u64, 1024>, dst: &mut [u64]) -> usize {
+    ring.pop_batch(dst)
+}
+
 fn main() {
     let mut ring = SpscRing::<u64, 1024>::new();
     std::hint::black_box(spsc_push_u64(&mut ring, 42));
@@ -52,4 +62,9 @@ fn main() {
     std::hint::black_box(spsc_copy_push_u64(&mut copy_ring, &42));
     let mut copy_out = 0u64;
     std::hint::black_box(spsc_copy_pop_u64(&mut copy_ring, &mut copy_out));
+
+    let batch_src = [0u64; 8];
+    std::hint::black_box(spsc_copy_push_batch_u64(&mut copy_ring, &batch_src));
+    let mut batch_dst = [0u64; 8];
+    std::hint::black_box(spsc_copy_pop_batch_u64(&mut copy_ring, &mut batch_dst));
 }

@@ -17,8 +17,10 @@ use mantis_types::AssertPowerOfTwo;
 ///
 /// # Safety
 ///
-/// Implementors must guarantee that `slot_ptr` returns a valid,
-/// aligned pointer for any `index < capacity()`.
+/// Implementors must guarantee:
+/// - `slot_ptr` returns a valid, aligned pointer for any `index < capacity()`.
+/// - `base_ptr` returns a pointer with provenance over the entire slot array
+///   (all `capacity()` elements), valid for both reads and writes.
 pub unsafe trait Storage<T>: Send + Sync {
     /// Number of usable slots.
     fn capacity(&self) -> usize;
@@ -29,6 +31,13 @@ pub unsafe trait Storage<T>: Send + Sync {
     ///
     /// Caller must ensure `index < capacity()`.
     unsafe fn slot_ptr(&self, index: usize) -> *mut MaybeUninit<T>;
+
+    /// Base pointer to the slot array with provenance over all `capacity()`
+    /// elements.
+    ///
+    /// Used for multi-element bulk copies where a single pointer with full
+    /// array provenance is required (e.g., `copy_nonoverlapping`).
+    fn base_ptr(&self) -> *mut MaybeUninit<T>;
 }
 
 /// Stack-allocated, const-generic storage. `N` must be a power of 2.
@@ -76,6 +85,15 @@ unsafe impl<T: Send, const N: usize> Storage<T> for InlineStorage<T, N> {
         // SAFETY: Caller guarantees index < N. UnsafeCell::get returns
         // a raw pointer to the inner MaybeUninit.
         unsafe { self.slots.get_unchecked(index).get() }
+    }
+
+    #[inline]
+    fn base_ptr(&self) -> *mut MaybeUninit<T> {
+        // `as_ptr` on the array gives a pointer with provenance over all N
+        // elements. Cast through *const to *mut is valid because the slots
+        // are wrapped in UnsafeCell, which grants interior mutability.
+        // SAFETY (for callers): any offset in 0..N is within bounds.
+        self.slots.as_ptr().cast::<MaybeUninit<T>>().cast_mut()
     }
 }
 
@@ -129,6 +147,15 @@ unsafe impl<T: Send> Storage<T> for HeapStorage<T> {
         );
         // SAFETY: Caller guarantees index < capacity.
         unsafe { self.slots.get_unchecked(index).get() }
+    }
+
+    #[inline]
+    fn base_ptr(&self) -> *mut MaybeUninit<T> {
+        // `as_ptr` on the Box<[...]> gives a pointer with provenance over all
+        // `capacity` elements. Cast through *const to *mut is valid because
+        // the slots are wrapped in UnsafeCell (interior mutability).
+        // SAFETY (for callers): any offset in 0..capacity is within bounds.
+        self.slots.as_ptr().cast::<MaybeUninit<T>>().cast_mut()
     }
 }
 

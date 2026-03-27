@@ -63,6 +63,9 @@ where
         let head = self.head.load(Ordering::Relaxed);
         let next_head = I::wrap(head + 1, self.storage.capacity());
 
+        #[cfg(feature = "prefetch")]
+        crate::raw::prefetch_slot_write(&self.storage, next_head);
+
         if next_head == self.tail_cached.get() {
             let tail = self.tail.load(Ordering::Acquire);
             self.tail_cached.set(tail);
@@ -82,6 +85,9 @@ where
     #[inline]
     pub(crate) fn pop(&self, out: &mut T) -> bool {
         let tail = self.tail.load(Ordering::Relaxed);
+
+        #[cfg(feature = "prefetch")]
+        crate::raw::prefetch_slot_read(&self.storage, tail);
 
         if tail == self.head_cached.get() {
             let head = self.head.load(Ordering::Acquire);
@@ -133,13 +139,29 @@ where
         }
 
         let n = src.len().min(free);
-        let mut idx = head;
-        for item in &src[..n] {
-            crate::copy_ring::raw::write_slot_copy::<T, S, CP>(&self.storage, idx, item);
-            idx = I::wrap(idx + 1, cap);
+
+        // Two-chunk contiguous copy bypassing per-element CopyPolicy dispatch.
+        // `memcpy` auto-vectorizes for bulk transfers; per-element SIMD
+        // dispatch adds call overhead that dominates for large batches.
+        //
+        // `first_chunk`: slots from head to end of backing array (no wrap).
+        // `second_chunk`: remaining slots written from index 0 (wrap).
+        let first_chunk = n.min(cap - head);
+        let second_chunk = n - first_chunk;
+
+        // First chunk: slots head..head+first_chunk (no wrap).
+        // `head < cap` (ring invariant) and `first_chunk <= cap - head`,
+        // so `head + first_chunk <= cap`. Producer owns this range.
+        crate::copy_ring::raw::write_batch_copy::<T, S>(&self.storage, head, &src[..first_chunk]);
+
+        if second_chunk > 0 {
+            // Second chunk: wraps to slots 0..second_chunk.
+            // `second_chunk <= n - first_chunk <= free < cap`,
+            // so `second_chunk <= cap`. Producer owns this range.
+            crate::copy_ring::raw::write_batch_copy::<T, S>(&self.storage, 0, &src[first_chunk..n]);
         }
 
-        self.head.store(idx, Ordering::Release);
+        self.head.store(I::wrap(head + n, cap), Ordering::Release);
         n
     }
 
@@ -173,13 +195,37 @@ where
         }
 
         let n = dst.len().min(avail);
-        let mut idx = tail;
-        for out in &mut dst[..n] {
-            crate::copy_ring::raw::read_slot_copy::<T, S, CP>(&self.storage, idx, out);
-            idx = I::wrap(idx + 1, cap);
+
+        // Two-chunk contiguous copy symmetric to push_batch.
+        // `memcpy` auto-vectorizes for bulk transfers; per-element dispatch
+        // adds call overhead that dominates for large batches.
+        //
+        // `first_chunk`: slots from tail to end of backing array (no wrap).
+        // `second_chunk`: remaining slots read from index 0 (wrap).
+        let first_chunk = n.min(cap - tail);
+        let second_chunk = n - first_chunk;
+
+        // First chunk: slots tail..tail+first_chunk (no wrap).
+        // `tail < cap` (ring invariant) and `first_chunk <= cap - tail`,
+        // so `tail + first_chunk <= cap`. Consumer owns this range.
+        crate::copy_ring::raw::read_batch_copy::<T, S>(
+            &self.storage,
+            tail,
+            &mut dst[..first_chunk],
+        );
+
+        if second_chunk > 0 {
+            // Second chunk: wraps to slots 0..second_chunk.
+            // `second_chunk <= n - first_chunk <= avail < cap`,
+            // so `second_chunk <= cap`. Consumer owns this range.
+            crate::copy_ring::raw::read_batch_copy::<T, S>(
+                &self.storage,
+                0,
+                &mut dst[first_chunk..n],
+            );
         }
 
-        self.tail.store(idx, Ordering::Release);
+        self.tail.store(I::wrap(tail + n, cap), Ordering::Release);
         n
     }
 
@@ -212,6 +258,7 @@ where
 }
 
 #[cfg(test)]
+#[expect(clippy::cast_sign_loss, reason = "test-only usize→u64 conversions")]
 mod tests {
     extern crate std;
     use std::vec;
@@ -362,6 +409,46 @@ mod tests {
     }
 
     #[test]
+    fn pop_batch_wraparound_contiguous() {
+        let engine = new_engine(); // capacity=8, usable=7
+        // Advance tail to near end
+        let fill: Vec<u64> = (0..6).collect();
+        engine.push_batch(&fill);
+        let mut drain = vec![0u64; 6];
+        engine.pop_batch(&mut drain);
+
+        // Push 5 (wraps around), then batch-pop all 5
+        let wrap_src: Vec<u64> = (300..305).collect();
+        engine.push_batch(&wrap_src);
+
+        let mut out = vec![0u64; 5];
+        let popped = engine.pop_batch(&mut out);
+        assert_eq!(popped, 5);
+        assert_eq!(out, vec![300, 301, 302, 303, 304]);
+    }
+
+    #[test]
+    fn push_batch_wraparound_contiguous() {
+        // Advance head to near end of buffer, then batch-push across wrap
+        let engine = new_engine(); // capacity=8, usable=7
+        // Fill 6, drain 6 — head and tail now at index 6
+        let fill: Vec<u64> = (0..6).collect();
+        engine.push_batch(&fill);
+        let mut drain = vec![0u64; 6];
+        engine.pop_batch(&mut drain);
+
+        // Now push 5 elements starting at index 6: wraps at index 8 -> 0
+        let wrap_src: Vec<u64> = (200..205).collect();
+        let pushed = engine.push_batch(&wrap_src);
+        assert_eq!(pushed, 5);
+
+        let mut out = vec![0u64; 5];
+        let popped = engine.pop_batch(&mut out);
+        assert_eq!(popped, 5);
+        assert_eq!(out, vec![200, 201, 202, 203, 204]);
+    }
+
+    #[test]
     fn batch_fifo_ordering() {
         let engine = new_engine();
         for round in 0u64..10 {
@@ -390,5 +477,90 @@ mod tests {
         let mut out = 0u64;
         engine.pop(&mut out);
         assert_eq!(engine.len(), 0);
+    }
+
+    #[test]
+    fn push_pop_batch_differential() {
+        // Verify contiguous batch produces same results as sequential push/pop
+        // for various batch sizes and fill levels.
+        for fill_first in 0..7 {
+            for batch_size in 1..=7 {
+                let engine = new_engine(); // capacity=8, usable=7
+
+                // Advance head/tail by fill_first positions
+                for i in 0..fill_first {
+                    assert!(engine.push(&(i as u64)));
+                }
+                let mut drain = vec![0u64; fill_first];
+                engine.pop_batch(&mut drain);
+
+                // Batch push
+                let src: Vec<u64> = (100_u64..100 + batch_size as u64).collect();
+                let pushed = engine.push_batch(&src);
+
+                // Batch pop
+                let mut dst = vec![0u64; pushed];
+                let popped = engine.pop_batch(&mut dst);
+
+                assert_eq!(popped, pushed, "fill={fill_first} batch={batch_size}");
+                assert_eq!(
+                    dst,
+                    src[..pushed].to_vec(),
+                    "FIFO violated: fill={fill_first} batch={batch_size}"
+                );
+            }
+        }
+    }
+}
+
+// proptest uses `getcwd` for failure persistence, which Miri's isolation blocks.
+#[cfg(all(test, not(miri)))]
+mod proptest_tests {
+    use super::*;
+    use crate::storage::InlineStorage;
+    use mantis_core::{ImmediatePush, NoInstr, Pow2Masked};
+    use proptest::prelude::*;
+
+    extern crate std;
+    use std::vec;
+    use std::vec::Vec;
+
+    type TestEngine = CopyRingEngine<
+        u64,
+        InlineStorage<u64, 8>,
+        Pow2Masked,
+        ImmediatePush,
+        NoInstr,
+        mantis_platform::DefaultCopyPolicy,
+    >;
+
+    fn new_engine() -> TestEngine {
+        CopyRingEngine::new(InlineStorage::new(), NoInstr)
+    }
+
+    proptest! {
+        #[test]
+        fn batch_fifo_preserved(
+            fill_level in 0usize..7,
+            batch_size in 1usize..8,
+        ) {
+            let engine = new_engine();
+
+            // Advance to fill_level
+            for i in 0..fill_level {
+                engine.push(&(i as u64));
+            }
+            let mut drain = vec![0u64; fill_level];
+            engine.pop_batch(&mut drain);
+
+            let src: Vec<u64> = (0..batch_size as u64).collect();
+            let pushed = engine.push_batch(&src);
+
+            let mut dst = vec![0u64; pushed];
+            let popped = engine.pop_batch(&mut dst);
+
+            prop_assert_eq!(popped, pushed);
+            prop_assert_eq!(dst, src[..pushed].to_vec());
+        }
     }
 }

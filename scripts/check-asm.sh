@@ -28,6 +28,10 @@ SYMBOLS=(
     "asm_shim::spsc_pop_u64"
     "asm_shim::spsc_push_bytes64"
     "asm_shim::spsc_pop_bytes64"
+    "asm_shim::spsc_copy_push_u64"
+    "asm_shim::spsc_copy_pop_u64"
+    "asm_shim::spsc_copy_push_batch_u64"
+    "asm_shim::spsc_copy_pop_batch_u64"
 )
 
 SINGLE_SYMBOL=""
@@ -110,6 +114,38 @@ if [[ -d "$BASELINE_DIR" && "$OUTPUT_DIR" != "$BASELINE_DIR" ]]; then
     done
     if [[ $changed -eq 0 ]]; then
         echo "No ASM changes detected."
+    fi
+fi
+
+# Instruction count soft gate (single-op functions only)
+SINGLE_OPS=(
+    "spsc_push_u64"
+    "spsc_pop_u64"
+    "spsc_copy_push_u64"
+    "spsc_copy_pop_u64"
+)
+
+if [[ -d "$BASELINE_DIR" && "$OUTPUT_DIR" != "$BASELINE_DIR" ]]; then
+    echo ""
+    echo "=== Instruction count gate ==="
+    gate_failed=0
+    for sym in "${SINGLE_OPS[@]}"; do
+        base_file="$BASELINE_DIR/${sym}.s"
+        curr_file="$OUTPUT_DIR/${sym}.s"
+        if [[ -f "$base_file" && -f "$curr_file" ]]; then
+            base_count=$(grep -cE '^\s+[a-z]' "$base_file" || echo 0)
+            curr_count=$(grep -cE '^\s+[a-z]' "$curr_file" || echo 0)
+            delta=$((curr_count - base_count))
+            if [[ $delta -gt 2 ]]; then
+                echo "GATE FAIL: $sym grew by $delta instructions ($base_count -> $curr_count)"
+                gate_failed=1
+            else
+                echo "OK: $sym delta=$delta ($base_count -> $curr_count)"
+            fi
+        fi
+    done
+    if [[ $gate_failed -eq 1 ]]; then
+        echo "WARNING: Instruction count gate failed for one or more functions."
     fi
 fi
 

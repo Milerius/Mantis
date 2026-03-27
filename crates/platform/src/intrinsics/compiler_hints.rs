@@ -37,22 +37,55 @@ pub fn prefetch<T>(ptr: *const T, rw: PrefetchRW, locality: PrefetchLocality) {
     #[cfg(target_arch = "x86_64")]
     {
         use core::arch::x86_64::{
-            _MM_HINT_NTA, _MM_HINT_T0, _MM_HINT_T1, _MM_HINT_T2, _mm_prefetch,
+            _MM_HINT_ET0, _MM_HINT_NTA, _MM_HINT_T0, _MM_HINT_T1, _MM_HINT_T2, _mm_prefetch,
         };
-        let _ = rw;
         let hint = ptr.cast::<i8>();
         // SAFETY: prefetch is a hint and never faults, even on invalid addresses.
         // The locality must be a compile-time constant for _mm_prefetch.
         unsafe {
-            match locality {
-                PrefetchLocality::NoTemporal => _mm_prefetch(hint, _MM_HINT_NTA),
-                PrefetchLocality::Low => _mm_prefetch(hint, _MM_HINT_T2),
-                PrefetchLocality::Moderate => _mm_prefetch(hint, _MM_HINT_T1),
-                PrefetchLocality::High => _mm_prefetch(hint, _MM_HINT_T0),
+            match (rw, locality) {
+                // Write prefetch: use ET0 (exclusive) to bring line in Modified
+                // state, avoiding the subsequent RFO on the actual store.
+                (PrefetchRW::Write, PrefetchLocality::High) => {
+                    _mm_prefetch(hint, _MM_HINT_ET0);
+                }
+                // Non-High write localities fall through to read hints — ET0
+                // only exists as a single locality level on x86; for other
+                // localities we use the read hint as a reasonable fallback.
+                (_, PrefetchLocality::NoTemporal) => _mm_prefetch(hint, _MM_HINT_NTA),
+                (_, PrefetchLocality::Low) => _mm_prefetch(hint, _MM_HINT_T2),
+                (_, PrefetchLocality::Moderate) => _mm_prefetch(hint, _MM_HINT_T1),
+                (_, PrefetchLocality::High) => _mm_prefetch(hint, _MM_HINT_T0),
             }
         }
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(target_arch = "aarch64")]
+    {
+        let addr = ptr.cast::<u8>();
+        // SAFETY: PRFM is a hint instruction — it never faults and has no
+        // side effects beyond cache management. options(nostack, preserves_flags)
+        // tells LLVM it doesn't touch the stack or condition flags.
+        unsafe {
+            match rw {
+                PrefetchRW::Read => {
+                    core::arch::asm!(
+                        "prfm pldl1keep, [{ptr}]",
+                        ptr = in(reg) addr,
+                        options(nostack, preserves_flags),
+                    );
+                }
+                PrefetchRW::Write => {
+                    core::arch::asm!(
+                        "prfm pstl1keep, [{ptr}]",
+                        ptr = in(reg) addr,
+                        options(nostack, preserves_flags),
+                    );
+                }
+            }
+        }
+        let _ = locality; // Locality encoded in instruction mnemonic (L1KEEP)
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         let _ = (ptr, rw, locality);
     }
@@ -107,6 +140,21 @@ mod tests {
             0,
         );
         prefetch_large(big.as_ptr(), PrefetchRW::Read, PrefetchLocality::Low, 2);
+    }
+
+    #[test]
+    fn prefetch_write_does_not_crash() {
+        let mut value: u64 = 42;
+        prefetch(&raw const value, PrefetchRW::Write, PrefetchLocality::High);
+        // Verify write after prefetch still works
+        value = 99;
+        assert_eq!(value, 99);
+    }
+
+    #[test]
+    fn prefetch_read_does_not_crash_stack_array() {
+        let arr = [0u8; 128];
+        prefetch(arr.as_ptr(), PrefetchRW::Read, PrefetchLocality::High);
     }
 
     #[test]

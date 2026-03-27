@@ -13,11 +13,15 @@ std = ["alloc", "mantis-platform/std"]
 alloc = []
 asm = ["mantis-platform/asm"]
 nightly = ["mantis-platform/nightly"]
+prefetch = ["mantis-platform/prefetch"]
 
 [dependencies]
 mantis-core = { workspace = true }
 mantis-platform = { workspace = true }
 mantis-types = { workspace = true }
+
+[dev-dependencies]
+proptest = "1.11.0"
 
 [lints]
 workspace = true
