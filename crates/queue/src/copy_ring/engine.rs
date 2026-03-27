@@ -105,8 +105,8 @@ where
         }
 
         crate::copy_ring::raw::write_slot_copy::<T, S, CP>(&self.storage, head, value);
-        self.producer.head_local.set(next_head);
         self.head.store(next_head, Ordering::Release);
+        self.producer.head_local.set(next_head);
         self.instr.on_push();
         true
     }
@@ -130,8 +130,8 @@ where
 
         crate::copy_ring::raw::read_slot_copy::<T, S, CP>(&self.storage, tail, out);
         let next_tail = I::wrap(tail + 1, self.storage.capacity());
-        self.consumer.tail_local.set(next_tail);
         self.tail.store(next_tail, Ordering::Release);
+        self.consumer.tail_local.set(next_tail);
         self.instr.on_pop();
         true
     }
@@ -192,8 +192,8 @@ where
         }
 
         let new_head = I::wrap(head + n, cap);
-        self.producer.head_local.set(new_head);
         self.head.store(new_head, Ordering::Release);
+        self.producer.head_local.set(new_head);
         n
     }
 
@@ -258,8 +258,8 @@ where
         }
 
         let new_tail = I::wrap(tail + n, cap);
-        self.consumer.tail_local.set(new_tail);
         self.tail.store(new_tail, Ordering::Release);
+        self.consumer.tail_local.set(new_tail);
         n
     }
 

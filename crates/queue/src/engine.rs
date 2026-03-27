@@ -108,8 +108,8 @@ where
         }
 
         crate::raw::write_slot(&self.storage, head, value);
-        self.producer.head_local.set(next_head);
         self.head.store(next_head, Ordering::Release);
+        self.producer.head_local.set(next_head);
         self.instr.on_push();
         Ok(())
     }
@@ -133,8 +133,8 @@ where
 
         let value = crate::raw::read_slot(&self.storage, tail);
         let next_tail = I::wrap(tail + 1, self.storage.capacity());
-        self.consumer.tail_local.set(next_tail);
         self.tail.store(next_tail, Ordering::Release);
+        self.consumer.tail_local.set(next_tail);
         self.instr.on_pop();
         Ok(value)
     }
