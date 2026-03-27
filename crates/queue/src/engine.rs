@@ -2,6 +2,10 @@
 //!
 //! `RingEngine` is the internal engine that implements the
 //! Acquire/Release ring buffer protocol with cached remote indices.
+//!
+//! See `copy_ring::engine` module docs for the rationale behind
+//! architecture-conditional local position caching (`head_local`/
+//! `tail_local` on aarch64 only).
 
 use core::cell::Cell;
 use core::marker::PhantomData;
