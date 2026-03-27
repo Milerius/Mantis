@@ -1,13 +1,21 @@
 <p align="center">
-  <img src="assets/banner.png" alt="Mantis — Financial Low-Latency HFT Library in Rust" width="800">
+  <img src="assets/banner.png" alt="Mantis — Financial Low-Latency HFT Library in Rust" width="600">
 </p>
 
-# Mantis
+<h1 align="center">
+  <img src="assets/logo.png" alt="Mantis logo" width="40" valign="middle">
+  Mantis
+</h1>
 
-[![CI](https://github.com/mantis-sdk/mantis/actions/workflows/ci.yml/badge.svg)](https://github.com/mantis-sdk/mantis/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/mantis-sdk/mantis/graph/badge.svg)](https://codecov.io/gh/mantis-sdk/mantis)
+<p align="center">
+  A modular, <code>no_std</code>-first Rust foundation for low-latency financial systems<br>
+  across centralized and decentralized markets, with first-class replay, verification, and performance tooling.
+</p>
 
-A modular, `no_std`-first Rust foundation for low-latency financial systems across centralized and decentralized markets, with first-class replay, verification, and performance tooling.
+<p align="center">
+  <a href="https://github.com/mantis-sdk/mantis/actions/workflows/ci.yml"><img src="https://github.com/mantis-sdk/mantis/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://codecov.io/gh/mantis-sdk/mantis"><img src="https://codecov.io/gh/mantis-sdk/mantis/graph/badge.svg" alt="codecov"></a>
+</p>
 
 ## Architecture
 
