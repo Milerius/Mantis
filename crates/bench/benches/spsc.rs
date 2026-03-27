@@ -9,11 +9,11 @@
 //!
 //! Every implementation tests the same shapes for fair comparison:
 //!
-//! | Workload      | u64 | msg48 | msg64 | inline | copy | rtrb | crossbeam | rigtorp |
-//! |---------------|-----|-------|-------|--------|------|------|-----------|---------|
-//! | single        |  x  |   x   |   x   |   x    |  x   |  x   |     x     |    x    |
-//! | burst_100     |  x  |   x   |   x   |   x    |  x   |  x   |     x     |    x    |
-//! | burst_1000    |  x  |   x   |   x   |   x    |  x   |  x   |     x     |    x    |
+//! | Workload      | u64 | msg48 | msg64 | inline | copy | rtrb | crossbeam | rigtorp | drogalis |
+//! |---------------|-----|-------|-------|--------|------|------|-----------|---------|----------|
+//! | single        |  x  |   x   |   x   |   x    |  x   |  x   |     x     |    x    |    x     |
+//! | burst_100     |  x  |   x   |   x   |   x    |  x   |  x   |     x     |    x    |    x     |
+//! | burst_1000    |  x  |   x   |   x   |   x    |  x   |  x   |     x     |    x    |    x     |
 //! | batch_100     |  x  |   x   |       |        |  x   |      |           |         |
 //! | batch_1000    |  x  |   x   |       |        |  x   |      |           |         |
 //! | full_drain    |  x  |       |       |   x    |      |      |           |         |
@@ -751,6 +751,7 @@ fn bench_contenders(_descs: &mut Vec<BenchDesc>, _c: &mut MantisC) {}
 fn bench_cpp_contenders(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
     bench_rigtorp_single(descs, c);
     bench_rigtorp_burst(descs, c);
+    bench_drogalis(descs, c);
 }
 
 #[cfg(feature = "bench-contenders-cpp")]
@@ -917,6 +918,189 @@ fn bench_rigtorp_burst_1000(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
         2048,
         |b| {
             let mut q = RigtorpMsg64::new(2048);
+            let msgs: Vec<Message64> = (0..1000).map(make_msg64).collect();
+            b.iter(|| {
+                for msg in &msgs {
+                    let _ = q.try_push(black_box(msg));
+                }
+                for _ in 0..1000 {
+                    let _ = black_box(q.try_pop());
+                }
+            });
+        },
+    ));
+}
+
+#[cfg(feature = "bench-contenders-cpp")]
+fn bench_drogalis(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
+    bench_drogalis_single(descs, c);
+    bench_drogalis_burst(descs, c);
+}
+
+#[cfg(feature = "bench-contenders-cpp")]
+fn bench_drogalis_single(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
+    use mantis_bench::drogalis_ffi::{DrogalisMsg48, DrogalisMsg64, DrogalisU64};
+
+    descs.push(run_bench(
+        c,
+        "spsc/drogalis/single_item/u64",
+        "u64",
+        1024,
+        |b| {
+            let mut q = DrogalisU64::new(1024);
+            b.iter(|| {
+                let _ = q.try_push(black_box(42u64));
+                let _ = black_box(q.try_pop());
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/drogalis/single_item/msg48",
+        "Message48",
+        1024,
+        |b| {
+            let mut q = DrogalisMsg48::new(1024);
+            let msg = make_msg48(1);
+            b.iter(|| {
+                let _ = q.try_push(black_box(&msg));
+                let _ = black_box(q.try_pop());
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/drogalis/single_item/msg64",
+        "Message64",
+        1024,
+        |b| {
+            let mut q = DrogalisMsg64::new(1024);
+            let msg = make_msg64(1);
+            b.iter(|| {
+                let _ = q.try_push(black_box(&msg));
+                let _ = black_box(q.try_pop());
+            });
+        },
+    ));
+}
+
+#[cfg(feature = "bench-contenders-cpp")]
+fn bench_drogalis_burst(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
+    bench_drogalis_burst_100(descs, c);
+    bench_drogalis_burst_1000(descs, c);
+}
+
+#[cfg(feature = "bench-contenders-cpp")]
+fn bench_drogalis_burst_100(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
+    use mantis_bench::drogalis_ffi::{DrogalisMsg48, DrogalisMsg64, DrogalisU64};
+
+    descs.push(run_bench(
+        c,
+        "spsc/drogalis/burst_100/u64",
+        "u64",
+        1024,
+        |b| {
+            let mut q = DrogalisU64::new(1024);
+            b.iter(|| {
+                for i in 0..100u64 {
+                    let _ = q.try_push(black_box(i));
+                }
+                for _ in 0..100 {
+                    let _ = black_box(q.try_pop());
+                }
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/drogalis/burst_100/msg48",
+        "Message48",
+        1024,
+        |b| {
+            let mut q = DrogalisMsg48::new(1024);
+            let msgs: Vec<Message48> = (0..100).map(make_msg48).collect();
+            b.iter(|| {
+                for msg in &msgs {
+                    let _ = q.try_push(black_box(msg));
+                }
+                for _ in 0..100 {
+                    let _ = black_box(q.try_pop());
+                }
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/drogalis/burst_100/msg64",
+        "Message64",
+        1024,
+        |b| {
+            let mut q = DrogalisMsg64::new(1024);
+            let msgs: Vec<Message64> = (0..100).map(make_msg64).collect();
+            b.iter(|| {
+                for msg in &msgs {
+                    let _ = q.try_push(black_box(msg));
+                }
+                for _ in 0..100 {
+                    let _ = black_box(q.try_pop());
+                }
+            });
+        },
+    ));
+}
+
+#[cfg(feature = "bench-contenders-cpp")]
+fn bench_drogalis_burst_1000(descs: &mut Vec<BenchDesc>, c: &mut MantisC) {
+    use mantis_bench::drogalis_ffi::{DrogalisMsg48, DrogalisMsg64, DrogalisU64};
+
+    descs.push(run_bench(
+        c,
+        "spsc/drogalis/burst_1000/u64",
+        "u64",
+        2048,
+        |b| {
+            let mut q = DrogalisU64::new(2048);
+            b.iter(|| {
+                for i in 0..1000u64 {
+                    let _ = q.try_push(black_box(i));
+                }
+                for _ in 0..1000 {
+                    let _ = black_box(q.try_pop());
+                }
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/drogalis/burst_1000/msg48",
+        "Message48",
+        2048,
+        |b| {
+            let mut q = DrogalisMsg48::new(2048);
+            let msgs: Vec<Message48> = (0..1000).map(make_msg48).collect();
+            b.iter(|| {
+                for msg in &msgs {
+                    let _ = q.try_push(black_box(msg));
+                }
+                for _ in 0..1000 {
+                    let _ = black_box(q.try_pop());
+                }
+            });
+        },
+    ));
+
+    descs.push(run_bench(
+        c,
+        "spsc/drogalis/burst_1000/msg64",
+        "Message64",
+        2048,
+        |b| {
+            let mut q = DrogalisMsg64::new(2048);
             let msgs: Vec<Message64> = (0..1000).map(make_msg64).collect();
             b.iter(|| {
                 for msg in &msgs {
