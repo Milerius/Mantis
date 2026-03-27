@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.png" alt="Mantis — Financial Low-Latency HFT Library in Rust" width="800">
+</p>
+
 # Mantis
 
 [![CI](https://github.com/mantis-sdk/mantis/actions/workflows/ci.yml/badge.svg)](https://github.com/mantis-sdk/mantis/actions/workflows/ci.yml)
