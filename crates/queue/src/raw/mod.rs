@@ -97,9 +97,9 @@ pub(crate) fn prefetch_slot_read<T, S: Storage<T>>(storage: &S, index: usize) {
 // makes it !Sync. We need Sync for Arc<RingEngine> in split handles.
 //
 // SAFETY: The SPSC protocol guarantees disjoint access:
-// - Producer ONLY accesses: head (AtomicUsize), tail_cached (Cell)
-// - Consumer ONLY accesses: tail (AtomicUsize), head_cached (Cell)
-// - These two sides never touch each other's Cell
+// - Producer ONLY accesses: head (AtomicUsize), producer cache (head_local, tail_remote)
+// - Consumer ONLY accesses: tail (AtomicUsize), consumer cache (tail_local, head_remote)
+// - These two sides never touch each other's Cells
 // - Atomics are inherently Sync
 // - Storage is Sync (required by trait bound)
 // The split-handle design (Producer/Consumer) enforces this partition.
