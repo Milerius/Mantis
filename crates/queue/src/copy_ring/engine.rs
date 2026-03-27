@@ -88,7 +88,13 @@ where
 
     #[inline]
     pub(crate) fn push(&self, value: &T) -> bool {
+        // On ARM, Cell read avoids implicit ordering overhead of atomic
+        // self-load. On x86 (TSO), Relaxed atomic is already a plain mov.
+        #[cfg(target_arch = "aarch64")]
         let head = self.producer.head_local.get();
+        #[cfg(not(target_arch = "aarch64"))]
+        let head = self.head.load(Ordering::Relaxed);
+
         let next_head = I::wrap(head + 1, self.storage.capacity());
 
         #[cfg(feature = "prefetch")]
@@ -106,6 +112,7 @@ where
 
         crate::copy_ring::raw::write_slot_copy::<T, S, CP>(&self.storage, head, value);
         self.head.store(next_head, Ordering::Release);
+        #[cfg(target_arch = "aarch64")]
         self.producer.head_local.set(next_head);
         self.instr.on_push();
         true
@@ -113,7 +120,10 @@ where
 
     #[inline]
     pub(crate) fn pop(&self, out: &mut T) -> bool {
+        #[cfg(target_arch = "aarch64")]
         let tail = self.consumer.tail_local.get();
+        #[cfg(not(target_arch = "aarch64"))]
+        let tail = self.tail.load(Ordering::Relaxed);
 
         #[cfg(feature = "prefetch")]
         crate::raw::prefetch_slot_read(&self.storage, tail);
@@ -131,6 +141,7 @@ where
         crate::copy_ring::raw::read_slot_copy::<T, S, CP>(&self.storage, tail, out);
         let next_tail = I::wrap(tail + 1, self.storage.capacity());
         self.tail.store(next_tail, Ordering::Release);
+        #[cfg(target_arch = "aarch64")]
         self.consumer.tail_local.set(next_tail);
         self.instr.on_pop();
         true
@@ -142,7 +153,10 @@ where
             return 0;
         }
 
+        #[cfg(target_arch = "aarch64")]
         let head = self.producer.head_local.get();
+        #[cfg(not(target_arch = "aarch64"))]
+        let head = self.head.load(Ordering::Relaxed);
         let cached_tail = self.producer.tail_remote.get();
         let cap = self.storage.capacity();
         let usable = cap - 1;
@@ -193,6 +207,7 @@ where
 
         let new_head = I::wrap(head + n, cap);
         self.head.store(new_head, Ordering::Release);
+        #[cfg(target_arch = "aarch64")]
         self.producer.head_local.set(new_head);
         n
     }
@@ -203,7 +218,10 @@ where
             return 0;
         }
 
+        #[cfg(target_arch = "aarch64")]
         let tail = self.consumer.tail_local.get();
+        #[cfg(not(target_arch = "aarch64"))]
+        let tail = self.tail.load(Ordering::Relaxed);
         let cached_head = self.consumer.head_remote.get();
         let cap = self.storage.capacity();
 
@@ -259,6 +277,7 @@ where
 
         let new_tail = I::wrap(tail + n, cap);
         self.tail.store(new_tail, Ordering::Release);
+        #[cfg(target_arch = "aarch64")]
         self.consumer.tail_local.set(new_tail);
         n
     }

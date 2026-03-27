@@ -91,7 +91,13 @@ where
 
     #[inline]
     pub(crate) fn try_push(&self, value: T) -> Result<(), PushError<T>> {
+        // On ARM, Cell read avoids implicit ordering overhead of atomic
+        // self-load. On x86 (TSO), Relaxed atomic is already a plain mov.
+        #[cfg(target_arch = "aarch64")]
         let head = self.producer.head_local.get();
+        #[cfg(not(target_arch = "aarch64"))]
+        let head = self.head.load(Ordering::Relaxed);
+
         let next_head = I::wrap(head + 1, self.storage.capacity());
 
         #[cfg(feature = "prefetch")]
@@ -109,6 +115,7 @@ where
 
         crate::raw::write_slot(&self.storage, head, value);
         self.head.store(next_head, Ordering::Release);
+        #[cfg(target_arch = "aarch64")]
         self.producer.head_local.set(next_head);
         self.instr.on_push();
         Ok(())
@@ -116,7 +123,10 @@ where
 
     #[inline]
     pub(crate) fn try_pop(&self) -> Result<T, QueueError> {
+        #[cfg(target_arch = "aarch64")]
         let tail = self.consumer.tail_local.get();
+        #[cfg(not(target_arch = "aarch64"))]
+        let tail = self.tail.load(Ordering::Relaxed);
 
         #[cfg(feature = "prefetch")]
         crate::raw::prefetch_slot_read(&self.storage, tail);
@@ -134,6 +144,7 @@ where
         let value = crate::raw::read_slot(&self.storage, tail);
         let next_tail = I::wrap(tail + 1, self.storage.capacity());
         self.tail.store(next_tail, Ordering::Release);
+        #[cfg(target_arch = "aarch64")]
         self.consumer.tail_local.set(next_tail);
         self.instr.on_pop();
         Ok(value)
