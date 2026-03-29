@@ -4,6 +4,7 @@
 //! markets for supported crypto assets. Results are used by [`crate::manager`]
 //! to populate the live market map.
 
+use chrono::Utc;
 use pm_types::{Asset, Timeframe};
 use reqwest::Client;
 use serde::Deserialize;
@@ -192,13 +193,22 @@ pub async fn scan_active_markets(
     client: &Client,
     assets: &[Asset],
 ) -> Result<Vec<MarketInfo>, ScanError> {
-    let url = format!(
-        "{GAMMA_API_BASE}/events?limit=100&active=true&closed=false&tag_slug=up-or-down"
-    );
-    debug!(url = %url, "scanning Gamma API for active markets");
+    let mut all_markets = Vec::new();
 
-    let response = client.get(&url).send().await?.text().await?;
-    parse_gamma_response(&response, assets).map_err(ScanError::Json)
+    // Query each timeframe separately — the `tag_slug=up-or-down` endpoint
+    // without a timeframe tag returns stale markets from months ago.
+    for tf_tag in &["5M", "15M"] {
+        let url = format!(
+            "{GAMMA_API_BASE}/events?limit=50&active=true&closed=false&tag_slug=up-or-down&tag_slug={tf_tag}"
+        );
+        debug!(url = %url, "scanning Gamma API");
+
+        let response = client.get(&url).send().await?.text().await?;
+        let markets = parse_gamma_response(&response, assets).map_err(ScanError::Json)?;
+        all_markets.extend(markets);
+    }
+
+    Ok(all_markets)
 }
 
 /// Parse a raw Gamma API JSON response string into [`MarketInfo`] entries.
@@ -226,6 +236,24 @@ pub fn parse_gamma_response(json: &str, assets: &[Asset]) -> Result<Vec<MarketIn
         for market in &event.markets {
             if !market.active || market.closed {
                 continue;
+            }
+
+            // Skip markets whose window has already ended (with a 5-minute grace buffer
+            // to tolerate slight resolution delays).  An empty end_date is treated as
+            // unknown and passed through so we never silently drop markets the API
+            // returns without a date.
+            if !market.end_date.is_empty() {
+                if let Ok(end_dt) = market.end_date.parse::<chrono::DateTime<Utc>>() {
+                    let grace = chrono::Duration::minutes(5);
+                    if end_dt + grace < Utc::now() {
+                        debug!(
+                            condition_id = %market.condition_id,
+                            end_date = %market.end_date,
+                            "skipping market — window already ended"
+                        );
+                        continue;
+                    }
+                }
             }
 
             let Some((token_id_up, token_id_down)) =
@@ -272,6 +300,7 @@ mod tests {
     use super::*;
 
     /// Sample response matching the real Gamma API shape for tag_slug=up-or-down.
+    /// Dates are set far in the future so the end_time filter never drops them.
     const SAMPLE_GAMMA_RESPONSE: &str = r#"[
         {
             "title": "Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET",
@@ -281,7 +310,7 @@ mod tests {
                     "conditionId": "0xabc123",
                     "active": true,
                     "closed": false,
-                    "endDate": "2024-01-15T12:15:00Z",
+                    "endDate": "2030-01-15T12:15:00Z",
                     "clobTokenIds": "[\"tok_up_1\",\"tok_down_1\"]",
                     "outcomes": "[\"Up\",\"Down\"]"
                 }
@@ -295,7 +324,7 @@ mod tests {
                     "conditionId": "0xdef456",
                     "active": true,
                     "closed": false,
-                    "endDate": "2024-01-15T13:00:00Z",
+                    "endDate": "2030-01-15T13:00:00Z",
                     "clobTokenIds": "[\"tok_eth_up\",\"tok_eth_down\"]",
                     "outcomes": "[\"Up\",\"Down\"]"
                 }
@@ -332,7 +361,7 @@ mod tests {
         assert_eq!(m.token_id_up, "tok_up_1");
         assert_eq!(m.token_id_down, "tok_down_1");
         assert_eq!(m.timeframe, Timeframe::Min15);
-        assert_eq!(m.end_date, "2024-01-15T12:15:00Z");
+        assert_eq!(m.end_date, "2030-01-15T12:15:00Z");
     }
 
     #[test]
@@ -358,6 +387,53 @@ mod tests {
     }
 
     #[test]
+    fn parse_gamma_skips_expired_market() {
+        // An active=true, closed=false market with an endDate well in the past
+        // should be filtered by the end_time guard.
+        let json = r#"[
+            {
+                "title": "Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET",
+                "slug": "btc-updown-15m-1774798200",
+                "markets": [
+                    {
+                        "conditionId": "0xexpired",
+                        "active": true,
+                        "closed": false,
+                        "endDate": "2020-01-01T00:00:00Z",
+                        "clobTokenIds": "[\"tok_x\",\"tok_y\"]",
+                        "outcomes": "[\"Up\",\"Down\"]"
+                    }
+                ]
+            }
+        ]"#;
+        let results = parse_gamma_response(json, &[]).expect("parse should succeed");
+        assert!(results.is_empty(), "expired market should be skipped by end_time filter");
+    }
+
+    #[test]
+    fn parse_gamma_keeps_market_with_empty_end_date() {
+        // An empty endDate should pass through (unknown — treat as active).
+        let json = r#"[
+            {
+                "title": "Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET",
+                "slug": "btc-updown-15m-1774798200",
+                "markets": [
+                    {
+                        "conditionId": "0xnodate",
+                        "active": true,
+                        "closed": false,
+                        "endDate": "",
+                        "clobTokenIds": "[\"tok_a\",\"tok_b\"]",
+                        "outcomes": "[\"Up\",\"Down\"]"
+                    }
+                ]
+            }
+        ]"#;
+        let results = parse_gamma_response(json, &[]).expect("parse should succeed");
+        assert_eq!(results.len(), 1, "market with empty endDate should not be filtered");
+    }
+
+    #[test]
     fn parse_gamma_skips_market_without_token_ids() {
         let json = r#"[
             {
@@ -368,7 +444,7 @@ mod tests {
                         "conditionId": "0x222",
                         "active": true,
                         "closed": false,
-                        "endDate": "2024-01-15T13:00:00Z",
+                        "endDate": "2030-01-15T13:00:00Z",
                         "clobTokenIds": "",
                         "outcomes": ""
                     }
@@ -391,7 +467,7 @@ mod tests {
                         "conditionId": "0x333",
                         "active": true,
                         "closed": false,
-                        "endDate": "2024-01-15T12:15:00Z",
+                        "endDate": "2030-01-15T12:15:00Z",
                         "clobTokenIds": "[\"tok_a\",\"tok_b\"]",
                         "outcomes": "[\"Yes\",\"No\"]"
                     }

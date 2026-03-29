@@ -1250,6 +1250,7 @@ dependencies = [
 name = "pm-market"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "futures-util",
  "pm-types",
  "reqwest",

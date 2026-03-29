@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 pm-types = { workspace = true, features = ["std"] }
+chrono = { workspace = true }
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }

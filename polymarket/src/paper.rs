@@ -143,7 +143,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     let shared_tracker: Arc<Mutex<OrderbookTracker>> =
         Arc::new(Mutex::new(OrderbookTracker::new()));
 
-    let mut market_mgr = MarketManager::new(Duration::from_secs(60));
+    let mut market_mgr = MarketManager::new(Duration::from_secs(30));
     let http_client = Client::new();
     let mut next_scan_at = tokio::time::Instant::now();
 
@@ -213,7 +213,160 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                             }
                         }
 
-                        market_mgr.update_markets(markets);
+                        market_mgr.update_markets(markets.clone());
+
+                        // Fetch REST orderbook snapshots for all discovered markets so the
+                        // tracker has initial state immediately — even on quiet markets where
+                        // the PM WebSocket won't fire until the next book change.
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+
+                        for m in &markets {
+                            // ── Up token ─────────────────────────────────────────────────
+                            let up_url = format!(
+                                "https://clob.polymarket.com/book?token_id={}",
+                                m.token_id_up
+                            );
+                            match http_client.get(&up_url).send().await {
+                                Ok(resp) => match resp.json::<serde_json::Value>().await {
+                                    Ok(book) => {
+                                        if let Some(asks) =
+                                            book.get("asks").and_then(|a| a.as_array())
+                                        {
+                                            if let Some(best) = asks.first() {
+                                                let price: f64 = best
+                                                    .get("price")
+                                                    .and_then(|p| p.as_str())
+                                                    .and_then(|s| s.parse().ok())
+                                                    .unwrap_or(0.0);
+                                                if price > 0.01 && price < 0.99 {
+                                                    if let Ok(mut tracker) = shared_tracker.lock() {
+                                                        tracker.update(
+                                                            &m.token_id_up,
+                                                            "SELL",
+                                                            price,
+                                                            now_ms,
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if let Some(bids) =
+                                            book.get("bids").and_then(|a| a.as_array())
+                                        {
+                                            if let Some(best) = bids.first() {
+                                                let price: f64 = best
+                                                    .get("price")
+                                                    .and_then(|p| p.as_str())
+                                                    .and_then(|s| s.parse().ok())
+                                                    .unwrap_or(0.0);
+                                                if price > 0.01 && price < 0.99 {
+                                                    if let Ok(mut tracker) = shared_tracker.lock() {
+                                                        tracker.update(
+                                                            &m.token_id_up,
+                                                            "BUY",
+                                                            price,
+                                                            now_ms,
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            token_id = %m.token_id_up,
+                                            error = %e,
+                                            "failed to parse REST orderbook for Up token"
+                                        );
+                                    }
+                                },
+                                Err(e) => {
+                                    warn!(
+                                        token_id = %m.token_id_up,
+                                        error = %e,
+                                        "REST orderbook fetch failed for Up token"
+                                    );
+                                }
+                            }
+
+                            // ── Down token ───────────────────────────────────────────────
+                            let down_url = format!(
+                                "https://clob.polymarket.com/book?token_id={}",
+                                m.token_id_down
+                            );
+                            match http_client.get(&down_url).send().await {
+                                Ok(resp) => match resp.json::<serde_json::Value>().await {
+                                    Ok(book) => {
+                                        if let Some(asks) =
+                                            book.get("asks").and_then(|a| a.as_array())
+                                        {
+                                            if let Some(best) = asks.first() {
+                                                let price: f64 = best
+                                                    .get("price")
+                                                    .and_then(|p| p.as_str())
+                                                    .and_then(|s| s.parse().ok())
+                                                    .unwrap_or(0.0);
+                                                if price > 0.01 && price < 0.99 {
+                                                    if let Ok(mut tracker) = shared_tracker.lock() {
+                                                        tracker.update(
+                                                            &m.token_id_down,
+                                                            "SELL",
+                                                            price,
+                                                            now_ms,
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if let Some(bids) =
+                                            book.get("bids").and_then(|a| a.as_array())
+                                        {
+                                            if let Some(best) = bids.first() {
+                                                let price: f64 = best
+                                                    .get("price")
+                                                    .and_then(|p| p.as_str())
+                                                    .and_then(|s| s.parse().ok())
+                                                    .unwrap_or(0.0);
+                                                if price > 0.01 && price < 0.99 {
+                                                    if let Ok(mut tracker) = shared_tracker.lock() {
+                                                        tracker.update(
+                                                            &m.token_id_down,
+                                                            "BUY",
+                                                            price,
+                                                            now_ms,
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            token_id = %m.token_id_down,
+                                            error = %e,
+                                            "failed to parse REST orderbook for Down token"
+                                        );
+                                    }
+                                },
+                                Err(e) => {
+                                    warn!(
+                                        token_id = %m.token_id_down,
+                                        error = %e,
+                                        "REST orderbook fetch failed for Down token"
+                                    );
+                                }
+                            }
+
+                            info!(
+                                condition_id = %m.condition_id,
+                                token_up = %m.token_id_up,
+                                token_down = %m.token_id_down,
+                                "REST orderbook snapshot fetched"
+                            );
+                        }
 
                         if !new_token_ids.is_empty() {
                             info!(
@@ -359,9 +512,24 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                         );
                     }
 
+                    // Match only a market whose window has NOT yet ended so we
+                    // never bind to a recently-resolved market that still appears
+                    // in the scanner list with stale orderbook prices.
+                    let now_utc = chrono::Utc::now();
                     let condition_id_opt = market_mgr
                         .active_markets()
-                        .find(|m| m.asset == tick.asset && m.timeframe == timeframe)
+                        .find(|m| {
+                            if m.asset != tick.asset || m.timeframe != timeframe {
+                                return false;
+                            }
+                            // Accept only markets whose end_date is still in the future.
+                            if m.end_date.is_empty() {
+                                return true; // unknown date — pass through
+                            }
+                            m.end_date
+                                .parse::<chrono::DateTime<chrono::Utc>>()
+                                .map_or(true, |end_dt| end_dt > now_utc)
+                        })
                         .map(|m| m.condition_id.clone());
 
                     let ob_snap = condition_id_opt.as_deref().and_then(|cid| {
@@ -386,20 +554,47 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                                 let a_down = snap.ask_down.map_or(0.48, |p| p.as_f64());
                                 let b_up = snap.bid_up.map_or(a_up - 0.02, |p| p.as_f64());
                                 let b_down = snap.bid_down.map_or(a_down - 0.02, |p| p.as_f64());
-                                debug!(
-                                    asset = %tick.asset,
-                                    timeframe = ?timeframe,
-                                    ask_up = a_up,
-                                    ask_down = a_down,
-                                    "using live PM WS orderbook prices"
-                                );
-                                (
-                                    Some(a_up), Some(a_down), Some(b_up), Some(b_down),
-                                    ContractPrice::new(a_up),
-                                    ContractPrice::new(a_down),
-                                    ContractPrice::new(b_up),
-                                    ContractPrice::new(b_down),
-                                )
+
+                                // Sanity-check: prices from a resolved market sit at
+                                // ~$0.00 or ~$1.00 (fully settled).  Reject anything
+                                // outside (0.01, 0.99) for both legs — those are useless
+                                // for live trading and would badly mis-price the model.
+                                let prices_are_sane = a_up > 0.01 && a_up < 0.99
+                                    && a_down > 0.01 && a_down < 0.99;
+
+                                if prices_are_sane {
+                                    debug!(
+                                        asset = %tick.asset,
+                                        timeframe = ?timeframe,
+                                        ask_up = a_up,
+                                        ask_down = a_down,
+                                        "using live PM WS orderbook prices"
+                                    );
+                                    (
+                                        Some(a_up), Some(a_down), Some(b_up), Some(b_down),
+                                        ContractPrice::new(a_up),
+                                        ContractPrice::new(a_down),
+                                        ContractPrice::new(b_up),
+                                        ContractPrice::new(b_down),
+                                    )
+                                } else {
+                                    warn!(
+                                        asset = %tick.asset,
+                                        timeframe = ?timeframe,
+                                        ask_up = a_up,
+                                        ask_down = a_down,
+                                        "PM WS prices look like a resolved market — falling back to model defaults"
+                                    );
+                                    let base = if spot_direction == Side::Up { 0.55 } else { 0.48 };
+                                    let opp = 1.0 - base + slippage;
+                                    (
+                                        None, None, None, None,
+                                        ContractPrice::new(base.clamp(0.01, 0.99)),
+                                        ContractPrice::new(opp.clamp(0.01, 0.99)),
+                                        ContractPrice::new((base - 0.02).clamp(0.01, 0.99)),
+                                        ContractPrice::new((opp - 0.02).clamp(0.01, 0.99)),
+                                    )
+                                }
                             }
                             _ => {
                                 let base = if spot_direction == Side::Up { 0.55 } else { 0.48 };
