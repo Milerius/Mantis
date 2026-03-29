@@ -1,6 +1,16 @@
 //! Polymarket trading bot CLI.
 
+mod backtest;
+mod calibrate;
+mod download;
+
+use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
+use pm_types::config::BotConfig;
+use tracing::info;
+use tracing_subscriber::{EnvFilter, fmt};
+
+// ─── CLI definition ───────────────────────────────────────────────────────────
 
 /// Polymarket crypto Up/Down trading bot.
 #[derive(Parser)]
@@ -18,22 +28,62 @@ struct Cli {
 /// Available CLI subcommands.
 #[derive(Subcommand)]
 enum Commands {
-    /// Download historical price data from Binance and OKX.
+    /// Download historical price data from Binance.
     Download,
-    /// Calibrate `fair_value` model from historical data.
+    /// Calibrate fair-value model from historical data.
     Calibrate,
-    /// Run backtest on historical data.
+    /// Run backtest on test-set data using a calibrated model.
     Backtest,
     /// Run download + calibrate + backtest in one step.
     Run,
 }
 
-fn main() {
+// ─── Config loader ────────────────────────────────────────────────────────────
+
+fn load_config(path: &str) -> Result<BotConfig> {
+    let src = std::fs::read_to_string(path)
+        .with_context(|| format!("cannot read config file `{path}`"))?;
+    toml::from_str(&src).with_context(|| format!("cannot parse config file `{path}`"))
+}
+
+// ─── main ─────────────────────────────────────────────────────────────────────
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Initialise structured logging (respects RUST_LOG env var).
+    fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_target(false)
+        .init();
+
     let cli = Cli::parse();
+    let cfg = load_config(&cli.config)?;
+    info!(mode = %cfg.bot.mode, config = %cli.config, "bot starting");
+
     match cli.command {
-        Commands::Download => eprintln!("download: not yet implemented"),
-        Commands::Calibrate => eprintln!("calibrate: not yet implemented"),
-        Commands::Backtest => eprintln!("backtest: not yet implemented"),
-        Commands::Run => eprintln!("run: not yet implemented"),
+        Commands::Download => {
+            download::run_download(&cfg).await?;
+        }
+
+        Commands::Calibrate => {
+            let (train_dates, _test_dates) = calibrate::split_dates(&cfg)?;
+            let _table = calibrate::run_calibrate(&cfg, &train_dates)?;
+            info!("calibration finished — table is ready");
+        }
+
+        Commands::Backtest => {
+            let (train_dates, test_dates) = calibrate::split_dates(&cfg)?;
+            let table = calibrate::run_calibrate(&cfg, &train_dates)?;
+            backtest::run_backtest_cmd(&cfg, table, &test_dates)?;
+        }
+
+        Commands::Run => {
+            download::run_download(&cfg).await?;
+            let (train_dates, test_dates) = calibrate::split_dates(&cfg)?;
+            let table = calibrate::run_calibrate(&cfg, &train_dates)?;
+            backtest::run_backtest_cmd(&cfg, table, &test_dates)?;
+        }
     }
+
+    Ok(())
 }

@@ -1210,6 +1210,7 @@ dependencies = [
  "pm-oracle",
  "pm-signal",
  "pm-types",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
