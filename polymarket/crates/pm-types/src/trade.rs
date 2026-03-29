@@ -114,6 +114,10 @@ pub enum Rejection {
     WindowExpiringSoon,
     /// The market was not liquid enough to fill at an acceptable price.
     InsufficientLiquidity,
+    /// The kill switch is active; no new trades are permitted.
+    KillSwitchActive,
+    /// Too many correlated positions on the same side; correlation guard triggered.
+    CorrelationGuard,
 }
 
 impl core::fmt::Display for Rejection {
@@ -125,6 +129,8 @@ impl core::fmt::Display for Rejection {
             Self::DailyLossLimitHit => write!(f, "DailyLossLimitHit"),
             Self::WindowExpiringSoon => write!(f, "WindowExpiringSoon"),
             Self::InsufficientLiquidity => write!(f, "InsufficientLiquidity"),
+            Self::KillSwitchActive => write!(f, "KillSwitchActive"),
+            Self::CorrelationGuard => write!(f, "CorrelationGuard"),
         }
     }
 }

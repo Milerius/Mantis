@@ -1,0 +1,13 @@
+[package]
+name = "pm-risk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pm-types = { workspace = true, features = ["std"] }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

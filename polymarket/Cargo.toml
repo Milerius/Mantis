@@ -31,6 +31,8 @@ pm-signal = { path = "crates/pm-signal", version = "0.1.0" }
 pm-oracle = { path = "crates/pm-oracle", version = "0.1.0" }
 pm-executor = { path = "crates/pm-executor", version = "0.1.0" }
 pm-bookkeeper = { path = "crates/pm-bookkeeper", version = "0.1.0" }
+pm-market = { path = "crates/pm-market", version = "0.1.0" }
+pm-risk = { path = "crates/pm-risk", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
@@ -45,6 +47,9 @@ criterion = { version = "0.5", features = ["html_reports"] }
 flate2 = "1"
 anyhow = "1"
 rayon = "1"
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["rt"] }
 
 [package]
 name = "polymarket-bot"
