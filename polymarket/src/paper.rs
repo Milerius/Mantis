@@ -83,7 +83,9 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     );
 
     // ── 2. Channels and cancellation token ────────────────────────────────────
-    let (tick_tx, _tick_rx_placeholder) = broadcast::channel::<Tick>(4096);
+    // Create the broadcast channel. Subscribe immediately to avoid losing
+    // ticks between WS task start and main loop start.
+    let (tick_tx, mut tick_rx) = broadcast::channel::<Tick>(4096);
     let shutdown = CancellationToken::new();
 
     // ── 3. Spawn oracle WebSocket tasks ───────────────────────────────────────
@@ -167,8 +169,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
     info!(session_id = %session_id, "live recorder started");
 
-    // Subscribe to the broadcast channel for ticks.
-    let mut tick_rx = tick_tx.subscribe();
+    // tick_rx was created with the channel above — no need to re-subscribe.
 
     // ── 5. Graceful shutdown signal ───────────────────────────────────────────
     let ctrlc_shutdown = shutdown.clone();
@@ -253,6 +254,18 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     }
                 };
 
+                // Log first tick per asset to confirm channel is working.
+                static FIRST_TICK_LOGGED: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
+                if !FIRST_TICK_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    info!(
+                        asset = %tick.asset,
+                        price = tick.price.as_f64(),
+                        source = %tick.source,
+                        "first tick received from WebSocket"
+                    );
+                }
+
                 // Deduplicate across exchanges.
                 let Some(tick) = oracle_router.process(tick) else {
                     continue;
@@ -270,6 +283,19 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
                 // Update price buffer.
                 price_buffer.push(tick.asset, tick.timestamp_ms, tick.price);
+
+                // Periodic tick stats (every 100 ticks).
+                static TICK_COUNT: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let n = TICK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if n.is_multiple_of(100) && n > 0 {
+                    info!(
+                        ticks_processed = n,
+                        asset = %tick.asset,
+                        price = tick.price.as_f64(),
+                        "tick throughput"
+                    );
+                }
 
                 // Evaluate each enabled timeframe for this asset.
                 for (tf_idx, &timeframe) in enabled_timeframes.iter().enumerate() {
@@ -312,10 +338,11 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                             window: new_window,
                             position_opened: false,
                         });
-                        debug!(
+                        info!(
                             asset = %tick.asset,
                             timeframe = ?timeframe,
                             window_id = %new_window.id,
+                            open_price = tick.price.as_f64(),
                             "new window opened"
                         );
                     }
