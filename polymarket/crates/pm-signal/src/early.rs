@@ -68,8 +68,7 @@ impl Strategy for EarlyDirectional {
                 clippy::cast_precision_loss,
                 reason = "time values are at most a few hours in seconds; precision loss is negligible"
             )]
-            let ratio =
-                (state.time_elapsed_secs as f64) / (self.max_entry_time_secs as f64);
+            let ratio = (state.time_elapsed_secs as f64) / (self.max_entry_time_secs as f64);
             1.0 - ratio
         };
         let price_margin = (self.max_entry_price - ask.as_f64()) / self.max_entry_price;

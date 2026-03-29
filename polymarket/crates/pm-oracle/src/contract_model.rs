@@ -89,7 +89,13 @@ impl ContractPriceModel {
 
     /// Get a cell.
     #[must_use]
-    pub fn get(&self, asset: Asset, tf: Timeframe, mag_bucket: usize, time_bucket: usize) -> &ModelCell {
+    pub fn get(
+        &self,
+        asset: Asset,
+        tf: Timeframe,
+        mag_bucket: usize,
+        time_bucket: usize,
+    ) -> &ModelCell {
         &self.cells[Self::idx(asset, tf, mag_bucket, time_bucket)]
     }
 
@@ -209,7 +215,10 @@ pub fn calibrate(observations: &[PriceObservation], min_samples: u32) -> Contrac
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "test assertions intentionally panic on failure")]
+#[expect(
+    clippy::expect_used,
+    reason = "test assertions intentionally panic on failure"
+)]
 mod tests {
     use pm_types::{Asset, Timeframe};
 
@@ -221,7 +230,10 @@ mod tests {
     fn empty_model_with_min_samples_returns_none() {
         let model = ContractPriceModel::new(1);
         let result = model.estimate(0.001, 60, Asset::Btc, Timeframe::Min5);
-        assert!(result.is_none(), "expected None from empty model with min_samples=1");
+        assert!(
+            result.is_none(),
+            "expected None from empty model with min_samples=1"
+        );
     }
 
     #[test]
@@ -282,7 +294,9 @@ mod tests {
         model.set(Asset::Xrp, Timeframe::Hour4, mb, tb, 0.55, 10); // exactly 10
 
         let result = model.estimate(0.003, 180, Asset::Xrp, Timeframe::Hour4);
-        let price = result.expect("should return value at exactly min_samples").as_f64();
+        let price = result
+            .expect("should return value at exactly min_samples")
+            .as_f64();
         assert!((price - 0.55).abs() < 1e-12);
     }
 
@@ -309,7 +323,10 @@ mod tests {
     #[test]
     fn mag_bucket_overflow() {
         // > all boundaries → overflow bucket
-        assert_eq!(ContractPriceModel::mag_bucket(1.0), MAGNITUDE_BUCKET_COUNT - 1);
+        assert_eq!(
+            ContractPriceModel::mag_bucket(1.0),
+            MAGNITUDE_BUCKET_COUNT - 1
+        );
     }
 
     #[test]
@@ -341,7 +358,10 @@ mod tests {
     #[test]
     fn time_bucket_overflow() {
         // > all boundaries → overflow bucket
-        assert_eq!(ContractPriceModel::time_bucket(9999), TIME_ELAPSED_BUCKET_COUNT - 1);
+        assert_eq!(
+            ContractPriceModel::time_bucket(9999),
+            TIME_ELAPSED_BUCKET_COUNT - 1
+        );
     }
 
     #[test]
@@ -387,7 +407,11 @@ mod tests {
         let tb = ContractPriceModel::time_bucket(120);
         let cell = model.get(Asset::Btc, Timeframe::Min5, mb, tb);
         assert_eq!(cell.sample_count, 3);
-        assert!((cell.median_price - 0.70).abs() < 1e-12, "expected 0.70, got {}", cell.median_price);
+        assert!(
+            (cell.median_price - 0.70).abs() < 1e-12,
+            "expected 0.70, got {}",
+            cell.median_price
+        );
     }
 
     #[test]
@@ -408,14 +432,21 @@ mod tests {
         let tb = ContractPriceModel::time_bucket(180);
         let cell = model.get(Asset::Eth, Timeframe::Hour1, mb, tb);
         assert_eq!(cell.sample_count, 4);
-        assert!((cell.median_price - 0.70).abs() < 1e-12, "expected 0.70, got {}", cell.median_price);
+        assert!(
+            (cell.median_price - 0.70).abs() < 1e-12,
+            "expected 0.70, got {}",
+            cell.median_price
+        );
     }
 
     #[test]
     fn calibrate_empty_observations_returns_empty_model() {
         let model = calibrate(&[], 1);
         let result = model.estimate(0.001, 60, Asset::Btc, Timeframe::Min5);
-        assert!(result.is_none(), "empty calibration should yield no estimates");
+        assert!(
+            result.is_none(),
+            "empty calibration should yield no estimates"
+        );
     }
 
     #[test]
@@ -448,8 +479,14 @@ mod tests {
         model.set(Asset::Btc, Timeframe::Hour1, mb, tb, 0.65, 10);
         model.set(Asset::Eth, Timeframe::Hour1, mb, tb, 0.40, 10);
 
-        let btc = model.estimate(0.002, 120, Asset::Btc, Timeframe::Hour1).expect("btc").as_f64();
-        let eth = model.estimate(0.002, 120, Asset::Eth, Timeframe::Hour1).expect("eth").as_f64();
+        let btc = model
+            .estimate(0.002, 120, Asset::Btc, Timeframe::Hour1)
+            .expect("btc")
+            .as_f64();
+        let eth = model
+            .estimate(0.002, 120, Asset::Eth, Timeframe::Hour1)
+            .expect("eth")
+            .as_f64();
 
         assert!((btc - 0.65).abs() < 1e-12, "BTC expected 0.65, got {btc}");
         assert!((eth - 0.40).abs() < 1e-12, "ETH expected 0.40, got {eth}");
@@ -474,8 +511,14 @@ mod tests {
             },
         ];
         let model = calibrate(&obs, 1);
-        let btc = model.estimate(0.001, 60, Asset::Btc, Timeframe::Min15).expect("btc").as_f64();
-        let sol = model.estimate(0.001, 60, Asset::Sol, Timeframe::Min15).expect("sol").as_f64();
+        let btc = model
+            .estimate(0.001, 60, Asset::Btc, Timeframe::Min15)
+            .expect("btc")
+            .as_f64();
+        let sol = model
+            .estimate(0.001, 60, Asset::Sol, Timeframe::Min15)
+            .expect("sol")
+            .as_f64();
         let eth = model.estimate(0.001, 60, Asset::Eth, Timeframe::Min15);
 
         assert!((btc - 0.75).abs() < 1e-12, "BTC expected 0.75, got {btc}");
@@ -494,8 +537,14 @@ mod tests {
         model.set(Asset::Sol, Timeframe::Min5, mb, tb, 0.55, 5);
         model.set(Asset::Sol, Timeframe::Hour4, mb, tb, 0.45, 5);
 
-        let p5 = model.estimate(0.003, 60, Asset::Sol, Timeframe::Min5).expect("Min5").as_f64();
-        let p4h = model.estimate(0.003, 60, Asset::Sol, Timeframe::Hour4).expect("Hour4").as_f64();
+        let p5 = model
+            .estimate(0.003, 60, Asset::Sol, Timeframe::Min5)
+            .expect("Min5")
+            .as_f64();
+        let p4h = model
+            .estimate(0.003, 60, Asset::Sol, Timeframe::Hour4)
+            .expect("Hour4")
+            .as_f64();
 
         assert!((p5 - 0.55).abs() < 1e-12, "Min5 expected 0.55, got {p5}");
         assert!((p4h - 0.45).abs() < 1e-12, "Hour4 expected 0.45, got {p4h}");

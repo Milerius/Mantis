@@ -1,0 +1,3 @@
+window_id,asset,side,entry_price,exit_price,size_usdc,pnl,opened_at_ms,closed_at_ms,close_reason
+W1256,BTC,Down,0.5373475,1,25,21.524827974448563,1774441132999,1774441800999,ExpiryClose
+W1988,BTC,Down,0.5373475,1,25,21.524827974448563,1774517581999,1774518300999,ExpiryClose

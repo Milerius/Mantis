@@ -1159,6 +1159,7 @@ name = "pm-executor"
 version = "0.1.0"
 dependencies = [
  "pm-bookkeeper",
+ "pm-oracle",
  "pm-signal",
  "pm-types",
  "thiserror",

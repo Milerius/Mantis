@@ -65,7 +65,10 @@ mod tests {
     extern crate std;
     use alloc::{boxed::Box, vec};
 
-    use pm_types::{Asset, ContractPrice, EntryDecision, MarketState, Price, Side, StrategyId, Timeframe, WindowId};
+    use pm_types::{
+        Asset, ContractPrice, EntryDecision, MarketState, Price, Side, StrategyId, Timeframe,
+        WindowId,
+    };
 
     use super::*;
     use crate::strategy_trait::Strategy;
@@ -162,8 +165,7 @@ mod tests {
 
     #[test]
     fn no_strategies_fire_returns_none() {
-        let strategies: Vec<Box<dyn Strategy>> =
-            vec![Box::new(NeverFires), Box::new(NeverFires)];
+        let strategies: Vec<Box<dyn Strategy>> = vec![Box::new(NeverFires), Box::new(NeverFires)];
         let engine = StrategyEngine::new(strategies);
         assert!(engine.evaluate(&make_state()).is_none());
     }

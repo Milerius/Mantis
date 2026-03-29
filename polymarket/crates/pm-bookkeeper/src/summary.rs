@@ -155,7 +155,7 @@ pub fn compute_summary(trades: &[TradeRecord]) -> TradeSummary {
 
 #[cfg(test)]
 mod tests {
-    use pm_types::{Asset, ContractPrice, OrderReason, Pnl, Side, WindowId};
+    use pm_types::{Asset, ContractPrice, OrderReason, Pnl, Side, StrategyId, WindowId};
 
     use super::*;
 
@@ -171,6 +171,7 @@ mod tests {
             opened_at_ms: 0,
             closed_at_ms: 3_600_000,
             close_reason: OrderReason::ExpiryClose,
+            strategy_id: StrategyId::EarlyDirectional,
         }
     }
 

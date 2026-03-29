@@ -9,6 +9,7 @@ license.workspace = true
 pm-types = { workspace = true, features = ["std"] }
 pm-signal = { workspace = true, features = ["std"] }
 pm-bookkeeper = { workspace = true }
+pm-oracle = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 

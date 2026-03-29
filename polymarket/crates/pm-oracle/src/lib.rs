@@ -16,7 +16,7 @@ pub use price_buffer::PriceBuffer;
 pub use replay::HistoricalReplay;
 
 pub use polymarket::{
-    asset_prefix, download_polymarket_day, download_polymarket_window, is_pm_cached,
-    market_slug, market_slugs, pm_cache_path, read_polymarket_trades, timeframe_label,
-    write_polymarket_trades, PolymarketTrade,
+    PolymarketTrade, asset_prefix, download_polymarket_day, download_polymarket_window,
+    is_pm_cached, market_slug, market_slugs, pm_cache_path, read_polymarket_trades,
+    timeframe_label, write_polymarket_trades,
 };

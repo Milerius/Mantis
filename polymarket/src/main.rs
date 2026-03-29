@@ -3,6 +3,7 @@
 mod backtest;
 mod calibrate;
 mod download;
+mod sweep;
 
 use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
@@ -28,12 +29,14 @@ struct Cli {
 /// Available CLI subcommands.
 #[derive(Subcommand)]
 enum Commands {
-    /// Download historical price data from Binance.
+    /// Download historical price data from Binance and Polymarket.
     Download,
     /// Calibrate fair-value model from historical data.
     Calibrate,
     /// Run backtest on test-set data using a calibrated model.
     Backtest,
+    /// Run parameter sweep to find optimal strategy configuration.
+    Sweep,
     /// Run download + calibrate + backtest in one step.
     Run,
 }
@@ -67,21 +70,25 @@ async fn main() -> Result<()> {
 
         Commands::Calibrate => {
             let (train_dates, _test_dates) = calibrate::split_dates(&cfg)?;
-            let _table = calibrate::run_calibrate(&cfg, &train_dates)?;
-            info!("calibration finished — table is ready");
+            let _result = calibrate::run_calibrate(&cfg, &train_dates)?;
+            info!("calibration finished — lookup table and contract model ready");
         }
 
         Commands::Backtest => {
             let (train_dates, test_dates) = calibrate::split_dates(&cfg)?;
-            let table = calibrate::run_calibrate(&cfg, &train_dates)?;
-            backtest::run_backtest_cmd(&cfg, table, &test_dates)?;
+            let result = calibrate::run_calibrate(&cfg, &train_dates)?;
+            backtest::run_backtest_cmd(&cfg, result, &test_dates)?;
+        }
+
+        Commands::Sweep => {
+            sweep::run_sweep_cmd(&cfg)?;
         }
 
         Commands::Run => {
             download::run_download(&cfg).await?;
             let (train_dates, test_dates) = calibrate::split_dates(&cfg)?;
-            let table = calibrate::run_calibrate(&cfg, &train_dates)?;
-            backtest::run_backtest_cmd(&cfg, table, &test_dates)?;
+            let result = calibrate::run_calibrate(&cfg, &train_dates)?;
+            backtest::run_backtest_cmd(&cfg, result, &test_dates)?;
         }
     }
 

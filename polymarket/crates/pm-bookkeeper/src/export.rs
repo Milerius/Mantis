@@ -107,7 +107,7 @@ fn create_csv_writer(path: &Path) -> io::Result<BufWriter<File>> {
 mod tests {
     use std::fs;
 
-    use pm_types::{Asset, ContractPrice, OrderReason, Pnl, Side, WindowId};
+    use pm_types::{Asset, ContractPrice, OrderReason, Pnl, Side, StrategyId, WindowId};
 
     use super::*;
     use crate::summary::compute_summary;
@@ -124,6 +124,7 @@ mod tests {
             opened_at_ms: 1_000,
             closed_at_ms: 3_600_000,
             close_reason: OrderReason::ExpiryClose,
+            strategy_id: StrategyId::EarlyDirectional,
         }
     }
 

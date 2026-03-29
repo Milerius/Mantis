@@ -1,16 +1,24 @@
-//! Backtest subcommand: run the signal engine over the test-set ticks and export results.
+//! Backtest subcommand: run the strategy engine over the test-set ticks and export results.
 
 use std::path::Path;
 
 use anyhow::{Context as _, Result};
 use pm_bookkeeper::{export_equity_curve, export_summary, export_trades_csv};
-use pm_executor::{BacktestConfig, run_backtest};
+use pm_executor::{BacktestConfig, ModelPriceProvider, run_backtest};
 use pm_oracle::HistoricalReplay;
-use pm_signal::{LookupTable, SignalEngine};
+use pm_signal::{
+    CompleteSetArb, EarlyDirectional, HedgeLock, MomentumConfirmation, StrategyEngine,
+};
 use pm_types::{Asset, ExchangeSource, Timeframe, config::BotConfig};
+
+use crate::calibrate::CalibrationResult;
 use tracing::info;
 
 /// Run a backtest over the test-set dates using the calibrated `table`.
+///
+/// A [`StrategyEngine`] is constructed with all four strategies using sensible
+/// defaults.  Contract prices are derived from the calibrated [`LookupTable`]
+/// via a [`LookupTablePriceProvider`].
 ///
 /// Results are exported to `cfg.data.log_dir`:
 /// - `trades.csv`    — full trade record
@@ -21,7 +29,7 @@ use tracing::info;
 ///
 /// Returns an error if the cache files are missing, cannot be read, or if any
 /// export fails.
-pub fn run_backtest_cmd(cfg: &BotConfig, table: LookupTable, test_dates: &[String]) -> Result<()> {
+pub fn run_backtest_cmd(cfg: &BotConfig, cal: CalibrationResult, test_dates: &[String]) -> Result<()> {
     let cache_dir = Path::new(&cfg.data.cache_dir);
     let log_dir = Path::new(&cfg.data.log_dir);
 
@@ -61,33 +69,49 @@ pub fn run_backtest_cmd(cfg: &BotConfig, table: LookupTable, test_dates: &[Strin
     )
     .context("failed to load test-set data")?;
 
-    // The signal engine uses the configured min_edge as its threshold.
-    // The backtest's min_edge controls the simulated market price offset:
-    //   simulated_market_price = fair_value - bt_min_edge * 0.5
-    // For signals to fire, bt_min_edge must be > engine min_edge so the
-    // simulated edge exceeds the threshold.  We use 3x the engine's min_edge.
-    let engine_min_edge = cfg.bot.min_edge;
-    let bt_min_edge = engine_min_edge * 3.0;
+    // Build the strategy engine with sensible defaults.
+    // EarlyDirectional: enter within first 5 min if magnitude >= 0.5% and ask <= 0.65.
+    // MomentumConfirmation: enter after 10 min if magnitude >= 1% and ask <= 0.70.
+    // CompleteSetArb: fires when combined ask < $1.00 (spread captures the edge).
+    // HedgeLock: fires to hedge a losing position.
+    // Strategy defaults:
+    // EarlyDirectional: enter within first 5 min if magnitude >= 0.5% and ask <= 0.65.
+    // MomentumConfirmation: enter between 10–30 min if magnitude >= 1% and ask <= 0.70.
+    // CompleteSetArb: fires when combined ask < $0.98 and profit-per-share > $0.02.
+    // HedgeLock: fires when combined cost is below $0.25 to lock in a hedge.
+    let engine = StrategyEngine::new(vec![
+        Box::new(EarlyDirectional::new(300, 0.005, 0.65)),
+        Box::new(MomentumConfirmation::new(600, 1_800, 0.01, 0.70)),
+        Box::new(CompleteSetArb::new(0.98, 0.02)),
+        Box::new(HedgeLock::new(0.25)),
+    ]);
 
-    let engine = SignalEngine::new(table, engine_min_edge);
+    // Use the calibrated contract price model as price provider.
+    // Prices come from real Polymarket trade data paired with Binance spot data.
+    // Half-spread of 0.01 (1 cent each side) simulates a realistic orderbook.
+    let price_provider = ModelPriceProvider {
+        model: cal.contract_model,
+        half_spread: 0.01,
+    };
 
     let bt_config = BacktestConfig {
         initial_balance: cfg.backtest.initial_balance,
         slippage_bps: cfg.backtest.slippage_bps,
-        min_edge: bt_min_edge,
         max_position_usdc: cfg.bot.max_position_usdc,
+        max_positions_per_window: 1,
     };
 
     info!(
         initial_balance = cfg.backtest.initial_balance,
         slippage_bps = cfg.backtest.slippage_bps,
-        min_edge = cfg.bot.min_edge,
+        max_position_usdc = cfg.bot.max_position_usdc,
         "running backtest"
     );
 
     let result = run_backtest(
         replay,
         &engine,
+        &price_provider,
         &bt_config,
         &enabled_assets,
         &enabled_timeframes,
@@ -105,6 +129,18 @@ pub fn run_backtest_cmd(cfg: &BotConfig, table: LookupTable, test_dates: &[Strin
         max_drawdown = result.summary.max_drawdown,
         "backtest complete"
     );
+
+    // Log per-strategy breakdown.
+    for (id, summary) in &result.per_strategy {
+        info!(
+            strategy = %id,
+            trades = summary.total_trades,
+            wins = summary.wins,
+            win_rate = summary.win_rate,
+            total_pnl = summary.total_pnl,
+            "per-strategy summary"
+        );
+    }
 
     // Export results.
     export_trades_csv(&log_dir.join("trades.csv"), &result.trades)

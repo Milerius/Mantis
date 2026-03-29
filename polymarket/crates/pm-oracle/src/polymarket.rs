@@ -265,6 +265,11 @@ pub async fn download_polymarket_window(
         }
 
         offset += batch_len;
+
+        // The Polymarket Data API caps offsets at 3000.
+        if offset >= 3000 {
+            break;
+        }
     }
 
     // Persist to cache.

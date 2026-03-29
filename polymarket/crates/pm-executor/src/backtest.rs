@@ -1,14 +1,18 @@
-//! Backtest execution engine.
+//! Backtest execution engine with per-strategy P&L breakdown.
 //!
-//! Replays a stream of [`Tick`]s through the signal pipeline, simulates fills
-//! with configurable slippage, and returns a [`BacktestResult`] containing all
-//! closed [`TradeRecord`]s and a [`TradeSummary`].
+//! Replays a stream of [`Tick`]s through the [`StrategyEngine`], obtains real
+//! or model contract prices from a [`ContractPriceProvider`], and returns a
+//! [`BacktestResult`] with per-strategy [`TradeSummary`] breakdowns.
+
+extern crate alloc;
+
+use alloc::vec::Vec;
 
 use pm_bookkeeper::{TradeSummary, compute_summary};
-use pm_signal::{FairValueEstimator, SignalEngine};
+use pm_signal::StrategyEngine;
 use pm_types::{
-    Asset, ContractPrice, OpenPosition, OrderReason, Pnl, Price, Side, StrategyId, Tick,
-    Timeframe, TradeRecord, Window, WindowId,
+    Asset, ContractPrice, MarketState, OpenPosition, OrderReason, Pnl, Price, Side, StrategyId,
+    Tick, Timeframe, TradeRecord, Window, WindowId,
 };
 use tracing::debug;
 
@@ -21,15 +25,89 @@ pub struct BacktestConfig {
     pub initial_balance: f64,
     /// Slippage applied to entry price in basis points (1 bp = 0.0001).
     pub slippage_bps: u32,
-    /// Minimum edge used when simulating the market price.
-    ///
-    /// The simulated market price is `fair_value - min_edge * 0.5`; the signal
-    /// engine's own `min_edge` threshold controls whether a signal fires.  For
-    /// signals to fire in backtest, this value should be larger than the engine's
-    /// configured `min_edge`.
-    pub min_edge: f64,
     /// Maximum USDC size per position.
     pub max_position_usdc: f64,
+    /// Maximum number of open positions per (asset, timeframe) window slot.
+    ///
+    /// Typically `1` — one entry per window.
+    pub max_positions_per_window: usize,
+}
+
+// ─── ContractPriceProvider ────────────────────────────────────────────────────
+
+/// Provides Polymarket contract prices to the backtest engine.
+///
+/// Implementations may source prices from real historical trade data or from a
+/// model (e.g. [`FixedPriceProvider`]).
+pub trait ContractPriceProvider {
+    /// Return `(ask_up, ask_down)` for the given market context, or `None` if
+    /// no price data is available for this combination.
+    fn get_prices(
+        &self,
+        asset: Asset,
+        timeframe: Timeframe,
+        magnitude: f64,
+        time_elapsed_secs: u64,
+    ) -> Option<(ContractPrice, ContractPrice)>;
+}
+
+// ─── FixedPriceProvider ───────────────────────────────────────────────────────
+
+/// A [`ContractPriceProvider`] that always returns the same fixed prices.
+///
+/// Useful for unit tests where you want deterministic contract prices regardless
+/// of market context.
+#[derive(Debug, Clone, Copy)]
+pub struct FixedPriceProvider {
+    /// The fixed ask price for the Up contract.
+    pub ask_up: ContractPrice,
+    /// The fixed ask price for the Down contract.
+    pub ask_down: ContractPrice,
+}
+
+impl ContractPriceProvider for FixedPriceProvider {
+    fn get_prices(
+        &self,
+        _asset: Asset,
+        _timeframe: Timeframe,
+        _magnitude: f64,
+        _time_elapsed_secs: u64,
+    ) -> Option<(ContractPrice, ContractPrice)> {
+        Some((self.ask_up, self.ask_down))
+    }
+}
+
+// ─── ModelPriceProvider ──────────────────────────────────────────────────────
+
+/// A [`ContractPriceProvider`] backed by a [`ContractPriceModel`].
+///
+/// Estimates contract prices from the empirical model calibrated on real
+/// Polymarket trade data. Returns `ask_up` from the model estimate and
+/// `ask_down ≈ 1.0 - ask_up + spread` to simulate a realistic orderbook.
+pub struct ModelPriceProvider {
+    /// The calibrated contract price model.
+    pub model: pm_oracle::ContractPriceModel,
+    /// Half-spread added to both sides (e.g., 0.01 = 1 cent each side).
+    pub half_spread: f64,
+}
+
+impl ContractPriceProvider for ModelPriceProvider {
+    fn get_prices(
+        &self,
+        asset: Asset,
+        timeframe: Timeframe,
+        magnitude: f64,
+        time_elapsed_secs: u64,
+    ) -> Option<(ContractPrice, ContractPrice)> {
+        let mid = self.model.estimate(magnitude, time_elapsed_secs, asset, timeframe)?;
+        let mid_val = mid.as_f64();
+        let ask_up = (mid_val + self.half_spread).clamp(0.01, 0.99);
+        let ask_down = (1.0 - mid_val + self.half_spread).clamp(0.01, 0.99);
+        Some((
+            ContractPrice::new(ask_up)?,
+            ContractPrice::new(ask_down)?,
+        ))
+    }
 }
 
 // ─── BacktestResult ───────────────────────────────────────────────────────────
@@ -41,6 +119,10 @@ pub struct BacktestResult {
     pub trades: Vec<TradeRecord>,
     /// Aggregate statistics over all trades.
     pub summary: TradeSummary,
+    /// Per-strategy breakdown: each entry is `(strategy_id, summary)`.
+    ///
+    /// Only strategies that generated at least one trade appear here.
+    pub per_strategy: Vec<(StrategyId, TradeSummary)>,
     /// Balance after all trades are settled.
     pub final_balance: f64,
 }
@@ -54,14 +136,16 @@ struct ActivePosition {
     pos: OpenPosition,
     /// Index into the window slot table (`asset.index() * Timeframe::COUNT + tf.index()`).
     slot: usize,
+    /// Strategy that opened this position.
+    strategy_id: StrategyId,
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 /// Wrap a pre-clamped `f64` in a [`ContractPrice`].
 ///
-/// `value` must already be in `[0.0, 1.0]`.  The `unwrap_or_else` branch is
-/// unreachable in practice (only fires if the invariant is violated).
+/// `value` must already be in `[0.0, 1.0]`.  The fallback branch is unreachable
+/// in practice — it only fires if the caller violates the invariant.
 #[expect(
     clippy::expect_used,
     reason = "fallback 0.5 is always a valid ContractPrice"
@@ -77,10 +161,10 @@ fn contract_price_clamped(value: f64) -> ContractPrice {
 /// update `balance`.
 ///
 /// Win: payout = `size_usdc / entry_price`; P&L = `payout - size_usdc`.
-/// Loss: payout = `0`; P&L = `-size_usdc`.
+/// Loss: payout = 0; P&L = `-size_usdc`.
 #[expect(
     clippy::too_many_arguments,
-    reason = "all args are logically required to close a position"
+    reason = "all args address a single resolution event; grouping would obscure the data flow"
 )]
 fn resolve_positions(
     open_positions: &mut Vec<ActivePosition>,
@@ -127,6 +211,7 @@ fn resolve_positions(
             side = %pos.side,
             outcome = %outcome,
             pnl = pnl_val,
+            strategy = %ap.strategy_id,
             "position resolved"
         );
 
@@ -141,7 +226,7 @@ fn resolve_positions(
             opened_at_ms: pos.opened_at_ms,
             closed_at_ms,
             close_reason: OrderReason::ExpiryClose,
-            strategy_id: StrategyId::EarlyDirectional,
+            strategy_id: ap.strategy_id,
         });
     }
 }
@@ -193,32 +278,74 @@ fn settle_remaining(
             opened_at_ms: pos.opened_at_ms,
             closed_at_ms: window.close_time_ms,
             close_reason: OrderReason::ExpiryClose,
-            strategy_id: StrategyId::EarlyDirectional,
+            strategy_id: ap.strategy_id,
         });
     }
 }
 
+// ─── per_strategy_breakdown ───────────────────────────────────────────────────
+
+/// Partition `trades` by [`StrategyId`] and compute a [`TradeSummary`] for each.
+///
+/// Only strategy IDs that appear in the trade list are included in the result.
+/// The output order follows the declaration order of [`StrategyId`] variants.
+fn per_strategy_breakdown(trades: &[TradeRecord]) -> Vec<(StrategyId, TradeSummary)> {
+    // All known strategy IDs in a stable order.
+    const ALL_IDS: [StrategyId; 4] = [
+        StrategyId::CompleteSetArb,
+        StrategyId::EarlyDirectional,
+        StrategyId::MomentumConfirmation,
+        StrategyId::HedgeLock,
+    ];
+
+    let mut result = Vec::new();
+    for id in ALL_IDS {
+        let subset: Vec<TradeRecord> = trades
+            .iter()
+            .filter(|t| t.strategy_id == id)
+            .copied()
+            .collect();
+        if subset.is_empty() {
+            continue;
+        }
+        let summary = compute_summary(&subset);
+        result.push((id, summary));
+    }
+    result
+}
+
 // ─── run_backtest ─────────────────────────────────────────────────────────────
 
-/// Run a backtest over `ticks` using `signal_engine` and `config`.
+/// Run a backtest over `ticks` using `engine` and a [`ContractPriceProvider`].
+///
+/// For every tick, the engine:
+/// 1. Determines the (asset, timeframe) window the tick belongs to.
+/// 2. Detects window transitions and resolves expiring positions.
+/// 3. Builds a [`MarketState`] from tick data + `price_provider`.
+/// 4. Calls [`StrategyEngine::evaluate_all`] and opens a position for each
+///    firing strategy that hasn't already reached `max_positions_per_window`.
+/// 5. At end-of-stream, settles remaining open positions.
 ///
 /// Only assets in `enabled_assets` and timeframes in `enabled_timeframes` are
-/// considered.  Positions are opened when the signal engine fires, sized at
-/// `min(max_position_usdc, balance * 0.05)`, with slippage applied.
+/// considered.
 ///
 /// # Panics
 ///
-/// Does not panic in normal operation.  The internal market-price and
-/// entry-price computations use clamped inputs that are always valid
-/// [`ContractPrice`] values.
+/// Does not panic in normal operation.  All price computations use clamped
+/// inputs that are always valid [`ContractPrice`] values.
 #[expect(
     clippy::too_many_lines,
     reason = "backtest loop is inherently linear; extracting sub-functions would obscure the data flow"
 )]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "all args are orthogonal config axes; bundling them would create ad-hoc structs with no reuse"
+)]
 #[must_use]
-pub fn run_backtest<F: FairValueEstimator>(
+pub fn run_backtest<P: ContractPriceProvider>(
     ticks: impl Iterator<Item = Tick>,
-    signal_engine: &SignalEngine<F>,
+    engine: &StrategyEngine,
+    price_provider: &P,
     config: &BacktestConfig,
     enabled_assets: &[Asset],
     enabled_timeframes: &[Timeframe],
@@ -292,68 +419,100 @@ pub fn run_backtest<F: FairValueEstimator>(
                 );
             }
 
-            // Try to open a position if we don't already have one for this slot.
+            // Get the active window for this slot.
             let Some(window) = windows[slot] else {
                 continue;
             };
 
-            if open_positions.iter().any(|ap| ap.slot == slot) {
+            // Count existing positions for this slot.
+            let positions_in_slot = open_positions.iter().filter(|ap| ap.slot == slot).count();
+            if positions_in_slot >= config.max_positions_per_window {
                 continue;
             }
 
-            // Compute fair value via the estimator.
+            // Compute market context.
             let magnitude = window.magnitude(tick.price);
-            let time_remaining = window.time_remaining_secs(tick.timestamp_ms);
-            let fair_value =
-                signal_engine
-                    .estimator()
-                    .estimate(magnitude, time_remaining, tick.asset, tf);
+            let time_elapsed_secs = (tick.timestamp_ms.saturating_sub(window.open_time_ms)) / 1_000;
+            let time_remaining_secs = window.time_remaining_secs(tick.timestamp_ms);
 
-            // Conservative simulated market price: fair_value shifted down by
-            // `min_edge * 0.5`, clamped to [0.01, 0.99].  This represents a
-            // market that prices the Up outcome slightly below our fair-value
-            // estimate.  Using a config `min_edge` larger than the engine's
-            // threshold ensures the resulting edge exceeds the engine's filter.
-            let market_price_raw = (fair_value.as_f64() - config.min_edge * 0.5).clamp(0.01, 0.99);
-            let market_price = contract_price_clamped(market_price_raw);
-
-            let Some(signal) = signal_engine.evaluate(&tick, &window, market_price) else {
+            // Obtain contract prices from the provider.
+            let Some((ask_up, ask_down)) =
+                price_provider.get_prices(tick.asset, tf, magnitude, time_elapsed_secs)
+            else {
                 continue;
             };
 
-            // Size: min(max_position_usdc, balance * 5%)
-            let size = config.max_position_usdc.min(balance * 0.05);
-            if size <= 0.0 {
-                continue;
-            }
+            // Determine spot direction.
+            let spot_direction = window.direction(tick.price);
 
-            // Apply slippage: entry price moves against us.
-            let raw_entry = match signal.side {
-                Side::Up => signal.market_price.as_f64() + slippage,
-                Side::Down => signal.market_price.as_f64() - slippage,
-            };
-            let entry_clamped = raw_entry.clamp(0.01, 0.99);
-            let avg_entry = contract_price_clamped(entry_clamped);
-
-            let pos = OpenPosition {
-                window_id: window.id,
+            // Build a MarketState snapshot for the strategy engine.
+            let state = MarketState {
                 asset: tick.asset,
-                side: signal.side,
-                avg_entry,
-                size_usdc: size,
-                opened_at_ms: tick.timestamp_ms,
+                timeframe: tf,
+                window_id: window.id,
+                window_open_price: window.open_price,
+                current_spot: tick.price,
+                spot_magnitude: magnitude,
+                spot_direction,
+                time_elapsed_secs,
+                time_remaining_secs,
+                contract_ask_up: Some(ask_up),
+                contract_ask_down: Some(ask_down),
+                // Bids approximated as ask - 0.02; clamped to [0, 1].
+                contract_bid_up: ContractPrice::new((ask_up.as_f64() - 0.02).clamp(0.0, 1.0)),
+                contract_bid_down: ContractPrice::new((ask_down.as_f64() - 0.02).clamp(0.0, 1.0)),
             };
 
-            debug!(
-                asset = %tick.asset,
-                timeframe = %tf,
-                side = %signal.side,
-                entry = entry_clamped,
-                size,
-                "position opened"
-            );
+            // Evaluate all strategies.
+            let decisions = engine.evaluate_all(&state);
 
-            open_positions.push(ActivePosition { pos, slot });
+            for decision in decisions {
+                // Re-check slot capacity — earlier decisions in this loop may
+                // have already filled the quota.
+                let positions_in_slot = open_positions.iter().filter(|ap| ap.slot == slot).count();
+                if positions_in_slot >= config.max_positions_per_window {
+                    break;
+                }
+
+                // Size: min(max_position_usdc, balance * 5%).
+                let size = config.max_position_usdc.min(balance * 0.05);
+                if size <= 0.0 {
+                    continue;
+                }
+
+                // Apply slippage: entry price moves against us.
+                let raw_entry = match decision.side {
+                    Side::Up => ask_up.as_f64() + slippage,
+                    Side::Down => ask_down.as_f64() + slippage,
+                };
+                let entry_clamped = raw_entry.clamp(0.01, 0.99);
+                let avg_entry = contract_price_clamped(entry_clamped);
+
+                let pos = OpenPosition {
+                    window_id: window.id,
+                    asset: tick.asset,
+                    side: decision.side,
+                    avg_entry,
+                    size_usdc: size,
+                    opened_at_ms: tick.timestamp_ms,
+                };
+
+                debug!(
+                    asset = %tick.asset,
+                    timeframe = %tf,
+                    side = %decision.side,
+                    strategy = %decision.strategy_id,
+                    entry = entry_clamped,
+                    size,
+                    "position opened"
+                );
+
+                open_positions.push(ActivePosition {
+                    pos,
+                    slot,
+                    strategy_id: decision.strategy_id,
+                });
+            }
         }
     }
 
@@ -362,10 +521,12 @@ pub fn run_backtest<F: FairValueEstimator>(
     settle_remaining(remaining, &windows, &last_prices, &mut trades, &mut balance);
 
     let summary = compute_summary(&trades);
+    let per_strategy = per_strategy_breakdown(&trades);
 
     BacktestResult {
         trades,
         summary,
+        per_strategy,
         final_balance: balance,
     }
 }
@@ -378,10 +539,16 @@ pub fn run_backtest<F: FairValueEstimator>(
     reason = "test helpers use expect for conciseness"
 )]
 mod tests {
-    use pm_signal::{LookupTable, SignalEngine};
-    use pm_types::{Asset, ExchangeSource, Price, Timeframe};
+    extern crate alloc;
+
+    use alloc::{boxed::Box, vec};
+
+    use pm_signal::{EarlyDirectional, StrategyEngine};
+    use pm_types::{Asset, ExchangeSource, Price, Side, Timeframe};
 
     use super::*;
+
+    // ── helpers ──────────────────────────────────────────────────────────────
 
     fn make_tick(asset: Asset, price: f64, timestamp_ms: u64) -> Tick {
         Tick {
@@ -396,8 +563,15 @@ mod tests {
         BacktestConfig {
             initial_balance: 1_000.0,
             slippage_bps: 10,
-            min_edge: 0.03,
             max_position_usdc: 50.0,
+            max_positions_per_window: 1,
+        }
+    }
+
+    fn fixed_provider(ask_up: f64, ask_down: f64) -> FixedPriceProvider {
+        FixedPriceProvider {
+            ask_up: ContractPrice::new(ask_up).expect("valid ask_up"),
+            ask_down: ContractPrice::new(ask_down).expect("valid ask_down"),
         }
     }
 
@@ -405,13 +579,14 @@ mod tests {
 
     #[test]
     fn empty_ticks_returns_empty_result() {
-        let table = LookupTable::new(1);
-        let engine = SignalEngine::new(table, 0.03);
+        let engine = StrategyEngine::new(vec![]);
+        let provider = fixed_provider(0.55, 0.48);
         let config = default_config();
 
         let result = run_backtest(
             core::iter::empty(),
             &engine,
+            &provider,
             &config,
             &[Asset::Btc],
             &[Timeframe::Min5],
@@ -419,57 +594,39 @@ mod tests {
 
         assert!(result.trades.is_empty(), "expected no trades");
         assert_eq!(result.summary.total_trades, 0);
+        assert!(result.per_strategy.is_empty());
         assert!(
             (result.final_balance - config.initial_balance).abs() < 1e-10,
             "balance should be unchanged"
         );
     }
 
-    // ── Test 2: known-edge scenario with BTC ticks ───────────────────────────
+    // ── Test 2: EarlyDirectional fires and generates trades ──────────────────
 
     #[test]
-    fn known_edge_scenario_generates_trades() {
-        // Strategy:
-        // - Config min_edge = 0.06 → simulated market_price = fair_value - 0.06 * 0.5
-        //                                                    = 0.85 - 0.03 = 0.82
-        // - Edge seen by engine = fair_value - market_price = 0.85 - 0.82 = 0.03
-        // - Engine min_edge = 0.02 → 0.03 > 0.02 → signal fires ✓
+    fn early_directional_generates_trades_with_fixed_price_provider() {
+        // EarlyDirectional: max 300s, min magnitude 0.005, max_entry_price 0.60.
+        // Provider returns ask_up=0.55 — below max_entry_price → strategy fires.
         //
-        // LookupTable cell for BTC/Min5 at magnitude ~0.4% and ~150 s remaining:
-        // MAG_BOUNDARIES = [0.0, 0.001, 0.002, 0.003, 0.005, ...]
-        //   0.004 is in (0.003, 0.005] → bucket 4
-        // TIME_BOUNDARIES = [30, 60, 120, 180, ...]
-        //   150 is in (120, 180] → bucket 3
-        let mut table = LookupTable::new(1);
-        let mag_b = LookupTable::mag_bucket(0.004);
-        let time_b = LookupTable::time_bucket(150);
-        table.set(Asset::Btc, Timeframe::Min5, mag_b, time_b, 0.85, 100);
-
-        let engine = SignalEngine::new(table, 0.02);
-
-        let config = BacktestConfig {
-            initial_balance: 1_000.0,
-            slippage_bps: 5,
-            min_edge: 0.06,
-            max_position_usdc: 50.0,
-        };
-
-        // Min5 = 300_000 ms per window.
-        // Window 1: [0, 300_000). Open price = 100.0.
-        // Move up ~0.4% → price = 100.4 at t=150_000 (mid-window).
-        // Cross to Window 2 at t=300_000 → resolves Window 1 as Up.
-        let open_price = 100.0_f64;
-        let up_price = open_price * 1.004; // 0.4% up → magnitude 0.004
+        // Window layout (Min5 = 300_000 ms):
+        //   Window 1: [0, 300_000). Open at price=100.0.
+        //   Tick at t=150_000: price=100.6 → magnitude=0.006 ≥ 0.005, elapsed=150s ≤ 300s.
+        //   Tick at t=300_000: crosses into Window 2 → resolves Window 1 as Up (100.6 > 100.0).
+        let strategy = EarlyDirectional::new(300, 0.005, 0.60);
+        let engine = StrategyEngine::new(vec![Box::new(strategy)]);
+        let provider = fixed_provider(0.55, 0.48);
+        let config = default_config();
 
         let ticks = vec![
-            make_tick(Asset::Btc, open_price, 0),
-            make_tick(Asset::Btc, up_price, 150_000),
-            make_tick(Asset::Btc, up_price, 300_000),
+            make_tick(Asset::Btc, 100.0, 0),
+            make_tick(Asset::Btc, 100.6, 150_000),
+            make_tick(Asset::Btc, 100.6, 300_000),
         ];
 
         let result = run_backtest(
             ticks.into_iter(),
             &engine,
+            &provider,
             &config,
             &[Asset::Btc],
             &[Timeframe::Min5],
@@ -478,15 +635,46 @@ mod tests {
         assert!(!result.trades.is_empty(), "expected at least one trade");
         assert_eq!(result.summary.total_trades as usize, result.trades.len());
 
-        // The trade should be on BTC, Side::Up (price moved up).
         let trade = &result.trades[0];
         assert_eq!(trade.asset, Asset::Btc);
         assert_eq!(trade.side, Side::Up);
+        assert_eq!(trade.strategy_id, StrategyId::EarlyDirectional);
         // Winning Up trade → pnl > 0.
         assert!(
             trade.pnl.as_f64() > 0.0,
             "expected positive PnL on winning Up trade, got {}",
             trade.pnl.as_f64()
         );
+    }
+
+    // ── Test 3: per-strategy breakdown attribution ───────────────────────────
+
+    #[test]
+    fn per_strategy_breakdown_shows_correct_strategy_id() {
+        let strategy = EarlyDirectional::new(300, 0.005, 0.60);
+        let engine = StrategyEngine::new(vec![Box::new(strategy)]);
+        let provider = fixed_provider(0.55, 0.48);
+        let config = default_config();
+
+        let ticks = vec![
+            make_tick(Asset::Btc, 100.0, 0),
+            make_tick(Asset::Btc, 100.6, 150_000),
+            make_tick(Asset::Btc, 100.6, 300_000),
+        ];
+
+        let result = run_backtest(
+            ticks.into_iter(),
+            &engine,
+            &provider,
+            &config,
+            &[Asset::Btc],
+            &[Timeframe::Min5],
+        );
+
+        // Exactly one strategy produced trades.
+        assert_eq!(result.per_strategy.len(), 1);
+        let (id, summary) = &result.per_strategy[0];
+        assert_eq!(*id, StrategyId::EarlyDirectional);
+        assert_eq!(summary.total_trades, result.summary.total_trades);
     }
 }

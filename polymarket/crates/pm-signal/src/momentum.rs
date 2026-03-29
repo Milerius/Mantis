@@ -75,8 +75,9 @@ impl Strategy for MomentumConfirmation {
             clippy::cast_precision_loss,
             reason = "time values are at most hours in seconds; precision loss is negligible"
         )]
-        let window_len =
-            self.max_entry_time_secs.saturating_sub(self.min_entry_time_secs) as f64;
+        let window_len = self
+            .max_entry_time_secs
+            .saturating_sub(self.min_entry_time_secs) as f64;
         let position_in_window = if window_len == 0.0 {
             1.0
         } else {
@@ -84,8 +85,9 @@ impl Strategy for MomentumConfirmation {
                 clippy::cast_precision_loss,
                 reason = "time values are at most hours in seconds; precision loss is negligible"
             )]
-            let elapsed_past_min =
-                state.time_elapsed_secs.saturating_sub(self.min_entry_time_secs) as f64;
+            let elapsed_past_min = state
+                .time_elapsed_secs
+                .saturating_sub(self.min_entry_time_secs) as f64;
             1.0 - (2.0 * elapsed_past_min / window_len - 1.0).abs()
         };
         let price_margin = (self.max_entry_price - ask.as_f64()) / self.max_entry_price;
