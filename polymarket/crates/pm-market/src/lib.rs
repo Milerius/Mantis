@@ -1,6 +1,6 @@
 //! Polymarket market discovery and live orderbook tracking.
 //!
-//! This crate provides three modules:
+//! This crate provides four modules:
 //!
 //! - [`scanner`] — polls the Gamma REST API to discover active crypto Up/Down
 //!   markets
@@ -8,6 +8,8 @@
 //!   WebSocket
 //! - [`manager`] — combines scanner results and orderbook state into a single
 //!   coherent view of the live market
+//! - [`ws_polymarket`] — live WebSocket client that feeds real-time
+//!   best-bid/ask prices into the shared [`OrderbookTracker`]
 //!
 //! # Typical usage
 //!
@@ -37,9 +39,11 @@
 pub mod manager;
 pub mod orderbook;
 pub mod scanner;
+pub mod ws_polymarket;
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 
 pub use manager::MarketManager;
 pub use orderbook::{OrderbookSnapshot, OrderbookTracker};
 pub use scanner::{MarketInfo, ScanError, scan_active_markets};
+pub use ws_polymarket::{NewTokensSender, PolymarketWs};

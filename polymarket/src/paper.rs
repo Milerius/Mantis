@@ -9,13 +9,15 @@
 //! - [`PaperExecutor`] — simulates fills with slippage
 //! - [`LiveRecorder`] — records ticks and orderbook snapshots to compressed JSONL
 
+use std::collections::HashSet;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use pm_bookkeeper::LiveRecorder;
 use pm_executor::{PaperConfig, PaperExecutor};
-use pm_market::MarketManager;
+use pm_market::{MarketManager, OrderbookTracker, PolymarketWs};
 use pm_market::scanner::scan_active_markets;
 use pm_oracle::{BinanceWs, OkxWs, OracleRouter, PriceBuffer};
 use pm_risk::{RiskConfig, RiskManager};
@@ -135,10 +137,27 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     let num_slots = enabled_assets.len() * enabled_timeframes.len();
     let mut live_windows: Vec<Option<LiveWindow>> = (0..num_slots).map(|_| None).collect();
 
+    // ── Shared orderbook tracker for PM WebSocket ─────────────────────────────
+    // Shared between the PM WS task (writer) and the main tick loop (reader).
+    let shared_tracker: Arc<Mutex<OrderbookTracker>> =
+        Arc::new(Mutex::new(OrderbookTracker::new()));
+
     // Market manager for live Polymarket window discovery.
     let mut market_mgr = MarketManager::new(Duration::from_secs(60));
     let http_client = Client::new();
     let mut next_scan_at = tokio::time::Instant::now();
+
+    // Track which token IDs we have already subscribed so we only push deltas.
+    let mut subscribed_tokens: HashSet<String> = HashSet::new();
+
+    // Spawn PM WebSocket task with empty initial subscription.
+    // The first scanner result will push the real token IDs.
+    let (pm_ws, pm_new_tokens_tx) = PolymarketWs::new(Vec::new());
+    let pm_tracker = Arc::clone(&shared_tracker);
+    let pm_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        pm_ws.run(pm_tracker, pm_shutdown).await;
+    });
 
     // Live recorder.
     let data_dir = Path::new(&cfg.data.cache_dir);
@@ -176,7 +195,42 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                 match scan_active_markets(&http_client, &enabled_assets).await {
                     Ok(markets) => {
                         info!(count = markets.len(), "market scan completed");
+
+                        // Collect newly discovered token IDs before handing
+                        // markets to the manager (which consumes the Vec).
+                        let mut new_token_ids: Vec<String> = Vec::new();
+                        for m in &markets {
+                            if subscribed_tokens.insert(m.token_id_up.clone()) {
+                                new_token_ids.push(m.token_id_up.clone());
+                            }
+                            if subscribed_tokens.insert(m.token_id_down.clone()) {
+                                new_token_ids.push(m.token_id_down.clone());
+                            }
+                        }
+
+                        // Register all (new) markets in the shared PM tracker.
+                        if let Ok(mut tracker) = shared_tracker.lock() {
+                            for m in &markets {
+                                tracker.register_market(
+                                    &m.condition_id,
+                                    &m.token_id_up,
+                                    &m.token_id_down,
+                                );
+                            }
+                        }
+
                         market_mgr.update_markets(markets);
+
+                        // Push new token IDs to the PM WS task.
+                        if !new_token_ids.is_empty() {
+                            info!(
+                                count = new_token_ids.len(),
+                                "subscribing PM WS to new token IDs"
+                            );
+                            if let Err(e) = pm_new_tokens_tx.try_send(new_token_ids) {
+                                warn!(error = %e, "failed to send new token IDs to PM WS task");
+                            }
+                        }
                     }
                     Err(e) => {
                         warn!(error = %e, "market scan failed — retrying in 30s");
@@ -282,15 +336,43 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     let time_remaining_secs = window.time_remaining_secs(tick.timestamp_ms);
                     let spot_direction = window.direction(tick.price);
 
-                    // Try to get orderbook data from the market manager.
-                    // Look for a matching active market by asset + timeframe.
-                    let ob = market_mgr
+                    // Log tick processing periodically (every 30 seconds per window).
+                    if time_elapsed_secs % 30 == 0 && time_elapsed_secs > 0 {
+                        debug!(
+                            asset = %tick.asset,
+                            timeframe = ?timeframe,
+                            mag = format!("{:.4}%", magnitude * 100.0),
+                            elapsed = time_elapsed_secs,
+                            dir = %spot_direction,
+                            spot = tick.price.as_f64(),
+                            open = window.open_price.as_f64(),
+                            "tick sample"
+                        );
+                    }
+
+                    // Look up the condition_id for this asset + timeframe.
+                    let condition_id_opt = market_mgr
                         .active_markets()
                         .find(|m| m.asset == tick.asset && m.timeframe == timeframe)
-                        .and_then(|m| market_mgr.orderbook(&m.condition_id));
+                        .map(|m| m.condition_id.clone());
+
+                    // Read the orderbook snapshot — prefer the live PM WebSocket
+                    // tracker, fall back to the manager's snapshot (REST-populated).
+                    let ob_snap = condition_id_opt.as_deref().and_then(|cid| {
+                        // Try the shared PM WS tracker first.
+                        if let Ok(tracker) = shared_tracker.lock() {
+                            if let Some(snap) = tracker.get(cid) {
+                                if snap.ask_up.is_some() || snap.ask_down.is_some() {
+                                    return Some(*snap);
+                                }
+                            }
+                        }
+                        // Fall back to market manager snapshot.
+                        market_mgr.orderbook(cid).copied()
+                    });
 
                     // Build contract prices from orderbook or use defaults.
-                    let (ask_up, ask_down, bid_up, bid_down) = match ob {
+                    let (ask_up, ask_down, bid_up, bid_down) = match ob_snap {
                         Some(snap) if snap.ask_up.is_some() && snap.ask_down.is_some() => {
                             // Record the orderbook snapshot.
                             let a_up = snap.ask_up.map_or(0.55, |p| p.as_f64());
@@ -307,6 +389,13 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                             ) {
                                 warn!(error = %e, "failed to record orderbook");
                             }
+                            debug!(
+                                asset = %tick.asset,
+                                timeframe = ?timeframe,
+                                ask_up = a_up,
+                                ask_down = a_down,
+                                "using live PM WS orderbook prices"
+                            );
                             (
                                 ContractPrice::new(a_up),
                                 ContractPrice::new(a_down),
