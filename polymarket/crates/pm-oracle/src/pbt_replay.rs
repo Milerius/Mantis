@@ -106,13 +106,16 @@ fn build_observations(
         let Some(ts_ms) = parse_iso_to_ms(&snap.time) else {
             continue;
         };
-        let Some(spot_price) = Price::new(snap.btc_price) else {
+        let Some(btc_price) = snap.btc_price else { continue };
+        let Some(price_up) = snap.price_up else { continue };
+        let Some(price_down) = snap.price_down else { continue };
+        let Some(spot_price) = Price::new(btc_price) else {
             continue;
         };
-        let Some(ask_up) = ContractPrice::new(snap.price_up) else {
+        let Some(ask_up) = ContractPrice::new(price_up) else {
             continue;
         };
-        let Some(ask_down) = ContractPrice::new(snap.price_down) else {
+        let Some(ask_down) = ContractPrice::new(price_down) else {
             continue;
         };
 
@@ -347,25 +350,25 @@ mod tests {
                 id: None,
                 time: "2026-01-01T00:05:00Z".into(),
                 market_id: None,
-                btc_price: 95050.0,
-                price_up: 0.52,
-                price_down: 0.49,
+                btc_price: Some(95050.0),
+                price_up: Some(0.52),
+                price_down: Some(0.49),
             },
             PbtSnapshot {
                 id: None,
                 time: "2026-01-01T00:00:00Z".into(),
                 market_id: None,
-                btc_price: 95000.0,
-                price_up: 0.50,
-                price_down: 0.51,
+                btc_price: Some(95000.0),
+                price_up: Some(0.50),
+                price_down: Some(0.51),
             },
             PbtSnapshot {
                 id: None,
                 time: "2026-01-01T00:10:00Z".into(),
                 market_id: None,
-                btc_price: 95120.0,
-                price_up: 0.58,
-                price_down: 0.43,
+                btc_price: Some(95120.0),
+                price_up: Some(0.58),
+                price_down: Some(0.43),
             },
         ]
     }
@@ -449,9 +452,9 @@ mod tests {
             id: None,
             time: "2026-01-01T00:05:00Z".into(),
             market_id: None,
-            btc_price: 95950.0, // 1% above 95000
-            price_up: 0.60,
-            price_down: 0.41,
+            btc_price: Some(95950.0), // 1% above 95000
+            price_up: Some(0.60),
+            price_down: Some(0.41),
         }];
         let obs = build_observations(&market, &snaps, Asset::Btc, Timeframe::Min15);
         let price_obs = pbt_to_price_observations(&obs, Asset::Btc, Timeframe::Min15);

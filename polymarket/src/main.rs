@@ -3,6 +3,8 @@
 mod backtest;
 mod calibrate;
 mod download;
+mod pbt_backtest;
+mod pbt_download;
 mod sweep;
 
 use anyhow::{Context as _, Result};
@@ -39,6 +41,10 @@ enum Commands {
     Sweep,
     /// Run download + calibrate + backtest in one step.
     Run,
+    /// Download PolyBackTest historical snapshot data.
+    PbtDownload,
+    /// Run backtest using real PolyBackTest contract prices.
+    PbtBacktest,
 }
 
 // ─── Config loader ────────────────────────────────────────────────────────────
@@ -89,6 +95,14 @@ async fn main() -> Result<()> {
             let (train_dates, test_dates) = calibrate::split_dates(&cfg)?;
             let result = calibrate::run_calibrate(&cfg, &train_dates)?;
             backtest::run_backtest_cmd(&cfg, result, &test_dates)?;
+        }
+
+        Commands::PbtDownload => {
+            pbt_download::run_pbt_download(&cfg).await?;
+        }
+
+        Commands::PbtBacktest => {
+            pbt_backtest::run_pbt_backtest(&cfg)?;
         }
     }
 
