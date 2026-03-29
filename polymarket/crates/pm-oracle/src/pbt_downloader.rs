@@ -111,7 +111,7 @@ pub fn read_pbt_cache(path: &Path) -> io::Result<(PbtMarket, Vec<PbtSnapshot>)> 
 // ─── Download ───────────────────────────────────────────────────────────────
 
 /// Maximum number of concurrent snapshot download tasks.
-const MAX_CONCURRENT: usize = 5;
+const MAX_CONCURRENT: usize = 10;
 
 /// Number of retry attempts on HTTP 429.
 const MAX_RETRIES: u32 = 3;

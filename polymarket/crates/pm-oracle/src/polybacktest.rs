@@ -231,8 +231,8 @@ impl PbtClient {
         let page_size: u32 = 100;
 
         loop {
-            // Rate limit: 300 req/min, burst max 10/sec → 250ms between requests.
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            // No artificial delay — rely on 429 retry logic at the caller level.
+            // Rate limit: 300 req/min / 10 req/sec burst handled by retry-on-429.
 
             let page = self
                 .list_markets(coin, market_type, page_size, offset)
@@ -318,13 +318,13 @@ impl PbtClient {
         coin: &str,
     ) -> Result<Vec<PbtSnapshot>, DownloadError> {
         let mut all = Vec::new();
-        // Smaller page size when orderbook is included (larger payloads).
-        let page_size: u32 = 200;
+        // Max page size — 1000 snapshots per request.
+        let page_size: u32 = 1000;
         let mut cursor: Option<String> = None;
 
         loop {
-            // Rate limit: 300 req/min, burst max 10/sec → 250ms between requests.
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            // No artificial delay — rely on 429 retry logic at the caller level.
+            // Rate limit: 300 req/min / 10 req/sec burst handled by retry-on-429.
 
             let page = self
                 .get_snapshots(market_id, coin, page_size, cursor.as_deref())

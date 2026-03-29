@@ -156,12 +156,21 @@ pub fn run_pbt_backtest(cfg: &BotConfig) -> Result<()> {
 
     info!(ticks = ticks.len(), "feeding ticks to backtest engine");
 
-    // Build strategy engine (same as standard backtest).
+    // Build strategy engine with aggressive parameters tuned to real PBT data.
+    //
+    // From 24 BTC 15m markets analysis:
+    // - Early (0-3 min): 65.8% of prices are $0.40-0.60
+    // - Mid (5-10 min): 34% already at $0.80+ (too late for cheap entry)
+    // - Entry at $0.40-0.55 needs only >45-55% win rate to profit
     let engine = StrategyEngine::new(vec![
-        Box::new(EarlyDirectional::new(300, 0.005, 0.65)),
-        Box::new(MomentumConfirmation::new(600, 1_800, 0.01, 0.70)),
-        Box::new(CompleteSetArb::new(0.98, 0.02)),
-        Box::new(HedgeLock::new(0.25)),
+        // EarlyDirectional: enter in first 3 min, any spot movement >0.1%, max price $0.58
+        Box::new(EarlyDirectional::new(180, 0.001, 0.58)),
+        // MomentumConfirmation: enter min 3-8, sustained 0.3% move, max price $0.72
+        Box::new(MomentumConfirmation::new(180, 480, 0.003, 0.72)),
+        // CompleteSetArb: fire when YES+NO < $0.98
+        Box::new(CompleteSetArb::new(0.98, 0.01)),
+        // HedgeLock: lock profit when combined < $0.95
+        Box::new(HedgeLock::new(0.95)),
     ]);
 
     // Use the PBT-calibrated model as the price provider.
