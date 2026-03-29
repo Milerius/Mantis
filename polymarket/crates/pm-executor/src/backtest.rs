@@ -168,6 +168,7 @@ fn contract_price_clamped(value: f64) -> ContractPrice {
 )]
 fn resolve_positions(
     open_positions: &mut Vec<ActivePosition>,
+    position_counts: &mut [u8],
     trades: &mut Vec<TradeRecord>,
     balance: &mut f64,
     window_id: WindowId,
@@ -182,6 +183,10 @@ fn resolve_positions(
         }
 
         let ap = open_positions.swap_remove(i);
+        // FIX 4: decrement O(1) position count for the slot.
+        if position_counts[ap.slot] > 0 {
+            position_counts[ap.slot] -= 1;
+        }
         let pos = ap.pos;
         let entry = pos.avg_entry.as_f64();
 
@@ -314,6 +319,16 @@ fn per_strategy_breakdown(trades: &[TradeRecord]) -> Vec<(StrategyId, TradeSumma
     result
 }
 
+// ─── TimeframeSlot ────────────────────────────────────────────────────────────
+
+/// Pre-computed timeframe metadata to avoid repeated `duration_secs()` calls
+/// and `tf.index()` calls inside the hot loop (FIX 6).
+struct TimeframeSlot {
+    tf: Timeframe,
+    duration_ms: u64,
+    slot_offset: usize,
+}
+
 // ─── run_backtest ─────────────────────────────────────────────────────────────
 
 /// Run a backtest over `ticks` using `engine` and a [`ContractPriceProvider`].
@@ -359,6 +374,8 @@ pub fn run_backtest<P: ContractPriceProvider>(
     let mut last_prices: [Option<Price>; Asset::COUNT] = [None; Asset::COUNT];
 
     let mut open_positions: Vec<ActivePosition> = Vec::new();
+    // FIX 4: O(1) per-slot position counts — no linear scan.
+    let mut position_counts: [u8; SLOTS] = [0; SLOTS];
     let mut trades: Vec<TradeRecord> = Vec::new();
     let mut balance = config.initial_balance;
     // Monotonically increasing window id counter.
@@ -366,18 +383,35 @@ pub fn run_backtest<P: ContractPriceProvider>(
 
     let slippage = f64::from(config.slippage_bps) * 0.0001;
 
+    // FIX 5: Asset enable bitfield — O(1) lookup instead of slice::contains.
+    let mut asset_enabled = [false; Asset::COUNT];
+    for &a in enabled_assets {
+        asset_enabled[a.index()] = true;
+    }
+
+    // FIX 6: Pre-compute timeframe metadata once.
+    let tf_slots: Vec<TimeframeSlot> = enabled_timeframes
+        .iter()
+        .map(|&tf| TimeframeSlot {
+            tf,
+            duration_ms: tf.duration_secs() * 1_000,
+            slot_offset: tf.index(),
+        })
+        .collect();
+
     for tick in ticks {
-        // Only process enabled assets.
-        if !enabled_assets.contains(&tick.asset) {
+        // FIX 5: O(1) asset check.
+        if !asset_enabled[tick.asset.index()] {
             continue;
         }
 
         let asset_idx = tick.asset.index();
         last_prices[asset_idx] = Some(tick.price);
 
-        for &tf in enabled_timeframes {
-            let slot = asset_idx * Timeframe::COUNT + tf.index();
-            let duration_ms = tf.duration_secs() * 1_000;
+        for tfs in &tf_slots {
+            // FIX 6: duration_ms and slot_offset are pre-computed.
+            let slot = asset_idx * Timeframe::COUNT + tfs.slot_offset;
+            let duration_ms = tfs.duration_ms;
             let window_open_ms = tick.timestamp_ms - (tick.timestamp_ms % duration_ms);
             let window_close_ms = window_open_ms + duration_ms;
 
@@ -391,6 +425,7 @@ pub fn run_backtest<P: ContractPriceProvider>(
                     let outcome = old_window.direction(tick.price);
                     resolve_positions(
                         &mut open_positions,
+                        &mut position_counts,
                         &mut trades,
                         &mut balance,
                         old_window.id,
@@ -405,7 +440,7 @@ pub fn run_backtest<P: ContractPriceProvider>(
                 windows[slot] = Some(Window {
                     id: wid,
                     asset: tick.asset,
-                    timeframe: tf,
+                    timeframe: tfs.tf,
                     open_time_ms: window_open_ms,
                     close_time_ms: window_close_ms,
                     open_price: tick.price,
@@ -413,7 +448,7 @@ pub fn run_backtest<P: ContractPriceProvider>(
 
                 debug!(
                     asset = %tick.asset,
-                    timeframe = %tf,
+                    timeframe = %tfs.tf,
                     window_id = %wid,
                     "new window opened"
                 );
@@ -424,9 +459,8 @@ pub fn run_backtest<P: ContractPriceProvider>(
                 continue;
             };
 
-            // Count existing positions for this slot.
-            let positions_in_slot = open_positions.iter().filter(|ap| ap.slot == slot).count();
-            if positions_in_slot >= config.max_positions_per_window {
+            // FIX 4: O(1) position count lookup.
+            if usize::from(position_counts[slot]) >= config.max_positions_per_window {
                 continue;
             }
 
@@ -437,7 +471,7 @@ pub fn run_backtest<P: ContractPriceProvider>(
 
             // Obtain contract prices from the provider.
             let Some((ask_up, ask_down)) =
-                price_provider.get_prices(tick.asset, tf, magnitude, time_elapsed_secs)
+                price_provider.get_prices(tick.asset, tfs.tf, magnitude, time_elapsed_secs)
             else {
                 continue;
             };
@@ -448,7 +482,7 @@ pub fn run_backtest<P: ContractPriceProvider>(
             // Build a MarketState snapshot for the strategy engine.
             let state = MarketState {
                 asset: tick.asset,
-                timeframe: tf,
+                timeframe: tfs.tf,
                 window_id: window.id,
                 window_open_price: window.open_price,
                 current_spot: tick.price,
@@ -463,14 +497,13 @@ pub fn run_backtest<P: ContractPriceProvider>(
                 contract_bid_down: ContractPrice::new((ask_down.as_f64() - 0.02).clamp(0.0, 1.0)),
             };
 
-            // Evaluate all strategies.
+            // FIX 2: evaluate_all returns zero-alloc Decisions array.
             let decisions = engine.evaluate_all(&state);
 
-            for decision in decisions {
-                // Re-check slot capacity — earlier decisions in this loop may
-                // have already filled the quota.
-                let positions_in_slot = open_positions.iter().filter(|ap| ap.slot == slot).count();
-                if positions_in_slot >= config.max_positions_per_window {
+            for decision in &decisions {
+                // FIX 4: Re-check O(1) slot capacity — earlier decisions in
+                // this loop may have already filled the quota.
+                if usize::from(position_counts[slot]) >= config.max_positions_per_window {
                     break;
                 }
 
@@ -499,7 +532,7 @@ pub fn run_backtest<P: ContractPriceProvider>(
 
                 debug!(
                     asset = %tick.asset,
-                    timeframe = %tf,
+                    timeframe = %tfs.tf,
                     side = %decision.side,
                     strategy = %decision.strategy_id,
                     entry = entry_clamped,
@@ -512,6 +545,8 @@ pub fn run_backtest<P: ContractPriceProvider>(
                     slot,
                     strategy_id: decision.strategy_id,
                 });
+                // FIX 4: increment O(1) slot counter.
+                position_counts[slot] += 1;
             }
         }
     }

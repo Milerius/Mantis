@@ -1,30 +1,172 @@
 //! Multi-strategy engine: runs all registered strategies and picks the best.
 //!
-//! Requires heap allocation — available when the `std` feature is enabled.
+//! Zero-heap-allocation hot path — `evaluate_all` returns a fixed-size
+//! [`Decisions`] array rather than a `Vec`.  Enum dispatch (`AnyStrategy`)
+//! eliminates vtable indirection on every tick.
+//!
+//! The `Strategy` trait is retained for extensibility, but `StrategyEngine`
+//! uses concrete enum dispatch internally.
 
 extern crate alloc;
 
 use alloc::{boxed::Box, vec::Vec};
 use pm_types::{EntryDecision, MarketState};
 
-use crate::strategy_trait::Strategy;
+use crate::{
+    CompleteSetArb, EarlyDirectional, HedgeLock, MomentumConfirmation,
+    strategy_trait::Strategy,
+};
+
+// ─── DecisionsIter type alias ─────────────────────────────────────────────────
+
+/// Iterator type returned by [`Decisions::iter`].
+pub type DecisionsIter<'a> = core::iter::FilterMap<
+    core::slice::Iter<'a, Option<EntryDecision>>,
+    fn(&'a Option<EntryDecision>) -> Option<&'a EntryDecision>,
+>;
+
+// ─── MAX_STRATEGIES ──────────────────────────────────────────────────────────
+
+/// Maximum number of strategies that can fire simultaneously.
+///
+/// Sized for the four concrete strategies in the current engine.  Raise this
+/// constant if more strategies are added.
+pub const MAX_STRATEGIES: usize = 4;
+
+// ─── Decisions ───────────────────────────────────────────────────────────────
+
+/// Fixed-capacity array of [`EntryDecision`]s.
+///
+/// Returned by [`StrategyEngine::evaluate_all`] — zero heap allocation on the
+/// hot path.
+#[derive(Debug, Clone, Copy)]
+pub struct Decisions {
+    items: [Option<EntryDecision>; MAX_STRATEGIES],
+    count: usize,
+}
+
+impl Decisions {
+    /// Construct an empty [`Decisions`].
+    #[inline]
+    #[must_use]
+    fn new() -> Self {
+        Self {
+            items: [None; MAX_STRATEGIES],
+            count: 0,
+        }
+    }
+
+    /// Push a decision.  Silently drops it when the array is full (should
+    /// never happen with `MAX_STRATEGIES == 4` and four concrete strategies).
+    #[inline]
+    fn push(&mut self, d: EntryDecision) {
+        if self.count < MAX_STRATEGIES {
+            self.items[self.count] = Some(d);
+            self.count += 1;
+        }
+    }
+
+    /// Iterate over the decisions that fired.
+    #[inline]
+    pub fn iter(&self) -> DecisionsIter<'_> {
+        self.items[..self.count]
+            .iter()
+            .filter_map(Option::as_ref)
+    }
+
+    /// Number of decisions that fired.
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    /// `true` when no strategy fired.
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+}
+
+impl<'a> IntoIterator for &'a Decisions {
+    type Item = &'a EntryDecision;
+    type IntoIter = DecisionsIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+// ─── AnyStrategy ─────────────────────────────────────────────────────────────
+
+/// Concrete enum that wraps every supported strategy type.
+///
+/// Avoids heap allocation and vtable indirection.  The `Strategy` trait is
+/// still available via `Box<dyn Strategy>` for extension points outside the
+/// hot path — `AnyStrategy::Boxed` captures that case.
+pub enum AnyStrategy {
+    /// [`CompleteSetArb`] variant.
+    Arb(CompleteSetArb),
+    /// [`EarlyDirectional`] variant.
+    Early(EarlyDirectional),
+    /// [`MomentumConfirmation`] variant.
+    Momentum(MomentumConfirmation),
+    /// [`HedgeLock`] variant.
+    Hedge(HedgeLock),
+    /// Escape hatch: any boxed [`Strategy`] trait object.
+    Boxed(Box<dyn Strategy>),
+}
+
+impl AnyStrategy {
+    /// Evaluate the strategy — no virtual dispatch for the four concrete arms.
+    #[inline]
+    fn evaluate(&self, state: &MarketState) -> Option<EntryDecision> {
+        match self {
+            Self::Arb(s) => s.evaluate(state),
+            Self::Early(s) => s.evaluate(state),
+            Self::Momentum(s) => s.evaluate(state),
+            Self::Hedge(s) => s.evaluate(state),
+            Self::Boxed(s) => s.evaluate(state),
+        }
+    }
+}
 
 // ─── StrategyEngine ──────────────────────────────────────────────────────────
 
 /// Runs multiple strategies against a [`MarketState`] and selects the best.
 ///
-/// Strategies are evaluated in registration order.  [`StrategyEngine::evaluate`]
-/// returns the highest-confidence decision; [`StrategyEngine::evaluate_all`]
-/// returns every decision that fired (useful for per-strategy logging).
+/// Accepts either a `Vec<AnyStrategy>` (zero-alloc evaluate path) **or** the
+/// legacy `Vec<Box<dyn Strategy>>` via [`StrategyEngine::new`] for backwards
+/// compatibility with existing tests and callers.
+///
+/// On the hot path (`evaluate_all`) strategies are dispatched through the
+/// `AnyStrategy` enum — no vtable, no heap allocation.
 pub struct StrategyEngine {
-    strategies: Vec<Box<dyn Strategy>>,
+    strategies: Vec<AnyStrategy>,
 }
 
 impl StrategyEngine {
-    /// Construct a new engine from a list of boxed strategies.
+    /// Construct a new engine from a list of boxed trait objects.
+    ///
+    /// Each `Box<dyn Strategy>` is stored as [`AnyStrategy::Boxed`].  This
+    /// path is kept for API compatibility; prefer [`StrategyEngine::from_any`]
+    /// in performance-sensitive callsites.
     #[inline]
     #[must_use]
     pub fn new(strategies: Vec<Box<dyn Strategy>>) -> Self {
+        Self {
+            strategies: strategies.into_iter().map(AnyStrategy::Boxed).collect(),
+        }
+    }
+
+    /// Construct a new engine from a list of concrete [`AnyStrategy`] values.
+    ///
+    /// This is the zero-vtable path: dispatch goes through the `match` in
+    /// [`AnyStrategy::evaluate`] rather than through a fat pointer.
+    #[inline]
+    #[must_use]
+    pub fn from_any(strategies: Vec<AnyStrategy>) -> Self {
         Self { strategies }
     }
 
@@ -47,14 +189,17 @@ impl StrategyEngine {
 
     /// Evaluate all strategies and return every decision that fired.
     ///
-    /// The returned vec is in the same order as the registered strategies.
-    /// Returns an empty vec if no strategy fires.
+    /// Returns a zero-allocation [`Decisions`] array.  Order matches the
+    /// registration order of the strategies.
     #[must_use]
-    pub fn evaluate_all(&self, state: &MarketState) -> Vec<EntryDecision> {
-        self.strategies
-            .iter()
-            .filter_map(|s| s.evaluate(state))
-            .collect()
+    pub fn evaluate_all(&self, state: &MarketState) -> Decisions {
+        let mut out = Decisions::new();
+        for s in &self.strategies {
+            if let Some(d) = s.evaluate(state) {
+                out.push(d);
+            }
+        }
+        out
     }
 }
 
@@ -192,7 +337,37 @@ mod tests {
         let engine = StrategyEngine::new(strategies);
         let all = engine.evaluate_all(&make_state());
         assert_eq!(all.len(), 2, "only 2 strategies fire");
-        assert_eq!(all[0].strategy_id, StrategyId::EarlyDirectional);
-        assert_eq!(all[1].strategy_id, StrategyId::CompleteSetArb);
+        let decisions: Vec<_> = all.iter().collect();
+        assert_eq!(decisions[0].strategy_id, StrategyId::EarlyDirectional);
+        assert_eq!(decisions[1].strategy_id, StrategyId::CompleteSetArb);
+    }
+
+    // ── AnyStrategy / from_any path ──────────────────────────────────────────
+
+    #[test]
+    fn from_any_enum_dispatch_fires_correctly() {
+        let engine = StrategyEngine::from_any(vec![
+            AnyStrategy::Early(EarlyDirectional::new(300, 0.005, 0.65)),
+            AnyStrategy::Momentum(MomentumConfirmation::new(300, 900, 0.005, 0.65)),
+            AnyStrategy::Arb(CompleteSetArb::new(0.98, 0.015)),
+            AnyStrategy::Hedge(HedgeLock::new(0.98)),
+        ]);
+        // State: magnitude 0.02, elapsed 600 (within momentum window 300–900),
+        // ask_up = 0.55 (≤ 0.65), combined = 0.55 + 0.48 = 1.03 (arb won't fire).
+        let all = engine.evaluate_all(&make_state());
+        // EarlyDirectional fires (elapsed=600 > max=300 → no; actually 600 > 300 so Early won't fire)
+        // MomentumConfirmation fires (300 ≤ 600 ≤ 900, mag 0.02 ≥ 0.005, ask 0.55 ≤ 0.65)
+        assert!(
+            !all.is_empty(),
+            "at least MomentumConfirmation should fire"
+        );
+    }
+
+    #[test]
+    fn decisions_is_empty_when_none_fire() {
+        let engine = StrategyEngine::new(vec![]);
+        let all = engine.evaluate_all(&make_state());
+        assert!(all.is_empty());
+        assert_eq!(all.len(), 0);
     }
 }

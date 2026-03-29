@@ -44,6 +44,7 @@ thiserror = "2"
 criterion = { version = "0.5", features = ["html_reports"] }
 flate2 = "1"
 anyhow = "1"
+rayon = "1"
 
 [package]
 name = "polymarket-bot"

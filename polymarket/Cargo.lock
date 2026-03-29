@@ -1162,6 +1162,7 @@ dependencies = [
  "pm-oracle",
  "pm-signal",
  "pm-types",
+ "rayon",
  "thiserror",
  "tracing",
 ]

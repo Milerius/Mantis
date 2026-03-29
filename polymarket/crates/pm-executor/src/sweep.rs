@@ -4,6 +4,9 @@
 //! of [`EarlyDirectional`] and [`MomentumConfirmation`] parameters.  [`CompleteSetArb`]
 //! and [`HedgeLock`] are held at fixed defaults for every run.
 //!
+//! FIX 1: All parameter combinations are run in parallel via `rayon`.
+//! FIX 3: Uses [`AnyStrategy`] enum dispatch — no `Box<dyn Strategy>` on the hot path.
+//!
 //! Results are sorted by total P&L descending so that callers can immediately
 //! inspect the best-performing configurations.
 
@@ -11,8 +14,10 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+use rayon::prelude::*;
+
 use pm_signal::{
-    CompleteSetArb, EarlyDirectional, HedgeLock, MomentumConfirmation, StrategyEngine,
+    AnyStrategy, CompleteSetArb, EarlyDirectional, HedgeLock, MomentumConfirmation, StrategyEngine,
 };
 use pm_types::{Asset, Tick, Timeframe};
 
@@ -84,6 +89,20 @@ const ARB_MIN_PROFIT: f64 = 0.02;
 /// Fixed `max_combined_cost` used for [`HedgeLock`] in every sweep run.
 const HEDGE_MAX_COMBINED: f64 = 0.25;
 
+// ─── Combo ────────────────────────────────────────────────────────────────────
+
+/// One fully-specified parameter combination produced by the Cartesian product.
+#[derive(Debug, Clone, Copy)]
+struct Combo {
+    early_max_time: u64,
+    early_min_mag: f64,
+    early_max_price: f64,
+    mom_min_time: u64,
+    mom_max_time: u64,
+    mom_min_mag: f64,
+    mom_max_price: f64,
+}
+
 // ─── run_sweep ────────────────────────────────────────────────────────────────
 
 /// Run the backtest across all parameter combinations defined by `sweep_config`.
@@ -91,6 +110,9 @@ const HEDGE_MAX_COMBINED: f64 = 0.25;
 /// `ticks` is a pre-loaded, time-sorted slice of [`Tick`]s.  For each
 /// combination the function calls [`run_backtest`] with a freshly constructed
 /// [`StrategyEngine`] by passing `ticks.iter().copied()`.
+///
+/// **FIX 1**: All combinations are evaluated in parallel using `rayon`.
+/// **FIX 3**: Strategies use [`AnyStrategy`] enum dispatch — no vtable overhead.
 ///
 /// The returned [`Vec<SweepResult>`] is sorted by `total_pnl` **descending**
 /// (best configuration first).
@@ -104,7 +126,7 @@ const HEDGE_MAX_COMBINED: f64 = 0.25;
     reason = "all args are orthogonal axes required by the underlying backtest; bundling into an ad-hoc struct would add no clarity"
 )]
 #[must_use]
-pub fn run_sweep<P: ContractPriceProvider>(
+pub fn run_sweep<P: ContractPriceProvider + Sync>(
     ticks: &[Tick],
     price_provider: &P,
     base_config: &BacktestConfig,
@@ -112,7 +134,8 @@ pub fn run_sweep<P: ContractPriceProvider>(
     enabled_assets: &[Asset],
     enabled_timeframes: &[Timeframe],
 ) -> Vec<SweepResult> {
-    let mut results: Vec<SweepResult> = Vec::new();
+    // ── Build Cartesian product of all parameter combinations ──────────────
+    let mut combos: Vec<Combo> = Vec::new();
 
     for &early_max_time in &sweep_config.early_max_times {
         for &early_min_mag in &sweep_config.early_min_magnitudes {
@@ -123,50 +146,16 @@ pub fn run_sweep<P: ContractPriceProvider>(
                         if mom_min_time >= mom_max_time {
                             continue;
                         }
-
                         for &mom_min_mag in &sweep_config.momentum_min_mags {
                             for &mom_max_price in &sweep_config.momentum_max_prices {
-                                let engine = StrategyEngine::new(alloc::vec![
-                                    alloc::boxed::Box::new(EarlyDirectional::new(
-                                        early_max_time,
-                                        early_min_mag,
-                                        early_max_price,
-                                    )),
-                                    alloc::boxed::Box::new(MomentumConfirmation::new(
-                                        mom_min_time,
-                                        mom_max_time,
-                                        mom_min_mag,
-                                        mom_max_price,
-                                    )),
-                                    alloc::boxed::Box::new(CompleteSetArb::new(
-                                        ARB_MAX_COMBINED,
-                                        ARB_MIN_PROFIT,
-                                    )),
-                                    alloc::boxed::Box::new(HedgeLock::new(HEDGE_MAX_COMBINED)),
-                                ]);
-
-                                let bt = run_backtest(
-                                    ticks.iter().copied(),
-                                    &engine,
-                                    price_provider,
-                                    base_config,
-                                    enabled_assets,
-                                    enabled_timeframes,
-                                );
-
-                                results.push(SweepResult {
+                                combos.push(Combo {
                                     early_max_time,
                                     early_min_mag,
                                     early_max_price,
-                                    momentum_min_time: mom_min_time,
-                                    momentum_max_time: mom_max_time,
-                                    momentum_min_mag: mom_min_mag,
-                                    momentum_max_price: mom_max_price,
-                                    total_pnl: bt.summary.total_pnl,
-                                    win_rate: bt.summary.win_rate,
-                                    total_trades: bt.summary.total_trades,
-                                    sharpe: bt.summary.sharpe_ratio,
-                                    profit_factor: bt.summary.profit_factor,
+                                    mom_min_time,
+                                    mom_max_time,
+                                    mom_min_mag,
+                                    mom_max_price,
                                 });
                             }
                         }
@@ -175,6 +164,53 @@ pub fn run_sweep<P: ContractPriceProvider>(
             }
         }
     }
+
+    // ── FIX 1: Evaluate all combos in parallel with rayon ─────────────────
+    let mut results: Vec<SweepResult> = combos
+        .into_par_iter()
+        .map(|combo| {
+            // FIX 3: AnyStrategy enum dispatch — zero vtable cost.
+            let engine = StrategyEngine::from_any(alloc::vec![
+                AnyStrategy::Early(EarlyDirectional::new(
+                    combo.early_max_time,
+                    combo.early_min_mag,
+                    combo.early_max_price,
+                )),
+                AnyStrategy::Momentum(MomentumConfirmation::new(
+                    combo.mom_min_time,
+                    combo.mom_max_time,
+                    combo.mom_min_mag,
+                    combo.mom_max_price,
+                )),
+                AnyStrategy::Arb(CompleteSetArb::new(ARB_MAX_COMBINED, ARB_MIN_PROFIT)),
+                AnyStrategy::Hedge(HedgeLock::new(HEDGE_MAX_COMBINED)),
+            ]);
+
+            let bt = run_backtest(
+                ticks.iter().copied(),
+                &engine,
+                price_provider,
+                base_config,
+                enabled_assets,
+                enabled_timeframes,
+            );
+
+            SweepResult {
+                early_max_time: combo.early_max_time,
+                early_min_mag: combo.early_min_mag,
+                early_max_price: combo.early_max_price,
+                momentum_min_time: combo.mom_min_time,
+                momentum_max_time: combo.mom_max_time,
+                momentum_min_mag: combo.mom_min_mag,
+                momentum_max_price: combo.mom_max_price,
+                total_pnl: bt.summary.total_pnl,
+                win_rate: bt.summary.win_rate,
+                total_trades: bt.summary.total_trades,
+                sharpe: bt.summary.sharpe_ratio,
+                profit_factor: bt.summary.profit_factor,
+            }
+        })
+        .collect();
 
     // Sort best-to-worst by total P&L.
     results.sort_by(|a, b| {

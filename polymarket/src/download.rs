@@ -1,6 +1,9 @@
 //! Download subcommand: fetch historical candles from Binance and Polymarket trade data.
+//!
+//! Both Binance and Polymarket downloads are parallelized with bounded concurrency
+//! to maximize throughput while respecting API rate limits.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -12,21 +15,12 @@ use reqwest::Client;
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
-/// Download one full day of 1-second klines for every enabled asset from Binance,
-/// then download 15m Polymarket trade data for the same date range.
-///
-/// Iterates the date range defined in `cfg.backtest` and downloads each
-/// `(asset, date)` pair.  Already-cached files are skipped automatically by
-/// the individual download functions.
-///
-/// Polymarket downloads are limited to the `Min15` timeframe initially — the
-/// 15m slug pattern is the most reliably available in the data API.  A 200 ms
-/// sleep between days provides extra headroom beyond the 60 ms per-request
-/// rate-limit sleep already built into [`download_polymarket_day`].
+/// Download historical data from Binance and Polymarket concurrently.
 ///
 /// # Errors
 ///
-/// Returns an error if the date range is invalid or any download fails.
+/// Returns an error if the date range is invalid. Individual download
+/// failures are logged as warnings and skipped.
 pub async fn run_download(cfg: &BotConfig) -> Result<()> {
     let cache_dir = Path::new(&cfg.data.cache_dir);
     let enabled_assets: Vec<Asset> = cfg
@@ -47,56 +41,131 @@ pub async fn run_download(cfg: &BotConfig) -> Result<()> {
 
     info!(
         assets = ?enabled_assets,
-        start = %cfg.backtest.start_date,
-        end   = %cfg.backtest.end_date,
-        days  = dates.len(),
+        start  = %cfg.backtest.start_date,
+        end    = %cfg.backtest.end_date,
+        days   = dates.len(),
         "starting download"
     );
 
-    let client = Client::new();
+    let client = Arc::new(Client::new());
 
-    // ── Binance 1-second candles ──────────────────────────────────────────────
+    // Run Binance and Polymarket downloads concurrently.
+    let binance_fut = download_binance_concurrent(
+        Arc::clone(&client),
+        &enabled_assets,
+        &dates,
+        cache_dir.to_path_buf(),
+    );
+    let pm_fut = download_polymarket_concurrent(
+        Arc::clone(&client),
+        &enabled_assets,
+        &dates,
+        cache_dir.join("polymarket"),
+    );
 
-    for asset in &enabled_assets {
-        for date in &dates {
-            let count = download_binance_day(&client, *asset, date, cache_dir)
-                .await
-                .with_context(|| format!("binance download failed for {asset} on {date}"))?;
-            info!(asset = %asset, date = %date, candles = count, "binance cached");
+    let (binance_res, pm_res) = tokio::join!(binance_fut, pm_fut);
+    binance_res?;
+    pm_res?;
+
+    info!("all downloads complete");
+    Ok(())
+}
+
+/// Download Binance 1-second candles with bounded concurrency.
+///
+/// Binance rate limit: 1200 req/min. Each day needs ~87 requests.
+/// At 5 concurrent days: ~435 req/batch, well within limits.
+async fn download_binance_concurrent(
+    client: Arc<Client>,
+    assets: &[Asset],
+    dates: &[String],
+    cache_dir: PathBuf,
+) -> Result<()> {
+    // Collect all (asset, date) pairs.
+    let mut jobs: Vec<(Asset, String)> = Vec::new();
+    for &asset in assets {
+        for date in dates {
+            jobs.push((asset, date.clone()));
         }
     }
 
-    info!("binance download complete");
+    let total = jobs.len();
+    let done = Arc::new(AtomicUsize::new(0));
+    let failed = Arc::new(AtomicUsize::new(0));
 
-    // ── Polymarket 15m trade windows (concurrent) ──────────────────────────────
+    // 5 concurrent downloads — each day is ~87 sequential API calls internally,
+    // so 5 concurrent = ~435 req burst, settling to ~5 req/s sustained.
+    // Binance allows 1200 req/min = 20 req/s, so we're well under.
+    let semaphore = Arc::new(Semaphore::new(5));
 
-    let pm_cache_dir = cache_dir.join("polymarket");
+    let mut handles = Vec::with_capacity(jobs.len());
+    for (asset, date) in jobs {
+        let sem = Arc::clone(&semaphore);
+        let cl = Arc::clone(&client);
+        let dir = cache_dir.clone();
+        let dn = Arc::clone(&done);
+        let fl = Arc::clone(&failed);
 
-    // Collect all slugs across all assets and dates.
+        handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire().await;
+            match download_binance_day(&cl, asset, &date, &dir).await {
+                Ok(count) => {
+                    let n = dn.fetch_add(1, Ordering::Relaxed) + 1;
+                    if n.is_multiple_of(10) || count > 0 {
+                        info!(
+                            asset = %asset, date = %date, candles = count,
+                            progress = n, total, "binance"
+                        );
+                    }
+                }
+                Err(e) => {
+                    fl.fetch_add(1, Ordering::Relaxed);
+                    warn!(asset = %asset, date = %date, error = %e, "binance download failed");
+                }
+            }
+        }));
+    }
+
+    for h in handles {
+        let _ = h.await;
+    }
+
+    info!(
+        done = done.load(Ordering::Relaxed),
+        failed = failed.load(Ordering::Relaxed),
+        "binance download complete"
+    );
+    Ok(())
+}
+
+/// Download Polymarket 15m trade windows with bounded concurrency.
+async fn download_polymarket_concurrent(
+    client: Arc<Client>,
+    assets: &[Asset],
+    dates: &[String],
+    pm_cache_dir: PathBuf,
+) -> Result<()> {
+    // Collect all slugs.
     let mut all_slugs: Vec<(String, Asset)> = Vec::new();
-    for &asset in &enabled_assets {
-        let slugs = market_slugs(asset, Timeframe::Min15, &dates)
+    for &asset in assets {
+        let slugs = market_slugs(asset, Timeframe::Min15, dates)
             .context("invalid polymarket slug generation")?;
         for (slug, _epoch) in slugs {
             all_slugs.push((slug, asset));
         }
     }
 
-    info!(
-        total_windows = all_slugs.len(),
-        assets = ?enabled_assets,
-        "starting polymarket download (concurrent)"
-    );
-
-    // 3 concurrent requests — conservative to avoid Cloudflare 429s.
-    // Each request has a 60ms built-in delay, so 3 concurrent ≈ 50 req/10s.
-    let semaphore = Arc::new(Semaphore::new(3));
-    let client = Arc::new(client);
-    let pm_cache_dir = Arc::new(pm_cache_dir);
+    let total = all_slugs.len();
     let downloaded = Arc::new(AtomicUsize::new(0));
     let skipped = Arc::new(AtomicUsize::new(0));
     let failed = Arc::new(AtomicUsize::new(0));
-    let total = all_slugs.len();
+
+    info!(total_windows = total, "starting polymarket download");
+
+    // 5 concurrent — Polymarket allows 200 req/10s.
+    // Each request has 60ms built-in delay, so 5 concurrent ≈ 83 req/10s.
+    let semaphore = Arc::new(Semaphore::new(5));
+    let pm_cache_dir = Arc::new(pm_cache_dir);
 
     let mut handles = Vec::with_capacity(all_slugs.len());
     for (slug, asset) in all_slugs {
@@ -116,14 +185,22 @@ pub async fn run_download(cfg: &BotConfig) -> Result<()> {
                     } else {
                         dl.fetch_add(1, Ordering::Relaxed);
                     }
-                    let done = dl.load(Ordering::Relaxed) + sk.load(Ordering::Relaxed) + fl.load(Ordering::Relaxed);
-                    if done % 100 == 0 {
-                        info!(progress = done, total, asset = %asset, "polymarket download progress");
+                    let done = dl.load(Ordering::Relaxed)
+                        + sk.load(Ordering::Relaxed)
+                        + fl.load(Ordering::Relaxed);
+                    if done.is_multiple_of(500) {
+                        info!(
+                            progress = done, total, asset = %asset,
+                            "polymarket progress"
+                        );
                     }
                 }
                 Err(e) => {
                     fl.fetch_add(1, Ordering::Relaxed);
-                    warn!(slug = %slug, error = %e, "polymarket window download failed");
+                    // Only warn on non-404 errors (404 = window doesn't exist)
+                    if !e.to_string().contains("404") {
+                        warn!(slug = %slug, error = %e, "polymarket download failed");
+                    }
                 }
             }
         }));
@@ -139,6 +216,5 @@ pub async fn run_download(cfg: &BotConfig) -> Result<()> {
         failed = failed.load(Ordering::Relaxed),
         "polymarket download complete"
     );
-
     Ok(())
 }

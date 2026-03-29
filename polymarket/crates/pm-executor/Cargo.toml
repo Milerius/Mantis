@@ -12,6 +12,7 @@ pm-bookkeeper = { workspace = true }
 pm-oracle = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
+rayon = { workspace = true }
 
 [lints]
 workspace = true

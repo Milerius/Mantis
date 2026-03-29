@@ -249,6 +249,9 @@ fn build_contract_model(
 /// that can replace the fixed price provider in the sweep and backtest commands.
 pub struct CalibrationResult {
     /// Empirical P(Up) lookup table (legacy signal engine).
+    ///
+    /// Retained for future use; not yet consumed by any command.
+    #[expect(dead_code, reason = "legacy field retained for future signal engine use")]
     pub table: LookupTable,
     /// Empirical contract price model (paired spot + Polymarket data).
     pub contract_model: ContractPriceModel,

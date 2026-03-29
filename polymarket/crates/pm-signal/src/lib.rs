@@ -27,5 +27,5 @@ pub use hedge::HedgeLock;
 pub use logistic::{Coefficients, LogisticModel};
 pub use lookup::{LookupCell, LookupTable, MAG_BUCKETS, TIME_BUCKETS};
 pub use momentum::MomentumConfirmation;
-pub use multi::StrategyEngine;
+pub use multi::{AnyStrategy, Decisions, MAX_STRATEGIES, StrategyEngine};
 pub use strategy_trait::Strategy;
