@@ -7,7 +7,8 @@
 //! - [`MarketManager`] — discovers active Polymarket windows via Gamma API
 //! - [`StrategyEngine`] — evaluates all strategies against live market state
 //! - [`PaperExecutor`] — simulates fills with slippage
-//! - [`LiveRecorder`] — records ticks and orderbook snapshots to compressed JSONL
+//! - [`RiskManager`] — enforces exposure/kill-switch rules before opening positions
+//! - [`SnapshotRecorder`] — records combined spot + orderbook snapshots to plain JSONL
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -15,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use pm_bookkeeper::LiveRecorder;
+use pm_bookkeeper::SnapshotRecorder;
 use pm_executor::{PaperConfig, PaperExecutor};
 use pm_market::{MarketManager, OrderbookTracker, PolymarketWs};
 use pm_market::scanner::scan_active_markets;
@@ -23,7 +24,8 @@ use pm_oracle::{BinanceWs, OkxWs, OracleRouter, PriceBuffer};
 use pm_risk::{RiskConfig, RiskManager};
 use pm_signal::{AnyStrategy, CompleteSetArb, EarlyDirectional, HedgeLock, MomentumConfirmation, StrategyEngine};
 use pm_types::{
-    Asset, ContractPrice, MarketState, Side, Timeframe, Tick, Window, WindowId, config::BotConfig,
+    Asset, ContractPrice, MarketState, OpenPosition, Pnl, Side, Timeframe, Tick, Window, WindowId,
+    config::BotConfig,
 };
 use reqwest::Client;
 use tokio::sync::broadcast;
@@ -83,8 +85,6 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     );
 
     // ── 2. Channels and cancellation token ────────────────────────────────────
-    // Create the broadcast channel. Subscribe immediately to avoid losing
-    // ticks between WS task start and main loop start.
     let (tick_tx, mut tick_rx) = broadcast::channel::<Tick>(4096);
     let shutdown = CancellationToken::new();
 
@@ -123,7 +123,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
         max_daily_loss_usdc: cfg.bot.max_daily_loss_usdc,
         kelly_fraction: cfg.bot.kelly_fraction,
     };
-    let _risk = RiskManager::new(risk_config);
+    let mut risk = RiskManager::new(risk_config);
 
     let engine = StrategyEngine::from_any(vec![
         AnyStrategy::Early(EarlyDirectional::new(300, 0.005, 0.65)),
@@ -135,25 +135,20 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     let mut oracle_router = OracleRouter::new();
     let mut price_buffer = PriceBuffer::new();
 
-    // Per-(asset, timeframe) window table. Indexed by asset.index() * timeframes.len() + tf_idx.
+    // Per-(asset, timeframe) window table.
     let num_slots = enabled_assets.len() * enabled_timeframes.len();
     let mut live_windows: Vec<Option<LiveWindow>> = (0..num_slots).map(|_| None).collect();
 
     // ── Shared orderbook tracker for PM WebSocket ─────────────────────────────
-    // Shared between the PM WS task (writer) and the main tick loop (reader).
     let shared_tracker: Arc<Mutex<OrderbookTracker>> =
         Arc::new(Mutex::new(OrderbookTracker::new()));
 
-    // Market manager for live Polymarket window discovery.
     let mut market_mgr = MarketManager::new(Duration::from_secs(60));
     let http_client = Client::new();
     let mut next_scan_at = tokio::time::Instant::now();
 
-    // Track which token IDs we have already subscribed so we only push deltas.
     let mut subscribed_tokens: HashSet<String> = HashSet::new();
 
-    // Spawn PM WebSocket task with empty initial subscription.
-    // The first scanner result will push the real token IDs.
     let (pm_ws, pm_new_tokens_tx) = PolymarketWs::new(Vec::new());
     let pm_tracker = Arc::clone(&shared_tracker);
     let pm_shutdown = shutdown.clone();
@@ -161,15 +156,17 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
         pm_ws.run(pm_tracker, pm_shutdown).await;
     });
 
-    // Live recorder.
+    // ── Snapshot recorder (plain JSONL, flush every 10 writes) ────────────────
     let data_dir = Path::new(&cfg.data.cache_dir);
     let session_id = chrono::Utc::now().format("%Y%m%dT%H%M%S").to_string();
-    let mut recorder = LiveRecorder::new(data_dir, &session_id)
-        .context("failed to create live recorder")?;
+    let mut recorder = SnapshotRecorder::new(data_dir, &session_id)
+        .context("failed to create snapshot recorder")?;
 
-    info!(session_id = %session_id, "live recorder started");
-
-    // tick_rx was created with the channel above — no need to re-subscribe.
+    info!(
+        session_id = %session_id,
+        path = %data_dir.join("live").join(format!("{session_id}_snapshots.jsonl")).display(),
+        "snapshot recorder started"
+    );
 
     // ── 5. Graceful shutdown signal ───────────────────────────────────────────
     let ctrlc_shutdown = shutdown.clone();
@@ -191,14 +188,11 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                 break;
             }
 
-            // Poll Gamma API periodically to refresh active markets.
             _ = tokio::time::sleep_until(next_scan_at) => {
                 match scan_active_markets(&http_client, &enabled_assets).await {
                     Ok(markets) => {
                         info!(count = markets.len(), "market scan completed");
 
-                        // Collect newly discovered token IDs before handing
-                        // markets to the manager (which consumes the Vec).
                         let mut new_token_ids: Vec<String> = Vec::new();
                         for m in &markets {
                             if subscribed_tokens.insert(m.token_id_up.clone()) {
@@ -209,7 +203,6 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                             }
                         }
 
-                        // Register all (new) markets in the shared PM tracker.
                         if let Ok(mut tracker) = shared_tracker.lock() {
                             for m in &markets {
                                 tracker.register_market(
@@ -222,7 +215,6 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
                         market_mgr.update_markets(markets);
 
-                        // Push new token IDs to the PM WS task.
                         if !new_token_ids.is_empty() {
                             info!(
                                 count = new_token_ids.len(),
@@ -240,7 +232,6 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                 next_scan_at = tokio::time::Instant::now() + market_mgr.scanner_interval;
             }
 
-            // Process incoming ticks from WebSocket feeds.
             tick_result = tick_rx.recv() => {
                 let tick = match tick_result {
                     Ok(t) => t,
@@ -254,7 +245,6 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     }
                 };
 
-                // Log first tick per asset to confirm channel is working.
                 static FIRST_TICK_LOGGED: std::sync::atomic::AtomicBool =
                     std::sync::atomic::AtomicBool::new(false);
                 if !FIRST_TICK_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -266,25 +256,16 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     );
                 }
 
-                // Deduplicate across exchanges.
                 let Some(tick) = oracle_router.process(tick) else {
                     continue;
                 };
 
-                // Only process enabled assets.
                 let Some(asset_slot) = enabled_assets.iter().position(|a| *a == tick.asset) else {
                     continue;
                 };
 
-                // Record the tick to disk.
-                if let Err(e) = recorder.record_tick(&tick) {
-                    warn!(error = %e, "failed to record tick");
-                }
-
-                // Update price buffer.
                 price_buffer.push(tick.asset, tick.timestamp_ms, tick.price);
 
-                // Periodic tick stats (every 100 ticks).
                 static TICK_COUNT: std::sync::atomic::AtomicU64 =
                     std::sync::atomic::AtomicU64::new(0);
                 let n = TICK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -297,33 +278,36 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     );
                 }
 
-                // Evaluate each enabled timeframe for this asset.
                 for (tf_idx, &timeframe) in enabled_timeframes.iter().enumerate() {
                     let slot = asset_slot * enabled_timeframes.len() + tf_idx;
                     let duration_ms = timeframe.duration_secs() * 1_000;
                     let window_open_ms = tick.timestamp_ms - (tick.timestamp_ms % duration_ms);
                     let window_close_ms = window_open_ms + duration_ms;
 
-                    // Detect window transitions.
                     let need_new = live_windows[slot]
                         .as_ref()
                         .is_none_or(|lw| tick.timestamp_ms >= lw.window.close_time_ms);
 
                     if need_new {
-                        // Resolve the expiring window if any.
                         if let Some(old_lw) = live_windows[slot].take() {
                             let outcome = old_lw.window.direction(tick.price);
-                            debug!(
+
+                            // Notify risk manager about the resolved window.
+                            // Use zero PnL here — executor tracks actual P&L;
+                            // risk manager only needs the event to clear positions.
+                            risk.on_window_resolved(old_lw.window.id, Pnl::ZERO);
+
+                            executor.resolve_window(old_lw.window.id, outcome, tick.timestamp_ms);
+
+                            info!(
                                 asset = %tick.asset,
                                 timeframe = ?timeframe,
                                 window_id = %old_lw.window.id,
                                 outcome = %outcome,
-                                "resolving expired window"
+                                "window resolved"
                             );
-                            executor.resolve_window(old_lw.window.id, outcome, tick.timestamp_ms);
                         }
 
-                        // Generate a new window id from the wall-clock open time.
                         let raw_id = (window_open_ms / 1_000) ^ (tick.asset.index() as u64 * 0x9E37_79B9)
                             ^ (timeframe.duration_secs() * 7);
                         let new_window = Window {
@@ -351,7 +335,6 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                         continue;
                     };
 
-                    // Skip if we already have a position in this window.
                     if lw.position_opened {
                         continue;
                     }
@@ -363,7 +346,6 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     let time_remaining_secs = window.time_remaining_secs(tick.timestamp_ms);
                     let spot_direction = window.direction(tick.price);
 
-                    // Log tick processing periodically (every 30 seconds per window).
                     if time_elapsed_secs % 30 == 0 && time_elapsed_secs > 0 {
                         debug!(
                             asset = %tick.asset,
@@ -377,16 +359,12 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                         );
                     }
 
-                    // Look up the condition_id for this asset + timeframe.
                     let condition_id_opt = market_mgr
                         .active_markets()
                         .find(|m| m.asset == tick.asset && m.timeframe == timeframe)
                         .map(|m| m.condition_id.clone());
 
-                    // Read the orderbook snapshot — prefer the live PM WebSocket
-                    // tracker, fall back to the manager's snapshot (REST-populated).
                     let ob_snap = condition_id_opt.as_deref().and_then(|cid| {
-                        // Try the shared PM WS tracker first.
                         if let Ok(tracker) = shared_tracker.lock() {
                             if let Some(snap) = tracker.get(cid) {
                                 if snap.ask_up.is_some() || snap.ask_down.is_some() {
@@ -394,55 +372,47 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                                 }
                             }
                         }
-                        // Fall back to market manager snapshot.
                         market_mgr.orderbook(cid).copied()
                     });
 
-                    // Build contract prices from orderbook or use defaults.
-                    let (ask_up, ask_down, bid_up, bid_down) = match ob_snap {
-                        Some(snap) if snap.ask_up.is_some() && snap.ask_down.is_some() => {
-                            // Record the orderbook snapshot.
-                            let a_up = snap.ask_up.map_or(0.55, |p| p.as_f64());
-                            let a_down = snap.ask_down.map_or(0.48, |p| p.as_f64());
-                            let b_up = snap.bid_up.map_or(a_up - 0.02, |p| p.as_f64());
-                            let b_down = snap.bid_down.map_or(a_down - 0.02, |p| p.as_f64());
-                            if let Err(e) = recorder.record_orderbook(
-                                &format!("{}", window.id),
-                                tick.timestamp_ms,
-                                a_up,
-                                a_down,
-                                b_up,
-                                b_down,
-                            ) {
-                                warn!(error = %e, "failed to record orderbook");
+                    // Resolve orderbook prices — prefer live PM WS, fall back to model.
+                    // rec_* are Option<f64> for the recorder; contract_* are Option<ContractPrice>
+                    // for MarketState (which already uses Option internally).
+                    let (rec_ask_up, rec_ask_down, rec_bid_up, rec_bid_down,
+                         contract_ask_up, contract_ask_down, contract_bid_up, contract_bid_down) =
+                        match ob_snap {
+                            Some(snap) if snap.ask_up.is_some() && snap.ask_down.is_some() => {
+                                let a_up = snap.ask_up.map_or(0.55, |p| p.as_f64());
+                                let a_down = snap.ask_down.map_or(0.48, |p| p.as_f64());
+                                let b_up = snap.bid_up.map_or(a_up - 0.02, |p| p.as_f64());
+                                let b_down = snap.bid_down.map_or(a_down - 0.02, |p| p.as_f64());
+                                debug!(
+                                    asset = %tick.asset,
+                                    timeframe = ?timeframe,
+                                    ask_up = a_up,
+                                    ask_down = a_down,
+                                    "using live PM WS orderbook prices"
+                                );
+                                (
+                                    Some(a_up), Some(a_down), Some(b_up), Some(b_down),
+                                    ContractPrice::new(a_up),
+                                    ContractPrice::new(a_down),
+                                    ContractPrice::new(b_up),
+                                    ContractPrice::new(b_down),
+                                )
                             }
-                            debug!(
-                                asset = %tick.asset,
-                                timeframe = ?timeframe,
-                                ask_up = a_up,
-                                ask_down = a_down,
-                                "using live PM WS orderbook prices"
-                            );
-                            (
-                                ContractPrice::new(a_up),
-                                ContractPrice::new(a_down),
-                                ContractPrice::new(b_up),
-                                ContractPrice::new(b_down),
-                            )
-                        }
-                        _ => {
-                            // No live orderbook — use slippage-aware model defaults.
-                            // Prices are symmetric around 0.50, drifted by spot direction.
-                            let base = if spot_direction == Side::Up { 0.55 } else { 0.48 };
-                            let opp = 1.0 - base + slippage;
-                            (
-                                ContractPrice::new(base.clamp(0.01, 0.99)),
-                                ContractPrice::new(opp.clamp(0.01, 0.99)),
-                                ContractPrice::new((base - 0.02).clamp(0.01, 0.99)),
-                                ContractPrice::new((opp - 0.02).clamp(0.01, 0.99)),
-                            )
-                        }
-                    };
+                            _ => {
+                                let base = if spot_direction == Side::Up { 0.55 } else { 0.48 };
+                                let opp = 1.0 - base + slippage;
+                                (
+                                    None, None, None, None,
+                                    ContractPrice::new(base.clamp(0.01, 0.99)),
+                                    ContractPrice::new(opp.clamp(0.01, 0.99)),
+                                    ContractPrice::new((base - 0.02).clamp(0.01, 0.99)),
+                                    ContractPrice::new((opp - 0.02).clamp(0.01, 0.99)),
+                                )
+                            }
+                        };
 
                     let state = MarketState {
                         asset: tick.asset,
@@ -454,11 +424,26 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                         spot_direction,
                         time_elapsed_secs,
                         time_remaining_secs,
-                        contract_ask_up: ask_up,
-                        contract_ask_down: ask_down,
-                        contract_bid_up: bid_up,
-                        contract_bid_down: bid_down,
+                        contract_ask_up,
+                        contract_ask_down,
+                        contract_bid_up,
+                        contract_bid_down,
                     };
+
+                    // Record combined snapshot after building MarketState — all data available here.
+                    if let Err(e) = recorder.record(
+                        tick.timestamp_ms,
+                        &tick.asset.to_string(),
+                        tick.price.as_f64(),
+                        rec_ask_up,
+                        rec_ask_down,
+                        rec_bid_up,
+                        rec_bid_down,
+                        window_open_ms,
+                        timeframe.duration_secs(),
+                    ) {
+                        warn!(error = %e, "failed to record snapshot");
+                    }
 
                     let decisions = engine.evaluate_all(&state);
 
@@ -473,12 +458,41 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                             "strategy signal fired"
                         );
 
+                        // Run decision through risk manager before opening.
+                        let sized_order = match risk.evaluate(
+                            decision,
+                            window.id,
+                            tick.asset,
+                            executor.balance(),
+                        ) {
+                            Ok(order) => order,
+                            Err(rejection) => {
+                                warn!(
+                                    asset = %tick.asset,
+                                    side = %decision.side,
+                                    rejection = ?rejection,
+                                    "risk manager rejected entry"
+                                );
+                                continue;
+                            }
+                        };
+
                         if let Some(fill) = executor.try_open_position(
                             decision,
                             window.id,
                             tick.asset,
                             tick.timestamp_ms,
                         ) {
+                            // Notify risk manager so it tracks exposure.
+                            risk.on_position_opened(OpenPosition {
+                                window_id: window.id,
+                                asset: tick.asset,
+                                side: decision.side,
+                                avg_entry: fill.fill_price,
+                                size_usdc: sized_order.size_usdc,
+                                opened_at_ms: tick.timestamp_ms,
+                            });
+
                             lw.position_opened = true;
                             info!(
                                 asset = %tick.asset,

@@ -1,12 +1,12 @@
-//! Live market data recorder — compresses JSONL to disk for future replay.
+//! Live market data recorder — writes combined JSONL snapshots to disk for future replay.
 //!
-//! [`LiveRecorder`] writes two gzip-compressed JSONL streams: one for spot
-//! price ticks and one for orderbook snapshots. Files are flushed explicitly
-//! via [`LiveRecorder::flush`].
+//! [`SnapshotRecorder`] writes one plain JSONL file per session containing
+//! combined spot + orderbook snapshots. Files are flushed after every
+//! [`FLUSH_INTERVAL`] writes to bound worst-case data loss without adding
+//! time-based complexity.
 //!
-//! Files are written to:
-//! - `{data_dir}/live/{session_id}_ticks.jsonl.gz`
-//! - `{data_dir}/live/{session_id}_orderbook.jsonl.gz`
+//! File is written to:
+//! - `{data_dir}/live/{session_id}_snapshots.jsonl`
 
 use std::{
     fs::{File, create_dir_all},
@@ -14,268 +14,308 @@ use std::{
     path::Path,
 };
 
-use flate2::Compression;
-use flate2::write::GzEncoder;
-use pm_types::Tick;
 use serde::{Deserialize, Serialize};
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/// Number of writes between automatic flushes.
+const FLUSH_INTERVAL: usize = 10;
 
 // ─── Wire types ───────────────────────────────────────────────────────────────
 
-/// A single orderbook snapshot line written to the JSONL file.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct OrderbookLine {
-    /// The Polymarket condition/window identifier.
-    pub window_id: String,
-    /// Timestamp in milliseconds since Unix epoch.
-    pub timestamp_ms: u64,
-    /// Ask price for the Up contract.
-    pub ask_up: f64,
-    /// Ask price for the Down contract.
-    pub ask_down: f64,
-    /// Bid price for the Up contract.
-    pub bid_up: f64,
-    /// Bid price for the Down contract.
-    pub bid_down: f64,
-}
-
-// ─── LiveRecorder ─────────────────────────────────────────────────────────────
-
-/// Records live market data to disk for future replay.
+/// A combined spot + orderbook snapshot written to the JSONL file.
 ///
-/// Tick data and orderbook snapshots are written to separate gzip-compressed
-/// JSONL files. Each line is a valid JSON object.
-pub struct LiveRecorder {
-    tick_writer: BufWriter<GzEncoder<File>>,
-    orderbook_writer: BufWriter<GzEncoder<File>>,
+/// This format is compatible with what the backtest replay system needs:
+/// spot price, contract prices, and window metadata in a single record.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LiveSnapshot {
+    /// Timestamp in milliseconds since Unix epoch.
+    pub time_ms: u64,
+    /// Asset symbol (e.g. `"BTC"`).
+    pub asset: String,
+    /// Spot price at this snapshot.
+    pub spot_price: f64,
+    /// Best ask for the Up contract, if available.
+    pub price_up: Option<f64>,
+    /// Best ask for the Down contract, if available.
+    pub price_down: Option<f64>,
+    /// Best bid for the Up contract, if available.
+    pub bid_up: Option<f64>,
+    /// Best bid for the Down contract, if available.
+    pub bid_down: Option<f64>,
+    /// Window open timestamp in milliseconds since Unix epoch.
+    pub window_open_ms: u64,
+    /// Window duration in seconds.
+    pub timeframe_secs: u64,
 }
 
-impl LiveRecorder {
-    /// Create a new [`LiveRecorder`] for the given session.
+// ─── SnapshotRecorder ─────────────────────────────────────────────────────────
+
+/// Records live combined spot + orderbook snapshots to a plain JSONL file.
+///
+/// One file per session; flushed after every [`FLUSH_INTERVAL`] writes.
+/// No gzip — files can be compressed offline; reliability takes priority.
+pub struct SnapshotRecorder {
+    writer: BufWriter<File>,
+    writes_since_flush: usize,
+}
+
+impl SnapshotRecorder {
+    /// Create a new [`SnapshotRecorder`] for the given session.
     ///
     /// Creates `{data_dir}/live/` if it does not exist, then opens:
-    /// - `{data_dir}/live/{session_id}_ticks.jsonl.gz`
-    /// - `{data_dir}/live/{session_id}_orderbook.jsonl.gz`
+    /// - `{data_dir}/live/{session_id}_snapshots.jsonl`
     ///
     /// # Errors
     ///
-    /// Returns [`io::Error`] if directories cannot be created or files cannot
-    /// be opened.
+    /// Returns [`io::Error`] if directories cannot be created or the file
+    /// cannot be opened.
     pub fn new(data_dir: &Path, session_id: &str) -> io::Result<Self> {
         let live_dir = data_dir.join("live");
         create_dir_all(&live_dir)?;
 
-        let tick_path = live_dir.join(format!("{session_id}_ticks.jsonl.gz"));
-        let ob_path = live_dir.join(format!("{session_id}_orderbook.jsonl.gz"));
-
-        let tick_file = File::create(tick_path)?;
-        let ob_file = File::create(ob_path)?;
-
-        let tick_gz = GzEncoder::new(tick_file, Compression::default());
-        let ob_gz = GzEncoder::new(ob_file, Compression::default());
+        let snap_path = live_dir.join(format!("{session_id}_snapshots.jsonl"));
+        let file = File::create(snap_path)?;
 
         Ok(Self {
-            tick_writer: BufWriter::new(tick_gz),
-            orderbook_writer: BufWriter::new(ob_gz),
+            writer: BufWriter::new(file),
+            writes_since_flush: 0,
         })
     }
 
-    /// Record a spot price tick.
+    /// Record a combined snapshot.
     ///
-    /// Serialises `tick` as a JSONL line and writes it to the tick file.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`io::Error`] if serialisation or write fails.
-    pub fn record_tick(&mut self, tick: &Tick) -> io::Result<()> {
-        let line = serde_json::to_string(tick)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        self.tick_writer.write_all(line.as_bytes())?;
-        self.tick_writer.write_all(b"\n")
-    }
-
-    /// Record an orderbook snapshot.
+    /// Flushes automatically every [`FLUSH_INTERVAL`] writes.
     ///
     /// # Errors
     ///
-    /// Returns [`io::Error`] if serialisation or write fails.
+    /// Returns [`io::Error`] if serialisation, write, or flush fails.
     #[expect(
         clippy::too_many_arguments,
-        reason = "all args are independent fields of an orderbook snapshot; grouping into a struct would add indirection for a single call site"
+        reason = "all args are independent snapshot fields; grouping would add indirection for a single call site"
     )]
-    pub fn record_orderbook(
+    pub fn record(
         &mut self,
-        window_id: &str,
-        timestamp_ms: u64,
-        ask_up: f64,
-        ask_down: f64,
-        bid_up: f64,
-        bid_down: f64,
+        time_ms: u64,
+        asset: &str,
+        spot_price: f64,
+        price_up: Option<f64>,
+        price_down: Option<f64>,
+        bid_up: Option<f64>,
+        bid_down: Option<f64>,
+        window_open_ms: u64,
+        timeframe_secs: u64,
     ) -> io::Result<()> {
-        let line_val = OrderbookLine {
-            window_id: window_id.to_owned(),
-            timestamp_ms,
-            ask_up,
-            ask_down,
+        let snap = LiveSnapshot {
+            time_ms,
+            asset: asset.to_owned(),
+            spot_price,
+            price_up,
+            price_down,
             bid_up,
             bid_down,
+            window_open_ms,
+            timeframe_secs,
         };
-        let line = serde_json::to_string(&line_val)
+
+        let line = serde_json::to_string(&snap)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        self.orderbook_writer.write_all(line.as_bytes())?;
-        self.orderbook_writer.write_all(b"\n")
+        self.writer.write_all(line.as_bytes())?;
+        self.writer.write_all(b"\n")?;
+
+        self.writes_since_flush += 1;
+        if self.writes_since_flush >= FLUSH_INTERVAL {
+            self.writer.flush()?;
+            self.writes_since_flush = 0;
+        }
+
+        Ok(())
     }
 
-    /// Flush all writers to their underlying gzip streams.
+    /// Flush any buffered data to disk.
     ///
     /// # Errors
     ///
-    /// Returns [`io::Error`] if either flush fails.
+    /// Returns [`io::Error`] if the flush fails.
     pub fn flush(&mut self) -> io::Result<()> {
-        self.tick_writer.flush()?;
-        self.orderbook_writer.flush()
+        self.writes_since_flush = 0;
+        self.writer.flush()
     }
 }
+
+// ─── LiveRecorder (compatibility alias) ─────────────────────────────────────
+
+/// Deprecated: use [`SnapshotRecorder`] instead.
+///
+/// This alias exists only to keep old call sites compiling during migration.
+/// Remove once all uses are updated.
+pub type LiveRecorder = SnapshotRecorder;
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "test helpers use expect for conciseness")]
 mod tests {
-    use std::io::Read as _;
-
-    use flate2::read::GzDecoder;
-    use pm_types::{Asset, ExchangeSource, Price};
+    use std::io::BufRead as _;
 
     use super::*;
 
-    fn make_tick(asset: Asset, price: f64, timestamp_ms: u64) -> Tick {
-        Tick {
-            asset,
-            price: Price::new(price).expect("valid price"),
-            timestamp_ms,
-            source: ExchangeSource::Binance,
-        }
-    }
-
-    /// Read and decompress a `.jsonl.gz` file into lines.
-    fn read_gz_lines(path: &Path) -> Vec<String> {
+    fn read_jsonl_lines(path: &Path) -> Vec<String> {
         let file = File::open(path).expect("file should exist");
-        let mut gz = GzDecoder::new(file);
-        let mut content = String::new();
-        gz.read_to_string(&mut content).expect("decompress should succeed");
-        content
+        let reader = std::io::BufReader::new(file);
+        reader
             .lines()
+            .map(|l| l.expect("line should be valid utf8"))
             .filter(|l| !l.trim().is_empty())
-            .map(str::to_owned)
             .collect()
     }
 
-    // ── Test 1: Tick roundtrip ────────────────────────────────────────────────
+    // ── Test 1: Single snapshot roundtrip ────────────────────────────────────
 
     #[test]
-    fn tick_write_read_roundtrip() {
-        let dir = std::env::temp_dir().join("pm_recorder_test_tick_roundtrip");
+    fn snapshot_write_read_roundtrip() {
+        let dir = std::env::temp_dir().join("pm_recorder_test_snap_roundtrip");
         std::fs::create_dir_all(&dir).expect("create temp dir");
 
-        let session = "test_session_tick";
-        let mut recorder = LiveRecorder::new(&dir, session).expect("create recorder");
-
-        let tick1 = make_tick(Asset::Btc, 84_000.0, 1_000_000);
-        let tick2 = make_tick(Asset::Eth, 3_200.0, 2_000_000);
-
-        recorder.record_tick(&tick1).expect("record tick1");
-        recorder.record_tick(&tick2).expect("record tick2");
-        recorder.flush().expect("flush");
-        drop(recorder);
-
-        let tick_path = dir.join("live").join(format!("{session}_ticks.jsonl.gz"));
-        let lines = read_gz_lines(&tick_path);
-        assert_eq!(lines.len(), 2, "expected 2 tick lines");
-
-        let parsed1: Tick = serde_json::from_str(&lines[0]).expect("parse tick1");
-        let parsed2: Tick = serde_json::from_str(&lines[1]).expect("parse tick2");
-
-        assert_eq!(parsed1.asset, tick1.asset);
-        assert!((parsed1.price.as_f64() - tick1.price.as_f64()).abs() < 1e-9);
-        assert_eq!(parsed1.timestamp_ms, tick1.timestamp_ms);
-        assert_eq!(parsed1.source, tick1.source);
-
-        assert_eq!(parsed2.asset, tick2.asset);
-        assert!((parsed2.price.as_f64() - tick2.price.as_f64()).abs() < 1e-9);
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    // ── Test 2: Orderbook roundtrip ───────────────────────────────────────────
-
-    #[test]
-    fn orderbook_write_read_roundtrip() {
-        let dir = std::env::temp_dir().join("pm_recorder_test_ob_roundtrip");
-        std::fs::create_dir_all(&dir).expect("create temp dir");
-
-        let session = "test_session_ob";
-        let mut recorder = LiveRecorder::new(&dir, session).expect("create recorder");
+        let session = "test_snap_session";
+        let mut recorder = SnapshotRecorder::new(&dir, session).expect("create recorder");
 
         recorder
-            .record_orderbook("window_42", 1_500_000, 0.60, 0.43, 0.58, 0.41)
-            .expect("record orderbook");
+            .record(
+                1_000_000,
+                "BTC",
+                84_000.0,
+                Some(0.55),
+                Some(0.46),
+                Some(0.53),
+                Some(0.44),
+                999_000,
+                900,
+            )
+            .expect("record snapshot");
         recorder.flush().expect("flush");
         drop(recorder);
 
-        let ob_path = dir
+        let snap_path = dir
             .join("live")
-            .join(format!("{session}_orderbook.jsonl.gz"));
-        let lines = read_gz_lines(&ob_path);
-        assert_eq!(lines.len(), 1, "expected 1 orderbook line");
+            .join(format!("{session}_snapshots.jsonl"));
+        let lines = read_jsonl_lines(&snap_path);
+        assert_eq!(lines.len(), 1, "expected 1 snapshot line");
 
-        let parsed: OrderbookLine =
-            serde_json::from_str(&lines[0]).expect("parse orderbook line");
-
-        assert_eq!(parsed.window_id, "window_42");
-        assert_eq!(parsed.timestamp_ms, 1_500_000);
-        assert!((parsed.ask_up - 0.60).abs() < 1e-10);
-        assert!((parsed.ask_down - 0.43).abs() < 1e-10);
-        assert!((parsed.bid_up - 0.58).abs() < 1e-10);
-        assert!((parsed.bid_down - 0.41).abs() < 1e-10);
+        let parsed: LiveSnapshot = serde_json::from_str(&lines[0]).expect("parse snapshot");
+        assert_eq!(parsed.time_ms, 1_000_000);
+        assert_eq!(parsed.asset, "BTC");
+        assert!((parsed.spot_price - 84_000.0).abs() < 1e-9);
+        assert_eq!(parsed.price_up, Some(0.55));
+        assert_eq!(parsed.price_down, Some(0.46));
+        assert_eq!(parsed.bid_up, Some(0.53));
+        assert_eq!(parsed.bid_down, Some(0.44));
+        assert_eq!(parsed.window_open_ms, 999_000);
+        assert_eq!(parsed.timeframe_secs, 900);
 
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    // ── Test 3: Multiple sessions don't interfere ────────────────────────────
+    // ── Test 2: Multiple snapshots, auto-flush boundary ──────────────────────
+
+    #[test]
+    fn multiple_snapshots_auto_flush_at_interval() {
+        let dir = std::env::temp_dir().join("pm_recorder_test_multi_snap");
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+
+        let session = "test_multi_snap";
+        let mut recorder = SnapshotRecorder::new(&dir, session).expect("create recorder");
+
+        // Write exactly FLUSH_INTERVAL snapshots to trigger one auto-flush.
+        for i in 0..10_u64 {
+            recorder
+                .record(i * 1_000, "ETH", 3_200.0 + i as f64, None, None, None, None, 0, 300)
+                .expect("record snapshot");
+        }
+        // Final explicit flush.
+        recorder.flush().expect("flush");
+        drop(recorder);
+
+        let snap_path = dir
+            .join("live")
+            .join(format!("{session}_snapshots.jsonl"));
+        let lines = read_jsonl_lines(&snap_path);
+        assert_eq!(lines.len(), 10, "expected 10 snapshot lines");
+
+        // Spot-check first and last.
+        let first: LiveSnapshot = serde_json::from_str(&lines[0]).expect("parse first");
+        let last: LiveSnapshot = serde_json::from_str(&lines[9]).expect("parse last");
+        assert_eq!(first.time_ms, 0);
+        assert_eq!(last.time_ms, 9_000);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ── Test 3: Null orderbook fields ────────────────────────────────────────
+
+    #[test]
+    fn snapshot_with_no_orderbook_data() {
+        let dir = std::env::temp_dir().join("pm_recorder_test_no_ob");
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+
+        let session = "test_no_ob";
+        let mut recorder = SnapshotRecorder::new(&dir, session).expect("create recorder");
+
+        recorder
+            .record(5_000_000, "SOL", 145.0, None, None, None, None, 4_995_000, 300)
+            .expect("record snapshot without orderbook");
+        recorder.flush().expect("flush");
+        drop(recorder);
+
+        let snap_path = dir
+            .join("live")
+            .join(format!("{session}_snapshots.jsonl"));
+        let lines = read_jsonl_lines(&snap_path);
+        assert_eq!(lines.len(), 1);
+
+        let parsed: LiveSnapshot = serde_json::from_str(&lines[0]).expect("parse snapshot");
+        assert!(parsed.price_up.is_none());
+        assert!(parsed.price_down.is_none());
+        assert!(parsed.bid_up.is_none());
+        assert!(parsed.bid_down.is_none());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ── Test 4: Separate sessions don't interfere ─────────────────────────────
 
     #[test]
     fn separate_sessions_write_separate_files() {
-        let dir = std::env::temp_dir().join("pm_recorder_test_sessions");
+        let dir = std::env::temp_dir().join("pm_recorder_test_separate");
         std::fs::create_dir_all(&dir).expect("create temp dir");
 
-        let mut rec_a = LiveRecorder::new(&dir, "session_a").expect("create rec_a");
-        let mut rec_b = LiveRecorder::new(&dir, "session_b").expect("create rec_b");
+        let mut rec_a = SnapshotRecorder::new(&dir, "sess_a").expect("create rec_a");
+        let mut rec_b = SnapshotRecorder::new(&dir, "sess_b").expect("create rec_b");
 
         rec_a
-            .record_tick(&make_tick(Asset::Btc, 50_000.0, 1_000))
+            .record(1_000, "BTC", 50_000.0, Some(0.55), Some(0.46), None, None, 0, 900)
             .expect("record a");
         rec_b
-            .record_tick(&make_tick(Asset::Eth, 3_000.0, 2_000))
+            .record(2_000, "ETH", 3_000.0, None, None, None, None, 0, 300)
             .expect("record b");
+
         rec_a.flush().expect("flush a");
         rec_b.flush().expect("flush b");
         drop(rec_a);
         drop(rec_b);
 
-        let path_a = dir.join("live").join("session_a_ticks.jsonl.gz");
-        let path_b = dir.join("live").join("session_b_ticks.jsonl.gz");
+        let path_a = dir.join("live").join("sess_a_snapshots.jsonl");
+        let path_b = dir.join("live").join("sess_b_snapshots.jsonl");
 
-        let lines_a = read_gz_lines(&path_a);
-        let lines_b = read_gz_lines(&path_b);
-
+        let lines_a = read_jsonl_lines(&path_a);
+        let lines_b = read_jsonl_lines(&path_b);
         assert_eq!(lines_a.len(), 1);
         assert_eq!(lines_b.len(), 1);
 
-        let t_a: Tick = serde_json::from_str(&lines_a[0]).expect("parse a");
-        let t_b: Tick = serde_json::from_str(&lines_b[0]).expect("parse b");
-
-        assert_eq!(t_a.asset, Asset::Btc);
-        assert_eq!(t_b.asset, Asset::Eth);
+        let snap_a: LiveSnapshot = serde_json::from_str(&lines_a[0]).expect("parse a");
+        let snap_b: LiveSnapshot = serde_json::from_str(&lines_b[0]).expect("parse b");
+        assert_eq!(snap_a.asset, "BTC");
+        assert_eq!(snap_b.asset, "ETH");
 
         std::fs::remove_dir_all(&dir).ok();
     }

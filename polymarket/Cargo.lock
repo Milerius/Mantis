@@ -1226,7 +1226,6 @@ name = "pm-bookkeeper"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "flate2",
  "pm-types",
  "serde",
  "serde_json",

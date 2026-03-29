@@ -15,6 +15,6 @@ pub mod summary;
 pub mod trade_log;
 
 pub use export::{export_equity_curve, export_summary, export_trades_csv};
-pub use recorder::{LiveRecorder, OrderbookLine};
+pub use recorder::{LiveRecorder, LiveSnapshot, SnapshotRecorder};
 pub use summary::{TradeSummary, compute_summary};
 pub use trade_log::{TradeLog, read_trade_log};

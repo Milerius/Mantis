@@ -1,1 +1,17 @@
+# Secrets — NEVER commit
 config/secrets.toml
+
+# Historical data cache (large, re-downloadable)
+data/
+
+# Live recorded sessions
+data/live/
+
+# Backtest results (regeneratable)
+logs/
+
+# Rust build artifacts
+target/
+
+# OS files
+.DS_Store
