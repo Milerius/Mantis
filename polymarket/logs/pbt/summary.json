@@ -1,0 +1,13 @@
+{
+  "total_trades": 1,
+  "wins": 1,
+  "losses": 0,
+  "win_rate": 1.0,
+  "total_pnl": 265.6976744186048,
+  "max_drawdown": 0.0,
+  "best_trade": 265.6976744186048,
+  "worst_trade": 265.6976744186048,
+  "avg_pnl_per_trade": 265.6976744186048,
+  "sharpe_ratio": 0.0,
+  "profit_factor": 0.0
+}

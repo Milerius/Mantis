@@ -3,14 +3,23 @@
 //! Downloads historical market snapshots from the PolyBackTest API and caches
 //! them locally as compressed JSONL files. Each market's snapshots are stored in
 //! `{cache_dir}/{coin}_{market_type}_{market_id}.jsonl.gz`.
+//!
+//! Downloads run in parallel (up to 5 concurrent tasks) with exponential-backoff
+//! retry on HTTP 429 rate-limit responses. Markets are processed oldest-first.
 
 use std::{
     fs,
     io::{self, BufRead as _, BufReader, Write as _},
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
 use crate::downloader::DownloadError;
@@ -101,10 +110,21 @@ pub fn read_pbt_cache(path: &Path) -> io::Result<(PbtMarket, Vec<PbtSnapshot>)> 
 
 // ─── Download ───────────────────────────────────────────────────────────────
 
+/// Maximum number of concurrent snapshot download tasks.
+const MAX_CONCURRENT: usize = 5;
+
+/// Number of retry attempts on HTTP 429.
+const MAX_RETRIES: u32 = 3;
+
 /// Download all resolved markets and their snapshots for a coin and market type.
 ///
+/// Markets are processed oldest-first (the API returns newest first, so the list
+/// is reversed before scheduling). Downloads run in parallel with up to
+/// [`MAX_CONCURRENT`] concurrent workers. HTTP 429 responses are retried up to
+/// [`MAX_RETRIES`] times with increasing backoff (2 s, 4 s, 6 s).
+///
 /// Caches each market's data to `{cache_dir}/{coin}_{market_type}_{market_id}.jsonl.gz`.
-/// Skips markets that are already cached.
+/// Skips markets that are already cached or have no winner (unresolved).
 ///
 /// Returns the number of newly downloaded markets.
 ///
@@ -124,8 +144,11 @@ pub async fn download_pbt_data(
 
     // List all markets (paginated).
     info!(coin, market_type, "listing PBT markets");
-    let markets = client.list_all_markets(coin, market_type).await?;
+    let mut markets = client.list_all_markets(coin, market_type).await?;
     info!(total = markets.len(), coin, market_type, "found PBT markets");
+
+    // API returns newest first — reverse to process oldest first.
+    markets.reverse();
 
     let limit = if max_markets == 0 {
         markets.len()
@@ -133,60 +156,126 @@ pub async fn download_pbt_data(
         (max_markets as usize).min(markets.len())
     };
 
-    let mut downloaded: usize = 0;
-    let mut skipped: usize = 0;
+    // Filter: keep only resolved, uncached markets.
+    let work: Vec<PbtMarket> = markets
+        .into_iter()
+        .take(limit)
+        .filter(|m| {
+            if m.winner.is_none() {
+                debug!(market_id = %m.market_id, "skipping unresolved market");
+                return false;
+            }
+            if is_pbt_cached(cache_dir, coin, market_type, &m.market_id) {
+                return false;
+            }
+            true
+        })
+        .collect();
 
-    for (i, market) in markets.iter().take(limit).enumerate() {
-        // Skip already cached.
-        if is_pbt_cached(cache_dir, coin, market_type, &market.market_id) {
-            skipped += 1;
-            continue;
-        }
+    let total_work = work.len();
+    info!(
+        eligible = total_work,
+        coin,
+        market_type,
+        "starting parallel PBT download"
+    );
 
-        // Only download resolved markets (they have a winner).
-        if market.winner.is_none() {
-            debug!(market_id = %market.market_id, "skipping unresolved market");
-            continue;
-        }
+    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
+    let downloaded = Arc::new(AtomicUsize::new(0));
+    let skipped_err = Arc::new(AtomicUsize::new(0));
+    let mut handles = Vec::with_capacity(total_work);
 
-        // Rate limit: 300 req/min = 5 req/sec. Wait 250ms between markets.
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    for market in work {
+        let permit = semaphore.clone().acquire_owned().await.expect("semaphore closed");
 
-        // Download all snapshots.
-        match client.get_all_snapshots(&market.market_id, coin).await {
-            Ok(snapshots) => {
-                let path = pbt_cache_path(cache_dir, coin, market_type, &market.market_id);
-                write_pbt_snapshots(&path, market, &snapshots)?;
-                downloaded += 1;
+        let market_id = market.market_id.clone();
+        let coin_owned = coin.to_string();
+        let market_type_owned = market_type.to_string();
+        let cache_dir_owned = cache_dir.to_path_buf();
+        let downloaded_ctr = downloaded.clone();
+        let skipped_ctr = skipped_err.clone();
 
-                if downloaded.is_multiple_of(50) {
-                    info!(
-                        downloaded,
-                        skipped,
-                        progress = i + 1,
-                        total = limit,
-                        "PBT download progress"
-                    );
+        // Clone client: reqwest::Client is internally Arc'd so this is cheap.
+        let task_client = client.clone_with_same_pool();
+
+        let handle = tokio::spawn(async move {
+            let _permit = permit; // released when task completes
+
+            let path = pbt_cache_path(&cache_dir_owned, &coin_owned, &market_type_owned, &market_id);
+
+            for attempt in 0..MAX_RETRIES {
+                match task_client.get_all_snapshots(&market_id, &coin_owned).await {
+                    Ok(snapshots) => {
+                        match write_pbt_snapshots(&path, &market, &snapshots) {
+                            Ok(()) => {
+                                let n = downloaded_ctr.fetch_add(1, Ordering::Relaxed) + 1;
+                                if n % 50 == 0 {
+                                    info!(
+                                        downloaded = n,
+                                        market_id = %market_id,
+                                        "PBT download progress"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                warn!(
+                                    market_id = %market_id,
+                                    error = %e,
+                                    "failed to write PBT cache"
+                                );
+                                skipped_ctr.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        return;
+                    }
+                    Err(e) if e.to_string().contains("429") => {
+                        let wait = Duration::from_secs(u64::from(2 * (attempt + 1)));
+                        warn!(
+                            market_id = %market_id,
+                            attempt,
+                            wait_secs = wait.as_secs(),
+                            "PBT 429 rate-limited, retrying"
+                        );
+                        tokio::time::sleep(wait).await;
+                    }
+                    Err(e) => {
+                        warn!(
+                            market_id = %market_id,
+                            error = %e,
+                            "failed to download PBT snapshots"
+                        );
+                        skipped_ctr.fetch_add(1, Ordering::Relaxed);
+                        return;
+                    }
                 }
             }
-            Err(e) => {
-                warn!(
-                    market_id = %market.market_id,
-                    error = %e,
-                    "failed to download PBT snapshots"
-                );
-            }
+
+            // All retries exhausted.
+            warn!(market_id = %market_id, "exhausted retries for PBT market, skipping");
+            skipped_ctr.fetch_add(1, Ordering::Relaxed);
+        });
+
+        handles.push(handle);
+    }
+
+    // Await all tasks.
+    for handle in handles {
+        if let Err(e) = handle.await {
+            warn!(error = ?e, "PBT download task panicked");
         }
     }
 
+    let n_downloaded = downloaded.load(Ordering::Relaxed);
+    let n_errors = skipped_err.load(Ordering::Relaxed);
+
     info!(
-        downloaded,
-        skipped,
+        downloaded = n_downloaded,
+        errors = n_errors,
         coin,
         market_type,
         "PBT download complete"
     );
-    Ok(downloaded)
+    Ok(n_downloaded)
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -219,6 +308,8 @@ mod tests {
                 btc_price: Some(95000.0),
                 price_up: Some(0.50),
                 price_down: Some(0.51),
+                orderbook_up: None,
+                orderbook_down: None,
             },
             PbtSnapshot {
                 id: None,
@@ -227,6 +318,8 @@ mod tests {
                 btc_price: Some(95100.0),
                 price_up: Some(0.55),
                 price_down: Some(0.46),
+                orderbook_up: None,
+                orderbook_down: None,
             },
             PbtSnapshot {
                 id: None,
@@ -235,6 +328,8 @@ mod tests {
                 btc_price: Some(95150.0),
                 price_up: Some(0.62),
                 price_down: Some(0.39),
+                orderbook_up: None,
+                orderbook_down: None,
             },
         ]
     }
@@ -264,8 +359,8 @@ mod tests {
         assert_eq!(read_market.market_id, market.market_id);
         assert_eq!(read_market.winner, market.winner);
         assert_eq!(read_snaps.len(), 3);
-        assert!((read_snaps[0].btc_price - 95000.0).abs() < 1e-6);
-        assert!((read_snaps[2].price_up - 0.62).abs() < 1e-6);
+        assert!((read_snaps[0].btc_price.expect("btc_price") - 95000.0).abs() < 1e-6);
+        assert!((read_snaps[2].price_up.expect("price_up") - 0.62).abs() < 1e-6);
     }
 
     #[test]

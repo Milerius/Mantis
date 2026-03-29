@@ -42,6 +42,26 @@ pub struct PbtMarket {
     pub clob_token_down: Option<String>,
 }
 
+/// An orderbook level: price + size.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PbtOrderbookLevel {
+    /// Price at this level.
+    pub price: f64,
+    /// Size available at this level.
+    pub size: f64,
+}
+
+/// One side of the orderbook (asks or bids).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PbtOrderbookSide {
+    /// Ask levels (sorted by price ascending).
+    #[serde(default)]
+    pub asks: Vec<PbtOrderbookLevel>,
+    /// Bid levels (sorted by price descending).
+    #[serde(default)]
+    pub bids: Vec<PbtOrderbookLevel>,
+}
+
 /// A snapshot from the PolyBackTest API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PbtSnapshot {
@@ -63,6 +83,12 @@ pub struct PbtSnapshot {
     pub price_up: Option<f64>,
     /// Best ask price for the Down contract. Can be `null` for empty orderbooks.
     pub price_down: Option<f64>,
+    /// Full orderbook for the Up contract (only present when `include_orderbook=true`).
+    #[serde(default)]
+    pub orderbook_up: Option<PbtOrderbookSide>,
+    /// Full orderbook for the Down contract (only present when `include_orderbook=true`).
+    #[serde(default)]
+    pub orderbook_down: Option<PbtOrderbookSide>,
 }
 
 /// Response wrapper for `GET /v2/markets`.
@@ -130,6 +156,19 @@ impl PbtClient {
     #[must_use]
     pub fn with_client(client: Client, api_key: String) -> Self {
         Self { client, api_key }
+    }
+
+    /// Clone this client, sharing the same underlying [`reqwest::Client`]
+    /// connection pool and API key.
+    ///
+    /// [`reqwest::Client`] is internally reference-counted, so cloning it is
+    /// cheap and shares the same connection pool.
+    #[must_use]
+    pub fn clone_with_same_pool(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            api_key: self.api_key.clone(),
+        }
     }
 
     /// List resolved markets for a coin and market type.
@@ -228,7 +267,7 @@ impl PbtClient {
         start_time: Option<&str>,
     ) -> Result<Vec<PbtSnapshot>, DownloadError> {
         let mut url = format!(
-            "{BASE_URL}/v2/markets/{market_id}/snapshots?coin={coin}&limit={limit}&include_orderbook=false"
+            "{BASE_URL}/v2/markets/{market_id}/snapshots?coin={coin}&limit={limit}&include_orderbook=true"
         );
         if let Some(st) = start_time {
             url.push_str(&format!("&start_time={st}"));
@@ -279,7 +318,8 @@ impl PbtClient {
         coin: &str,
     ) -> Result<Vec<PbtSnapshot>, DownloadError> {
         let mut all = Vec::new();
-        let page_size: u32 = 1000;
+        // Smaller page size when orderbook is included (larger payloads).
+        let page_size: u32 = 200;
         let mut cursor: Option<String> = None;
 
         loop {
@@ -358,9 +398,9 @@ mod tests {
         }"#;
         let snap: PbtSnapshot = serde_json::from_str(json).expect("should parse snapshot JSON");
         assert_eq!(snap.time, "2026-01-01T00:00:00.125Z");
-        assert!((snap.btc_price - 95000.5).abs() < 1e-6);
-        assert!((snap.price_up - 0.52).abs() < 1e-6);
-        assert!((snap.price_down - 0.49).abs() < 1e-6);
+        assert!((snap.btc_price.expect("btc_price") - 95000.5).abs() < 1e-6);
+        assert!((snap.price_up.expect("price_up") - 0.52).abs() < 1e-6);
+        assert!((snap.price_down.expect("price_down") - 0.49).abs() < 1e-6);
     }
 
     #[test]

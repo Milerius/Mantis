@@ -353,6 +353,8 @@ mod tests {
                 btc_price: Some(95050.0),
                 price_up: Some(0.52),
                 price_down: Some(0.49),
+                orderbook_up: None,
+                orderbook_down: None,
             },
             PbtSnapshot {
                 id: None,
@@ -361,6 +363,8 @@ mod tests {
                 btc_price: Some(95000.0),
                 price_up: Some(0.50),
                 price_down: Some(0.51),
+                orderbook_up: None,
+                orderbook_down: None,
             },
             PbtSnapshot {
                 id: None,
@@ -369,6 +373,8 @@ mod tests {
                 btc_price: Some(95120.0),
                 price_up: Some(0.58),
                 price_down: Some(0.43),
+                orderbook_up: None,
+                orderbook_down: None,
             },
         ]
     }
@@ -455,6 +461,8 @@ mod tests {
             btc_price: Some(95950.0), // 1% above 95000
             price_up: Some(0.60),
             price_down: Some(0.41),
+            orderbook_up: None,
+            orderbook_down: None,
         }];
         let obs = build_observations(&market, &snaps, Asset::Btc, Timeframe::Min15);
         let price_obs = pbt_to_price_observations(&obs, Asset::Btc, Timeframe::Min15);
