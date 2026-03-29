@@ -63,7 +63,7 @@ impl ContractPrice {
     #[inline]
     #[must_use]
     pub fn new(value: f64) -> Option<Self> {
-        if value.is_finite() && value >= 0.0 && value <= 1.0 {
+        if value.is_finite() && (0.0..=1.0).contains(&value) {
             Some(Self(value))
         } else {
             None
@@ -134,7 +134,7 @@ impl core::fmt::Display for Edge {
 pub struct Pnl(f64);
 
 impl Pnl {
-    /// Zero PnL — no gain, no loss.
+    /// Zero `PnL` — no gain, no loss.
     pub const ZERO: Self = Self(0.0);
 
     /// Construct a [`Pnl`] from a raw `f64`.

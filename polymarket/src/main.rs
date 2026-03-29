@@ -20,7 +20,7 @@ struct Cli {
 enum Commands {
     /// Download historical price data from Binance and OKX.
     Download,
-    /// Calibrate fair_value model from historical data.
+    /// Calibrate `fair_value` model from historical data.
     Calibrate,
     /// Run backtest on historical data.
     Backtest,

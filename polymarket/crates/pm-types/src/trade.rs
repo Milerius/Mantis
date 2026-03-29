@@ -1,7 +1,7 @@
 //! Trade execution types: fills, positions, orders, and trade records.
 //!
 //! These types record what the executor did and how it turned out. The bookkeeper
-//! consumes [`TradeRecord`] values to build PnL reports.
+//! consumes [`TradeRecord`] values to build `PnL` reports.
 
 #[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
@@ -130,7 +130,7 @@ impl core::fmt::Display for Rejection {
 
 // ─── TradeRecord ─────────────────────────────────────────────────────────────
 
-/// A closed trade with its final PnL.
+/// A closed trade with its final `PnL`.
 ///
 /// Created by the bookkeeper when a position is fully closed.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -148,7 +148,7 @@ pub struct TradeRecord {
     pub exit_price: ContractPrice,
     /// USDC size traded.
     pub size_usdc: f64,
-    /// Realised PnL after fees.
+    /// Realised `PnL` after fees.
     pub pnl: Pnl,
     /// Time the position was opened, milliseconds since Unix epoch.
     pub opened_at_ms: u64,

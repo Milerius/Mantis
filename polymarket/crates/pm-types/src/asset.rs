@@ -1,4 +1,4 @@
-//! Asset, Side, Timeframe, and ExchangeSource enums for Polymarket trading.
+//! Asset, Side, Timeframe, and `ExchangeSource` enums for Polymarket trading.
 //!
 //! These enums represent the domain vocabulary used throughout the bot.
 //! Each enum is `Copy + Clone` and includes utilities required by downstream
