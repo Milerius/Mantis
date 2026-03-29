@@ -182,6 +182,9 @@ pub struct Signal {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+    use std::string::ToString;
+
     use super::*;
 
     fn make_window(open_price: f64, open_time_ms: u64, close_time_ms: u64) -> Window {

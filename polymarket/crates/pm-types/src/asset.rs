@@ -208,6 +208,9 @@ impl core::fmt::Display for ExchangeSource {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+    use std::string::ToString;
+
     use super::*;
 
     // Asset index uniqueness

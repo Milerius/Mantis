@@ -171,6 +171,9 @@ impl TradeRecord {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+    use std::string::ToString;
+
     use super::*;
 
     fn make_record(pnl: f64) -> TradeRecord {

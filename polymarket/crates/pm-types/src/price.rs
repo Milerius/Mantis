@@ -168,6 +168,9 @@ impl core::fmt::Display for Pnl {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+    use std::string::ToString;
+
     use super::*;
 
     // Price tests

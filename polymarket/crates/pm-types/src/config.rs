@@ -10,6 +10,11 @@
 //! let cfg: BotConfig = toml::from_str(&src)?;
 //! ```
 
+extern crate std;
+
+use std::string::String;
+use std::vec::Vec;
+
 use serde::{Deserialize, Serialize};
 
 use crate::asset::{Asset, Timeframe};
@@ -117,6 +122,10 @@ pub struct BotConfig {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+    use std::string::ToString;
+    use std::vec;
+
     use super::*;
 
     /// TOML that mirrors `config/default.toml` exactly.
