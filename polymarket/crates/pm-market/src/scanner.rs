@@ -47,33 +47,28 @@ pub struct MarketInfo {
 
 // ─── Gamma API response types ────────────────────────────────────────────────
 
-/// A single token entry from the Gamma API `tokens` array.
-#[derive(Debug, Deserialize)]
-pub struct GammaToken {
-    /// Token ID string.
-    #[serde(rename = "token_id")]
-    pub token_id: String,
-    /// Outcome label (e.g. `"Up"`, `"Down"`).
-    pub outcome: String,
-}
-
 /// A single market entry nested inside a Gamma API event.
+///
+/// The real Gamma API encodes `clobTokenIds` and `outcomes` as JSON strings
+/// (e.g. `"[\"id1\",\"id2\"]"`), so we deserialise them as raw strings and
+/// parse them in [`extract_token_ids_from_strings`].
 #[derive(Debug, Deserialize)]
 pub struct GammaMarket {
     /// Market condition ID.
     #[serde(rename = "conditionId")]
     pub condition_id: String,
-    /// Market slug.
-    pub slug: String,
     /// Whether the market is currently active.
     #[serde(default)]
     pub active: bool,
     /// Whether the market is closed.
     #[serde(default)]
     pub closed: bool,
-    /// Tokens with their outcome labels.
+    /// JSON-encoded array of CLOB token IDs, e.g. `"[\"up_id\",\"down_id\"]"`.
+    #[serde(rename = "clobTokenIds", default)]
+    pub clob_token_ids: String,
+    /// JSON-encoded array of outcome labels, e.g. `"[\"Up\",\"Down\"]"`.
     #[serde(default)]
-    pub tokens: Vec<GammaToken>,
+    pub outcomes: String,
     /// End date/time ISO string.
     #[serde(rename = "endDate", default)]
     pub end_date: String,
@@ -82,8 +77,11 @@ pub struct GammaMarket {
 /// A single event entry from the Gamma API response.
 #[derive(Debug, Deserialize)]
 pub struct GammaEvent {
-    /// Event title (e.g. `"Bitcoin Up or Down?"`).
+    /// Event title (e.g. `"Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET"`).
     pub title: String,
+    /// Event slug (e.g. `"btc-updown-15m-1774798200"`).
+    #[serde(default)]
+    pub slug: String,
     /// Markets contained in this event.
     #[serde(default)]
     pub markets: Vec<GammaMarket>,
@@ -126,33 +124,53 @@ fn parse_asset_timeframe(title: &str, slug: &str) -> Option<(Asset, Timeframe)> 
         // Generic "hour" match falls back to 1-hour.
         Timeframe::Hour1
     } else {
-        // Default to 1-hour if the event is clearly crypto Up/Down but has no
-        // explicit timeframe tag.
-        Timeframe::Hour1
+        // Default to 15-minute if the event is clearly crypto Up/Down but has no
+        // explicit timeframe tag (the tag_slug=up-or-down endpoint returns mostly 15m).
+        Timeframe::Min15
     };
 
     Some((asset, timeframe))
 }
 
-/// Extract `(token_id_up, token_id_down)` from the tokens array.
+/// Extract `(token_id_up, token_id_down)` from the raw JSON-string fields
+/// `clobTokenIds` and `outcomes` returned by the Gamma API.
 ///
-/// Returns `None` if both Up and Down tokens cannot be found.
-fn extract_token_ids(tokens: &[GammaToken]) -> Option<(String, String)> {
+/// The API encodes both as JSON arrays serialised into a string, e.g.:
+/// - `clobTokenIds`: `"[\"tok_up\",\"tok_down\"]"`
+/// - `outcomes`: `"[\"Up\",\"Down\"]"`
+///
+/// Returns `None` if either token cannot be resolved.
+fn extract_token_ids_from_strings(
+    clob_token_ids: &str,
+    outcomes: &str,
+) -> Option<(String, String)> {
+    // Parse both JSON-string-encoded arrays.
+    let ids: Vec<String> = serde_json::from_str(clob_token_ids).ok()?;
+    let labels: Vec<String> = serde_json::from_str(outcomes).ok()?;
+
+    if ids.len() < 2 || labels.len() < 2 {
+        return None;
+    }
+
+    // Zip ids with outcome labels and find Up/Down.
     let mut up_id: Option<String> = None;
     let mut down_id: Option<String> = None;
 
-    for token in tokens {
-        match token.outcome.to_lowercase().as_str() {
-            "up" | "yes" => up_id = Some(token.token_id.clone()),
-            "down" | "no" => down_id = Some(token.token_id.clone()),
+    for (id, label) in ids.iter().zip(labels.iter()) {
+        match label.to_lowercase().as_str() {
+            "up" | "yes" => up_id = Some(id.clone()),
+            "down" | "no" => down_id = Some(id.clone()),
             _ => {}
         }
     }
 
-    match (up_id, down_id) {
-        (Some(up), Some(down)) => Some((up, down)),
-        _ => None,
+    // If label-based matching failed (e.g. labels are not "Up"/"Down"),
+    // fall back to positional: first token = Up, second = Down.
+    if up_id.is_none() || down_id.is_none() {
+        return Some((ids[0].clone(), ids[1].clone()));
     }
+
+    Some((up_id?, down_id?))
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -162,9 +180,9 @@ pub const GAMMA_API_BASE: &str = "https://gamma-api.polymarket.com";
 
 /// Scan the Polymarket Gamma API for active crypto Up/Down markets.
 ///
-/// Queries `GET /events?limit=50&active=true&closed=false` and filters the
-/// results to markets matching the requested `assets`. Each call typically
-/// takes 1–3 seconds over a low-latency connection.
+/// Queries `GET /events?limit=100&active=true&closed=false&tag_slug=up-or-down`
+/// which targets the crypto Up/Down binary prediction markets specifically.
+/// Each call typically takes 1–3 seconds over a low-latency connection.
 ///
 /// # Errors
 ///
@@ -174,7 +192,9 @@ pub async fn scan_active_markets(
     client: &Client,
     assets: &[Asset],
 ) -> Result<Vec<MarketInfo>, ScanError> {
-    let url = format!("{GAMMA_API_BASE}/events?limit=50&active=true&closed=false");
+    let url = format!(
+        "{GAMMA_API_BASE}/events?limit=100&active=true&closed=false&tag_slug=up-or-down"
+    );
     debug!(url = %url, "scanning Gamma API for active markets");
 
     let response = client.get(&url).send().await?.text().await?;
@@ -193,9 +213,8 @@ pub fn parse_gamma_response(json: &str, assets: &[Asset]) -> Result<Vec<MarketIn
     let mut results = Vec::new();
 
     for event in &events {
-        // Determine asset from the event title (e.g. "Bitcoin Up or Down?").
-        // Pass an empty slug here; the timeframe will be resolved per-market.
-        let Some((asset, _event_timeframe)) = parse_asset_timeframe(&event.title, "") else {
+        // Determine asset + timeframe from the event title and slug.
+        let Some((asset, event_timeframe)) = parse_asset_timeframe(&event.title, &event.slug) else {
             continue;
         };
 
@@ -209,17 +228,23 @@ pub fn parse_gamma_response(json: &str, assets: &[Asset]) -> Result<Vec<MarketIn
                 continue;
             }
 
-            let Some((token_id_up, token_id_down)) = extract_token_ids(&market.tokens) else {
+            let Some((token_id_up, token_id_down)) =
+                extract_token_ids_from_strings(&market.clob_token_ids, &market.outcomes)
+            else {
+                debug!(
+                    condition_id = %market.condition_id,
+                    clob_token_ids = %market.clob_token_ids,
+                    outcomes = %market.outcomes,
+                    "skipping market — could not extract token IDs"
+                );
                 continue;
             };
 
-            // Resolve timeframe from the market slug (most specific source).
-            // Fall back to the event title if the slug has no timeframe tag.
-            let (_, timeframe) = parse_asset_timeframe(&event.title, &market.slug)
-                .unwrap_or((asset, _event_timeframe));
+            // Resolve timeframe from event slug/title (already parsed above).
+            let timeframe = event_timeframe;
 
             results.push(MarketInfo {
-                slug: market.slug.clone(),
+                slug: event.slug.clone(),
                 condition_id: market.condition_id.clone(),
                 token_id_up,
                 token_id_down,
@@ -246,41 +271,39 @@ pub fn parse_gamma_response(json: &str, assets: &[Asset]) -> Result<Vec<MarketIn
 mod tests {
     use super::*;
 
+    /// Sample response matching the real Gamma API shape for tag_slug=up-or-down.
     const SAMPLE_GAMMA_RESPONSE: &str = r#"[
         {
-            "title": "Bitcoin Up or Down?",
+            "title": "Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET",
+            "slug": "btc-updown-15m-1774798200",
             "markets": [
                 {
                     "conditionId": "0xabc123",
-                    "slug": "btc-updown-15m-2024-01-15",
                     "active": true,
                     "closed": false,
                     "endDate": "2024-01-15T12:15:00Z",
-                    "tokens": [
-                        {"token_id": "tok_up_1", "outcome": "Up"},
-                        {"token_id": "tok_down_1", "outcome": "Down"}
-                    ]
+                    "clobTokenIds": "[\"tok_up_1\",\"tok_down_1\"]",
+                    "outcomes": "[\"Up\",\"Down\"]"
                 }
             ]
         },
         {
-            "title": "Ethereum Up or Down?",
+            "title": "Ethereum Up or Down - March 29, 1:00PM-2:00PM ET",
+            "slug": "eth-updown-1h-1774800000",
             "markets": [
                 {
                     "conditionId": "0xdef456",
-                    "slug": "eth-updown-1h-2024-01-15",
                     "active": true,
                     "closed": false,
                     "endDate": "2024-01-15T13:00:00Z",
-                    "tokens": [
-                        {"token_id": "tok_eth_up", "outcome": "Up"},
-                        {"token_id": "tok_eth_down", "outcome": "Down"}
-                    ]
+                    "clobTokenIds": "[\"tok_eth_up\",\"tok_eth_down\"]",
+                    "outcomes": "[\"Up\",\"Down\"]"
                 }
             ]
         },
         {
             "title": "Some Other Event",
+            "slug": "some-other-event",
             "markets": []
         }
     ]"#;
@@ -316,18 +339,16 @@ mod tests {
     fn parse_gamma_skips_closed_market() {
         let json = r#"[
             {
-                "title": "Bitcoin Up or Down?",
+                "title": "Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET",
+                "slug": "btc-updown-15m-1774798200",
                 "markets": [
                     {
                         "conditionId": "0x111",
-                        "slug": "btc-updown-1h",
                         "active": false,
                         "closed": true,
                         "endDate": "2024-01-01T00:00:00Z",
-                        "tokens": [
-                            {"token_id": "t1", "outcome": "Up"},
-                            {"token_id": "t2", "outcome": "Down"}
-                        ]
+                        "clobTokenIds": "[\"t1\",\"t2\"]",
+                        "outcomes": "[\"Up\",\"Down\"]"
                     }
                 ]
             }
@@ -337,40 +358,71 @@ mod tests {
     }
 
     #[test]
-    fn parse_gamma_skips_market_without_both_tokens() {
+    fn parse_gamma_skips_market_without_token_ids() {
         let json = r#"[
             {
-                "title": "Bitcoin Up or Down?",
+                "title": "Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET",
+                "slug": "btc-updown-15m-1774798200",
                 "markets": [
                     {
                         "conditionId": "0x222",
-                        "slug": "btc-updown-1h",
                         "active": true,
                         "closed": false,
                         "endDate": "2024-01-15T13:00:00Z",
-                        "tokens": [
-                            {"token_id": "t1", "outcome": "Up"}
-                        ]
+                        "clobTokenIds": "",
+                        "outcomes": ""
                     }
                 ]
             }
         ]"#;
         let results = parse_gamma_response(json, &[]).expect("parse should succeed");
-        assert!(results.is_empty(), "market without Down token should be skipped");
+        assert!(results.is_empty(), "market with empty token IDs should be skipped");
+    }
+
+    #[test]
+    fn parse_gamma_positional_fallback_when_labels_unknown() {
+        // When outcome labels are not "Up"/"Down", fall back to positional (first=Up, second=Down).
+        let json = r#"[
+            {
+                "title": "Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET",
+                "slug": "btc-updown-15m-1774798200",
+                "markets": [
+                    {
+                        "conditionId": "0x333",
+                        "active": true,
+                        "closed": false,
+                        "endDate": "2024-01-15T12:15:00Z",
+                        "clobTokenIds": "[\"tok_a\",\"tok_b\"]",
+                        "outcomes": "[\"Yes\",\"No\"]"
+                    }
+                ]
+            }
+        ]"#;
+        let results = parse_gamma_response(json, &[]).expect("parse should succeed");
+        assert_eq!(results.len(), 1);
+        // "Yes" maps to Up, "No" maps to Down.
+        assert_eq!(results[0].token_id_up, "tok_a");
+        assert_eq!(results[0].token_id_down, "tok_b");
     }
 
     #[test]
     fn parse_asset_timeframe_btc_15m() {
-        let (asset, tf) = parse_asset_timeframe("Bitcoin Up or Down?", "btc-updown-15m")
-            .expect("should match BTC 15m");
+        let (asset, tf) = parse_asset_timeframe(
+            "Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET",
+            "btc-updown-15m-1774798200",
+        )
+        .expect("should match BTC 15m");
         assert_eq!(asset, Asset::Btc);
         assert_eq!(tf, Timeframe::Min15);
     }
 
     #[test]
     fn parse_asset_timeframe_eth_1h() {
-        let (asset, tf) = parse_asset_timeframe("Ethereum Up or Down?", "eth-updown-1h")
-            .expect("should match ETH 1h");
+        let (asset, tf) = parse_asset_timeframe(
+            "Ethereum Up or Down - March 29, 1:00PM-2:00PM ET",
+            "eth-updown-1h-1774800000",
+        )
+        .expect("should match ETH 1h");
         assert_eq!(asset, Asset::Eth);
         assert_eq!(tf, Timeframe::Hour1);
     }
@@ -379,5 +431,39 @@ mod tests {
     fn parse_asset_timeframe_non_crypto_returns_none() {
         let result = parse_asset_timeframe("Gold Up or Down?", "gold-updown");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn extract_token_ids_up_down_labels() {
+        let (up, down) =
+            extract_token_ids_from_strings(r#"["tok_up","tok_down"]"#, r#"["Up","Down"]"#)
+                .expect("should extract tokens");
+        assert_eq!(up, "tok_up");
+        assert_eq!(down, "tok_down");
+    }
+
+    #[test]
+    fn extract_token_ids_yes_no_labels() {
+        let (up, down) =
+            extract_token_ids_from_strings(r#"["tok_yes","tok_no"]"#, r#"["Yes","No"]"#)
+                .expect("should extract tokens");
+        assert_eq!(up, "tok_yes");
+        assert_eq!(down, "tok_no");
+    }
+
+    #[test]
+    fn extract_token_ids_positional_fallback() {
+        // Unknown labels — falls back to positional.
+        let (up, down) =
+            extract_token_ids_from_strings(r#"["id_a","id_b"]"#, r#"["Foo","Bar"]"#)
+                .expect("should extract tokens via positional fallback");
+        assert_eq!(up, "id_a");
+        assert_eq!(down, "id_b");
+    }
+
+    #[test]
+    fn extract_token_ids_empty_string_returns_none() {
+        let result = extract_token_ids_from_strings("", "");
+        assert!(result.is_none(), "empty strings should return None");
     }
 }
