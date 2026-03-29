@@ -8,12 +8,24 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+pub mod arb;
+pub mod early;
 pub mod engine;
 pub mod estimator;
+pub mod hedge;
 pub mod logistic;
 pub mod lookup;
+pub mod momentum;
+pub mod multi;
+pub mod strategy_trait;
 
+pub use arb::CompleteSetArb;
+pub use early::EarlyDirectional;
 pub use engine::SignalEngine;
 pub use estimator::FairValueEstimator;
+pub use hedge::HedgeLock;
 pub use logistic::{Coefficients, LogisticModel};
 pub use lookup::{LookupCell, LookupTable, MAG_BUCKETS, TIME_BUCKETS};
+pub use momentum::MomentumConfirmation;
+pub use multi::StrategyEngine;
+pub use strategy_trait::Strategy;
