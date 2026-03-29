@@ -11,6 +11,7 @@ std = ["pm-types/std"]
 
 [dependencies]
 pm-types = { workspace = true }
+libm = "0.2"
 
 [dev-dependencies]
 criterion = { workspace = true }
