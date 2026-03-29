@@ -15,6 +15,7 @@ pub mod asset;
 pub mod config;
 pub mod market;
 pub mod price;
+pub mod strategy;
 pub mod trade;
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
@@ -24,4 +25,5 @@ pub use asset::{Asset, ExchangeSource, Side, Timeframe};
 pub use config::{AssetConfig, BacktestConfig, BotConfig, BotSection, DataConfig, Mode};
 pub use market::{OrderId, Signal, Tick, Window, WindowId};
 pub use price::{ContractPrice, Edge, Pnl, Price};
+pub use strategy::{EntryDecision, MarketState, StrategyId};
 pub use trade::{Fill, OpenPosition, OrderReason, Rejection, SizedOrder, TradeRecord};

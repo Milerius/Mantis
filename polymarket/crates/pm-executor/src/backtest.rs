@@ -7,8 +7,8 @@
 use pm_bookkeeper::{TradeSummary, compute_summary};
 use pm_signal::{FairValueEstimator, SignalEngine};
 use pm_types::{
-    Asset, ContractPrice, OpenPosition, OrderReason, Pnl, Price, Side, Tick, Timeframe,
-    TradeRecord, Window, WindowId,
+    Asset, ContractPrice, OpenPosition, OrderReason, Pnl, Price, Side, StrategyId, Tick,
+    Timeframe, TradeRecord, Window, WindowId,
 };
 use tracing::debug;
 
@@ -141,6 +141,7 @@ fn resolve_positions(
             opened_at_ms: pos.opened_at_ms,
             closed_at_ms,
             close_reason: OrderReason::ExpiryClose,
+            strategy_id: StrategyId::EarlyDirectional,
         });
     }
 }
@@ -192,6 +193,7 @@ fn settle_remaining(
             opened_at_ms: pos.opened_at_ms,
             closed_at_ms: window.close_time_ms,
             close_reason: OrderReason::ExpiryClose,
+            strategy_id: StrategyId::EarlyDirectional,
         });
     }
 }
@@ -209,6 +211,10 @@ fn settle_remaining(
 /// Does not panic in normal operation.  The internal market-price and
 /// entry-price computations use clamped inputs that are always valid
 /// [`ContractPrice`] values.
+#[expect(
+    clippy::too_many_lines,
+    reason = "backtest loop is inherently linear; extracting sub-functions would obscure the data flow"
+)]
 #[must_use]
 pub fn run_backtest<F: FairValueEstimator>(
     ticks: impl Iterator<Item = Tick>,

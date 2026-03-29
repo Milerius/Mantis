@@ -10,6 +10,7 @@ use crate::{
     asset::{Asset, Side},
     market::{OrderId, WindowId},
     price::{ContractPrice, Pnl},
+    strategy::StrategyId,
 };
 
 // ─── Fill ────────────────────────────────────────────────────────────────────
@@ -156,6 +157,8 @@ pub struct TradeRecord {
     pub closed_at_ms: u64,
     /// Reason the closing order was placed.
     pub close_reason: OrderReason,
+    /// Strategy that originally triggered this trade.
+    pub strategy_id: StrategyId,
 }
 
 impl TradeRecord {
@@ -188,6 +191,7 @@ mod tests {
             opened_at_ms: 0,
             closed_at_ms: 3_600_000,
             close_reason: OrderReason::ExpiryClose,
+            strategy_id: StrategyId::EarlyDirectional,
         }
     }
 
