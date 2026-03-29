@@ -1,0 +1,24 @@
+[package]
+name = "pm-signal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = []
+std = ["pm-types/std"]
+
+[dependencies]
+pm-types = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "signal"
+harness = false
+path = "benches/signal.rs"
+
+[lints]
+workspace = true
