@@ -61,12 +61,20 @@ pub fn run_backtest_cmd(cfg: &BotConfig, table: LookupTable, test_dates: &[Strin
     )
     .context("failed to load test-set data")?;
 
-    let engine = SignalEngine::new(table, cfg.bot.min_edge);
+    // The signal engine uses the configured min_edge as its threshold.
+    // The backtest's min_edge controls the simulated market price offset:
+    //   simulated_market_price = fair_value - bt_min_edge * 0.5
+    // For signals to fire, bt_min_edge must be > engine min_edge so the
+    // simulated edge exceeds the threshold.  We use 3x the engine's min_edge.
+    let engine_min_edge = cfg.bot.min_edge;
+    let bt_min_edge = engine_min_edge * 3.0;
+
+    let engine = SignalEngine::new(table, engine_min_edge);
 
     let bt_config = BacktestConfig {
         initial_balance: cfg.backtest.initial_balance,
         slippage_bps: cfg.backtest.slippage_bps,
-        min_edge: cfg.bot.min_edge,
+        min_edge: bt_min_edge,
         max_position_usdc: cfg.bot.max_position_usdc,
     };
 
