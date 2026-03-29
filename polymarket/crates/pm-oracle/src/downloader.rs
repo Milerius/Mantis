@@ -189,9 +189,11 @@ pub fn parse_date_to_millis(date: &str) -> Result<u64, DownloadError> {
     use chrono::{TimeZone as _, Utc};
     let naive = parse_naive_date(date)?;
     let dt = Utc
-        .from_utc_datetime(&naive.and_hms_opt(0, 0, 0).ok_or_else(|| {
-            DownloadError::InvalidDate(date.to_string())
-        })?)
+        .from_utc_datetime(
+            &naive
+                .and_hms_opt(0, 0, 0)
+                .ok_or_else(|| DownloadError::InvalidDate(date.to_string()))?,
+        )
         .timestamp_millis();
     u64::try_from(dt).map_err(|_| DownloadError::InvalidDate(date.to_string()))
 }

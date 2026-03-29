@@ -2,12 +2,15 @@
 //!
 //! Target: < 50 ns per `evaluate()` call.
 
-#![expect(clippy::expect_used, reason = "bench setup uses expect for conciseness")]
+#![expect(
+    clippy::expect_used,
+    reason = "bench setup uses expect for conciseness"
+)]
 #![expect(missing_docs, reason = "criterion macros generate undocumented items")]
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use pm_signal::{
-    Coefficients, FairValueEstimator, LogisticModel, LookupTable, SignalEngine, MAG_BUCKETS,
+    Coefficients, FairValueEstimator, LogisticModel, LookupTable, MAG_BUCKETS, SignalEngine,
     TIME_BUCKETS,
 };
 use pm_types::{Asset, ContractPrice, ExchangeSource, Price, Tick, Timeframe, Window, WindowId};
@@ -60,7 +63,12 @@ fn make_logistic_model() -> LogisticModel {
     model.set_coefficients(
         Asset::Btc,
         Timeframe::Hour1,
-        Coefficients { beta_0: 0.5, beta_1: 30.0, beta_2: -0.2, beta_3: 5.0 },
+        Coefficients {
+            beta_0: 0.5,
+            beta_1: 30.0,
+            beta_2: -0.2,
+            beta_3: 5.0,
+        },
     );
     model
 }

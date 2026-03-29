@@ -20,7 +20,10 @@ impl<F: FairValueEstimator> SignalEngine<F> {
     #[inline]
     #[must_use]
     pub fn new(estimator: F, min_edge: f64) -> Self {
-        Self { estimator, min_edge }
+        Self {
+            estimator,
+            min_edge,
+        }
     }
 
     /// Evaluate a tick against an open window and return a [`Signal`] if edge
@@ -47,9 +50,12 @@ impl<F: FairValueEstimator> SignalEngine<F> {
         let magnitude = window.magnitude(tick.price);
         let direction = window.direction(tick.price);
 
-        let fair_value = self
-            .estimator
-            .estimate(magnitude, time_remaining_secs, window.asset, window.timeframe);
+        let fair_value = self.estimator.estimate(
+            magnitude,
+            time_remaining_secs,
+            window.asset,
+            window.timeframe,
+        );
 
         // Edge for Up:   fair_value     - market_price
         // Edge for Down: (1-fair_value) - (1-market_price)  =  market_price - fair_value
@@ -88,7 +94,10 @@ impl<F: FairValueEstimator> SignalEngine<F> {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "test helpers use expect for conciseness")]
+#[expect(
+    clippy::expect_used,
+    reason = "test helpers use expect for conciseness"
+)]
 mod tests {
     use pm_types::{Asset, ExchangeSource, Price, Side, Timeframe, WindowId};
 
@@ -122,7 +131,12 @@ mod tests {
         model.set_coefficients(
             Asset::Btc,
             Timeframe::Hour1,
-            Coefficients { beta_0: intercept, beta_1: 0.0, beta_2: 0.0, beta_3: 0.0 },
+            Coefficients {
+                beta_0: intercept,
+                beta_1: 0.0,
+                beta_2: 0.0,
+                beta_3: 0.0,
+            },
         );
         model
     }
@@ -197,7 +211,10 @@ mod tests {
         let tick = make_tick(102.0, 3_600_000 - 30_000);
 
         let signal = engine.evaluate(&tick, &window, market_price);
-        assert!(signal.is_some(), "exactly 30s remaining should still emit a signal");
+        assert!(
+            signal.is_some(),
+            "exactly 30s remaining should still emit a signal"
+        );
     }
 
     // ── Down signal ──────────────────────────────────────────────────────────
@@ -227,6 +244,8 @@ mod tests {
         let model = biased_model(0.5);
         let engine = SignalEngine::new(model, 0.01);
         // Just verify it compiles and the accessor is callable.
-        let _coeffs = engine.estimator().get_coefficients(Asset::Btc, Timeframe::Hour1);
+        let _coeffs = engine
+            .estimator()
+            .get_coefficients(Asset::Btc, Timeframe::Hour1);
     }
 }

@@ -101,7 +101,7 @@ impl Iterator for HistoricalReplay {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{write_candles, Candle};
+    use crate::storage::{Candle, write_candles};
 
     fn make_candle(ts_ms: u64, close: f64) -> Candle {
         Candle {
@@ -126,8 +126,7 @@ mod tests {
             make_candle(1_000, 10_000.0),
             make_candle(2_000, 20_000.0),
         ];
-        let btc_path =
-            storage::cache_path(dir.path(), Asset::Btc, ExchangeSource::Binance, date);
+        let btc_path = storage::cache_path(dir.path(), Asset::Btc, ExchangeSource::Binance, date);
         write_candles(&btc_path, &btc_candles).expect("write btc");
 
         let mut replay = HistoricalReplay::load(
@@ -228,8 +227,14 @@ mod tests {
         let second_pass: Vec<Tick> = replay.collect();
         assert_eq!(second_pass.len(), 3);
         assert_eq!(
-            first_pass.iter().map(|t| t.timestamp_ms).collect::<Vec<_>>(),
-            second_pass.iter().map(|t| t.timestamp_ms).collect::<Vec<_>>()
+            first_pass
+                .iter()
+                .map(|t| t.timestamp_ms)
+                .collect::<Vec<_>>(),
+            second_pass
+                .iter()
+                .map(|t| t.timestamp_ms)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -259,19 +264,14 @@ mod tests {
         let days = ["2025-01-01", "2025-01-02"];
         for (i, day) in days.iter().enumerate() {
             let candles = vec![make_candle((i as u64 + 1) * 1_000, 100.0)];
-            let path =
-                storage::cache_path(dir.path(), Asset::Btc, ExchangeSource::Binance, day);
+            let path = storage::cache_path(dir.path(), Asset::Btc, ExchangeSource::Binance, day);
             write_candles(&path, &candles).expect("write");
         }
 
         let dates: Vec<String> = days.iter().map(|s| s.to_string()).collect();
-        let replay = HistoricalReplay::load(
-            dir.path(),
-            &[Asset::Btc],
-            ExchangeSource::Binance,
-            &dates,
-        )
-        .expect("load");
+        let replay =
+            HistoricalReplay::load(dir.path(), &[Asset::Btc], ExchangeSource::Binance, &dates)
+                .expect("load");
 
         assert_eq!(replay.len(), 2);
     }

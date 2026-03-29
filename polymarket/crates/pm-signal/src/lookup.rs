@@ -41,7 +41,10 @@ pub struct LookupCell {
 impl Default for LookupCell {
     #[inline]
     fn default() -> Self {
-        Self { probability: 0.5, sample_count: 0 }
+        Self {
+            probability: 0.5,
+            sample_count: 0,
+        }
     }
 }
 
@@ -61,9 +64,15 @@ impl LookupTable {
     /// The large stack allocation is intentional and sized by compile-time constants.
     #[inline]
     #[must_use]
-    #[expect(clippy::large_stack_arrays, reason = "table is sized by const, intentional")]
+    #[expect(
+        clippy::large_stack_arrays,
+        reason = "table is sized by const, intentional"
+    )]
     pub fn new(min_samples: u32) -> Self {
-        Self { cells: [LookupCell::default(); TABLE_SIZE], min_samples }
+        Self {
+            cells: [LookupCell::default(); TABLE_SIZE],
+            min_samples,
+        }
     }
 
     /// Flat index for `(asset, timeframe, mag_bucket, time_bucket)`.
@@ -80,7 +89,10 @@ impl LookupTable {
     /// The argument count exceeds the default clippy limit, but all parameters are
     /// necessary to address a single logical cell and no grouping is natural here.
     #[inline]
-    #[expect(clippy::too_many_arguments, reason = "all args address a single cell; no grouping is natural")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "all args address a single cell; no grouping is natural"
+    )]
     pub fn set(
         &mut self,
         asset: Asset,
@@ -91,7 +103,10 @@ impl LookupTable {
         sample_count: u32,
     ) {
         let i = Self::idx(asset, timeframe, mag_bucket, time_bucket);
-        self.cells[i] = LookupCell { probability, sample_count };
+        self.cells[i] = LookupCell {
+            probability,
+            sample_count,
+        };
     }
 
     /// Get a reference to the cell for the given indices.
@@ -148,7 +163,11 @@ impl FairValueEstimator for LookupTable {
         let mb = Self::mag_bucket(magnitude);
         let tb = Self::time_bucket(time_remaining_secs);
         let cell = self.get(asset, timeframe, mb, tb);
-        let prob = if cell.sample_count >= self.min_samples { cell.probability } else { 0.5 };
+        let prob = if cell.sample_count >= self.min_samples {
+            cell.probability
+        } else {
+            0.5
+        };
         // prob is either 0.5 (valid by construction) or a stored probability.
         // Stored probabilities should be in [0,1]; fall back to 0.5 if they are not.
         ContractPrice::new(prob).unwrap_or_else(|| {
@@ -270,8 +289,14 @@ mod tests {
             .estimate(0.002, 120, Asset::Eth, Timeframe::Hour1)
             .as_f64();
 
-        assert!((btc_p - 0.65).abs() < 1e-12, "BTC expected 0.65, got {btc_p}");
-        assert!((eth_p - 0.40).abs() < 1e-12, "ETH expected 0.40, got {eth_p}");
+        assert!(
+            (btc_p - 0.65).abs() < 1e-12,
+            "BTC expected 0.65, got {btc_p}"
+        );
+        assert!(
+            (eth_p - 0.40).abs() < 1e-12,
+            "ETH expected 0.40, got {eth_p}"
+        );
     }
 
     #[test]

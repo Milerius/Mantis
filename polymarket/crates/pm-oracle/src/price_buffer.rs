@@ -105,9 +105,7 @@ impl AssetBuffer {
         // Build a logical slice of (ts, price) pairs ordered oldest → newest.
         // We use binary search on a reconstructed logical index to stay O(log N).
         // The ring stores [oldest..], wrapping, so logical[i] = data[(oldest+i) % CAP].
-        let logical_get = |i: usize| -> (u64, Price) {
-            self.data[(oldest + i) % BUFFER_CAPACITY]
-        };
+        let logical_get = |i: usize| -> (u64, Price) { self.data[(oldest + i) % BUFFER_CAPACITY] };
 
         // Binary search for the last entry with timestamp <= target.
         let mut lo: usize = 0;

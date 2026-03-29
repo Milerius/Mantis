@@ -227,7 +227,11 @@ mod tests {
         assert_eq!(s.losses, 2);
         assert!((s.win_rate - 0.5).abs() < 1e-10);
         assert!((s.total_pnl - 5.0).abs() < 1e-10);
-        assert!((s.max_drawdown - (-10.0)).abs() < 1e-10, "max_drawdown={}", s.max_drawdown);
+        assert!(
+            (s.max_drawdown - (-10.0)).abs() < 1e-10,
+            "max_drawdown={}",
+            s.max_drawdown
+        );
         assert!((s.best_trade - 10.0).abs() < 1e-10);
         assert!((s.worst_trade - (-10.0)).abs() < 1e-10);
     }
@@ -243,7 +247,11 @@ mod tests {
             make_record(4, -15.0),
         ];
         let s = compute_summary(&trades);
-        assert!((s.profit_factor - 1.5).abs() < 1e-10, "profit_factor={}", s.profit_factor);
+        assert!(
+            (s.profit_factor - 1.5).abs() < 1e-10,
+            "profit_factor={}",
+            s.profit_factor
+        );
     }
 
     #[test]
@@ -289,7 +297,10 @@ mod tests {
             make_record(3, 8.0),
         ];
         let s3 = compute_summary(&trades3);
-        assert!(s3.sharpe_ratio > 0.0, "positive skew should yield positive sharpe");
+        assert!(
+            s3.sharpe_ratio > 0.0,
+            "positive skew should yield positive sharpe"
+        );
     }
 
     #[test]

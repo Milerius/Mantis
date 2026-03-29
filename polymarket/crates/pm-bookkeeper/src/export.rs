@@ -144,7 +144,11 @@ mod tests {
         let lines: Vec<&str> = content.lines().collect();
 
         // Header + 3 data rows
-        assert_eq!(lines.len(), 4, "expected header + 3 data lines, got:\n{content}");
+        assert_eq!(
+            lines.len(),
+            4,
+            "expected header + 3 data lines, got:\n{content}"
+        );
         assert_eq!(lines[0], "trade_number,cumulative_pnl,timestamp_ms");
         assert!(lines[1].starts_with("1,10,"), "line1={}", lines[1]);
         assert!(lines[2].starts_with("2,5,"), "line2={}", lines[2]);
@@ -180,8 +184,7 @@ mod tests {
         export_summary(&path, &summary).expect("export summary");
 
         let content = fs::read_to_string(&path).expect("read json");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&content).expect("valid JSON");
+        let parsed: serde_json::Value = serde_json::from_str(&content).expect("valid JSON");
 
         assert_eq!(parsed["total_trades"], 2);
         assert_eq!(parsed["wins"], 1);

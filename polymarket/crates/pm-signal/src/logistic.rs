@@ -25,7 +25,12 @@ impl Default for Coefficients {
     /// All-zeros default → sigmoid(0) = 0.5, a flat prior.
     #[inline]
     fn default() -> Self {
-        Self { beta_0: 0.0, beta_1: 0.0, beta_2: 0.0, beta_3: 0.0 }
+        Self {
+            beta_0: 0.0,
+            beta_1: 0.0,
+            beta_2: 0.0,
+            beta_3: 0.0,
+        }
     }
 }
 
@@ -91,7 +96,10 @@ impl FairValueEstimator for LogisticModel {
         let c = self.get_coefficients(asset, timeframe);
         // The casts are intentional: time values are well within f64 precision range
         // (max ~14400s), so precision loss is negligible in the probability context.
-        #[expect(clippy::cast_precision_loss, reason = "time values fit in f64 for this domain")]
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "time values fit in f64 for this domain"
+        )]
         let time_norm = time_remaining_secs as f64 / timeframe.duration_secs() as f64;
         let logit = c.beta_0
             + c.beta_1 * magnitude
@@ -128,11 +136,23 @@ mod tests {
         model.set_coefficients(
             Asset::Btc,
             Timeframe::Hour1,
-            Coefficients { beta_0: 0.0, beta_1: 50.0, beta_2: 0.0, beta_3: 0.0 },
+            Coefficients {
+                beta_0: 0.0,
+                beta_1: 50.0,
+                beta_2: 0.0,
+                beta_3: 0.0,
+            },
         );
-        let p_small = model.estimate(0.001, 300, Asset::Btc, Timeframe::Hour1).as_f64();
-        let p_large = model.estimate(0.010, 300, Asset::Btc, Timeframe::Hour1).as_f64();
-        assert!(p_large > p_small, "larger magnitude should yield higher prob");
+        let p_small = model
+            .estimate(0.001, 300, Asset::Btc, Timeframe::Hour1)
+            .as_f64();
+        let p_large = model
+            .estimate(0.010, 300, Asset::Btc, Timeframe::Hour1)
+            .as_f64();
+        assert!(
+            p_large > p_small,
+            "larger magnitude should yield higher prob"
+        );
         assert!(p_large > 0.5, "should be above neutral");
     }
 
@@ -165,7 +185,12 @@ mod tests {
     #[test]
     fn set_and_get_coefficients_roundtrip() {
         let mut model = LogisticModel::new();
-        let coeffs = Coefficients { beta_0: 0.1, beta_1: 2.5, beta_2: -0.3, beta_3: 0.0 };
+        let coeffs = Coefficients {
+            beta_0: 0.1,
+            beta_1: 2.5,
+            beta_2: -0.3,
+            beta_3: 0.0,
+        };
         model.set_coefficients(Asset::Eth, Timeframe::Min15, coeffs);
         let got = model.get_coefficients(Asset::Eth, Timeframe::Min15);
         assert_eq!(*got, coeffs);
@@ -177,12 +202,24 @@ mod tests {
         model.set_coefficients(
             Asset::Btc,
             Timeframe::Min5,
-            Coefficients { beta_0: 1.0, beta_1: 0.0, beta_2: 0.0, beta_3: 0.0 },
+            Coefficients {
+                beta_0: 1.0,
+                beta_1: 0.0,
+                beta_2: 0.0,
+                beta_3: 0.0,
+            },
         );
         // Eth still has default (all zeros)
-        let btc_p = model.estimate(0.0, 60, Asset::Btc, Timeframe::Min5).as_f64();
-        let eth_p = model.estimate(0.0, 60, Asset::Eth, Timeframe::Min5).as_f64();
-        assert!(btc_p > 0.5 + 1e-6, "BTC with positive intercept should be > 0.5");
+        let btc_p = model
+            .estimate(0.0, 60, Asset::Btc, Timeframe::Min5)
+            .as_f64();
+        let eth_p = model
+            .estimate(0.0, 60, Asset::Eth, Timeframe::Min5)
+            .as_f64();
+        assert!(
+            btc_p > 0.5 + 1e-6,
+            "BTC with positive intercept should be > 0.5"
+        );
         assert!((eth_p - 0.5).abs() < 1e-12, "ETH default should be 0.5");
     }
 }

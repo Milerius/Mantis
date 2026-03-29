@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use pm_types::{Asset, ExchangeSource, Price, Tick};
 use serde::{Deserialize, Serialize};
 
@@ -59,12 +59,7 @@ impl Candle {
 /// The returned path has the form `{cache_dir}/{asset}_{source}_{date}.jsonl.gz`
 /// where asset and source are lower-cased display strings.
 #[must_use]
-pub fn cache_path(
-    cache_dir: &Path,
-    asset: Asset,
-    source: ExchangeSource,
-    date: &str,
-) -> PathBuf {
+pub fn cache_path(cache_dir: &Path, asset: Asset, source: ExchangeSource, date: &str) -> PathBuf {
     let filename = format!(
         "{}_{}_{}.jsonl.gz",
         asset.to_string().to_lowercase(),
@@ -196,7 +191,11 @@ mod tests {
     fn candle_to_tick_negative_close_returns_none() {
         let mut candle = sample_candle(1_000_000);
         candle.close = -1.0;
-        assert!(candle.to_tick(Asset::Eth, ExchangeSource::Binance).is_none());
+        assert!(
+            candle
+                .to_tick(Asset::Eth, ExchangeSource::Binance)
+                .is_none()
+        );
     }
 
     #[test]
@@ -226,15 +225,30 @@ mod tests {
     #[test]
     fn is_cached_false_when_file_missing() {
         let dir = tempfile::tempdir().expect("temp dir");
-        assert!(!is_cached(dir.path(), Asset::Btc, ExchangeSource::Binance, "2025-01-01"));
+        assert!(!is_cached(
+            dir.path(),
+            Asset::Btc,
+            ExchangeSource::Binance,
+            "2025-01-01"
+        ));
     }
 
     #[test]
     fn is_cached_true_after_write() {
         let dir = tempfile::tempdir().expect("temp dir");
         let candles = vec![sample_candle(1)];
-        let path = cache_path(dir.path(), Asset::Xrp, ExchangeSource::Binance, "2025-03-01");
+        let path = cache_path(
+            dir.path(),
+            Asset::Xrp,
+            ExchangeSource::Binance,
+            "2025-03-01",
+        );
         write_candles(&path, &candles).expect("write");
-        assert!(is_cached(dir.path(), Asset::Xrp, ExchangeSource::Binance, "2025-03-01"));
+        assert!(is_cached(
+            dir.path(),
+            Asset::Xrp,
+            ExchangeSource::Binance,
+            "2025-03-01"
+        ));
     }
 }

@@ -62,7 +62,10 @@ struct ActivePosition {
 ///
 /// `value` must already be in `[0.0, 1.0]`.  The `unwrap_or_else` branch is
 /// unreachable in practice (only fires if the invariant is violated).
-#[expect(clippy::expect_used, reason = "fallback 0.5 is always a valid ContractPrice")]
+#[expect(
+    clippy::expect_used,
+    reason = "fallback 0.5 is always a valid ContractPrice"
+)]
 fn contract_price_clamped(value: f64) -> ContractPrice {
     ContractPrice::new(value)
         .unwrap_or_else(|| ContractPrice::new(0.5).expect("0.5 is always a valid ContractPrice"))
@@ -75,7 +78,10 @@ fn contract_price_clamped(value: f64) -> ContractPrice {
 ///
 /// Win: payout = `size_usdc / entry_price`; P&L = `payout - size_usdc`.
 /// Loss: payout = `0`; P&L = `-size_usdc`.
-#[expect(clippy::too_many_arguments, reason = "all args are logically required to close a position")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "all args are logically required to close a position"
+)]
 fn resolve_positions(
     open_positions: &mut Vec<ActivePosition>,
     trades: &mut Vec<TradeRecord>,
@@ -243,7 +249,8 @@ pub fn run_backtest<F: FairValueEstimator>(
             let window_close_ms = window_open_ms + duration_ms;
 
             // Check whether the tick has crossed into a new window.
-            let need_new_window = windows[slot].is_none_or(|w| tick.timestamp_ms >= w.close_time_ms);
+            let need_new_window =
+                windows[slot].is_none_or(|w| tick.timestamp_ms >= w.close_time_ms);
 
             if need_new_window {
                 // Resolve positions for the expiring window (if any).
@@ -280,7 +287,9 @@ pub fn run_backtest<F: FairValueEstimator>(
             }
 
             // Try to open a position if we don't already have one for this slot.
-            let Some(window) = windows[slot] else { continue };
+            let Some(window) = windows[slot] else {
+                continue;
+            };
 
             if open_positions.iter().any(|ap| ap.slot == slot) {
                 continue;
@@ -289,9 +298,10 @@ pub fn run_backtest<F: FairValueEstimator>(
             // Compute fair value via the estimator.
             let magnitude = window.magnitude(tick.price);
             let time_remaining = window.time_remaining_secs(tick.timestamp_ms);
-            let fair_value = signal_engine
-                .estimator()
-                .estimate(magnitude, time_remaining, tick.asset, tf);
+            let fair_value =
+                signal_engine
+                    .estimator()
+                    .estimate(magnitude, time_remaining, tick.asset, tf);
 
             // Conservative simulated market price: fair_value shifted down by
             // `min_edge * 0.5`, clamped to [0.01, 0.99].  This represents a
@@ -347,13 +357,20 @@ pub fn run_backtest<F: FairValueEstimator>(
 
     let summary = compute_summary(&trades);
 
-    BacktestResult { trades, summary, final_balance: balance }
+    BacktestResult {
+        trades,
+        summary,
+        final_balance: balance,
+    }
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "test helpers use expect for conciseness")]
+#[expect(
+    clippy::expect_used,
+    reason = "test helpers use expect for conciseness"
+)]
 mod tests {
     use pm_signal::{LookupTable, SignalEngine};
     use pm_types::{Asset, ExchangeSource, Price, Timeframe};
