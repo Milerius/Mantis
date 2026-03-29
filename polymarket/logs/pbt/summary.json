@@ -1,13 +1,13 @@
 {
-  "total_trades": 558,
-  "wins": 449,
-  "losses": 109,
-  "win_rate": 0.8046594982078853,
-  "total_pnl": 12689.653001594856,
+  "total_trades": 646,
+  "wins": 506,
+  "losses": 140,
+  "win_rate": 0.7832817337461301,
+  "total_pnl": 14032.761653876167,
   "max_drawdown": -100.0,
-  "best_trade": 146.23287671232873,
+  "best_trade": 117.85714285714283,
   "worst_trade": -25.0,
-  "avg_pnl_per_trade": 22.741313622929848,
-  "sharpe_ratio": 145.0442025737269,
-  "profit_factor": 5.656753395080684
+  "avg_pnl_per_trade": 21.722541259870226,
+  "sharpe_ratio": 139.63424910750828,
+  "profit_factor": 5.009360472536042
 }
