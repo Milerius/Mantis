@@ -3,6 +3,7 @@
 mod backtest;
 mod calibrate;
 mod download;
+mod paper;
 mod pbt_backtest;
 mod pbt_download;
 mod sweep;
@@ -45,6 +46,8 @@ enum Commands {
     PbtDownload,
     /// Run backtest using real PolyBackTest contract prices.
     PbtBacktest,
+    /// Run paper trading with live WebSocket feeds.
+    Paper,
 }
 
 // ─── Config loader ────────────────────────────────────────────────────────────
@@ -103,6 +106,10 @@ async fn main() -> Result<()> {
 
         Commands::PbtBacktest => {
             pbt_backtest::run_pbt_backtest(&cfg)?;
+        }
+
+        Commands::Paper => {
+            paper::run_paper(&cfg).await?;
         }
     }
 

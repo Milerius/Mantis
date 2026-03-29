@@ -66,8 +66,12 @@ pm-signal = { workspace = true, features = ["std"] }
 pm-oracle = { workspace = true }
 pm-executor = { workspace = true }
 pm-bookkeeper = { workspace = true }
+pm-market = { workspace = true }
+pm-risk = { workspace = true }
 clap = { workspace = true }
+chrono = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
