@@ -28,6 +28,15 @@ pub enum StrategyId {
     HedgeLock,
 }
 
+impl StrategyId {
+    /// Return a bit mask for this strategy (for compact per-strategy tracking).
+    #[inline]
+    #[must_use]
+    pub const fn bit(self) -> u8 {
+        1 << (self as u8)
+    }
+}
+
 impl core::fmt::Display for StrategyId {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -173,6 +182,107 @@ pub struct EntryDecision {
     /// Human-readable label to distinguish variants (e.g. "tight", "loose").
     #[cfg_attr(feature = "std", serde(skip))]
     pub label: StrategyLabel,
+}
+
+// ─── InstanceStats ──────────────────────────────────────────────────────────
+
+/// Per-instance session performance metrics.
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub struct InstanceStats {
+    /// Number of winning trades.
+    pub wins: u32,
+    /// Number of losing trades.
+    pub losses: u32,
+    /// Cumulative realized P&L.
+    pub realized_pnl: f64,
+    /// Largest single-trade profit.
+    pub biggest_win: f64,
+    /// Largest single-trade loss (negative).
+    pub biggest_loss: f64,
+}
+
+impl InstanceStats {
+    /// Record a resolved trade.
+    pub fn record(&mut self, pnl: f64) {
+        if pnl >= 0.0 {
+            self.wins += 1;
+            if pnl > self.biggest_win {
+                self.biggest_win = pnl;
+            }
+        } else {
+            self.losses += 1;
+            if pnl < self.biggest_loss {
+                self.biggest_loss = pnl;
+            }
+        }
+        self.realized_pnl += pnl;
+    }
+
+    /// Win rate as a percentage (0--100).
+    #[must_use]
+    pub fn win_rate(&self) -> f64 {
+        let total = self.wins + self.losses;
+        if total == 0 {
+            0.0
+        } else {
+            self.wins as f64 / total as f64 * 100.0
+        }
+    }
+}
+
+// ─── FillEvent ──────────────────────────────────────────────────────────────
+
+/// Emitted by a [`StrategyInstance`] when it opens a position.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub struct FillEvent {
+    /// Label of the instance that produced this fill.
+    pub label: StrategyLabel,
+    /// Underlying asset.
+    pub asset: Asset,
+    /// Prediction window timeframe.
+    pub timeframe: Timeframe,
+    /// Direction of the bet.
+    pub side: Side,
+    /// Strategy that produced the decision.
+    pub strategy_id: StrategyId,
+    /// Actual fill price after slippage.
+    pub fill_price: f64,
+    /// USDC size of the position.
+    pub size_usdc: f64,
+    /// Model confidence in the range `[0.0, 1.0]`.
+    pub confidence: f64,
+    /// Instance balance after this fill.
+    pub balance_after: f64,
+}
+
+// ─── StrategyInstance ───────────────────────────────────────────────────────
+
+/// A fully self-contained strategy that owns its state.
+///
+/// Each instance has its own balance, positions, risk config, and P&L.
+#[cfg(feature = "std")]
+pub trait StrategyInstance: Send + Sync {
+    /// Unique label for this instance (e.g. "ED-tight").
+    fn label(&self) -> &str;
+
+    /// Evaluate market state and optionally open a position.
+    fn on_tick(&mut self, state: &MarketState) -> Option<FillEvent>;
+
+    /// Resolve positions when a window closes.
+    fn on_window_close(
+        &mut self,
+        window_id: WindowId,
+        outcome: Side,
+        timestamp_ms: u64,
+    ) -> std::vec::Vec<crate::trade::TradeRecord>;
+
+    /// Current balance.
+    fn balance(&self) -> f64;
+
+    /// Session stats for reporting.
+    fn stats(&self) -> &InstanceStats;
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

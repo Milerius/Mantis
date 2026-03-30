@@ -28,5 +28,7 @@ pub use config::{
 };
 pub use market::{OrderId, Signal, Tick, Window, WindowId};
 pub use price::{ContractPrice, Edge, Pnl, Price};
-pub use strategy::{EntryDecision, MarketState, StrategyId};
+pub use strategy::{EntryDecision, FillEvent, InstanceStats, MarketState, StrategyId, StrategyLabel};
+#[cfg(feature = "std")]
+pub use strategy::StrategyInstance;
 pub use trade::{Fill, OpenPosition, OrderReason, Rejection, SizedOrder, TradeRecord};
