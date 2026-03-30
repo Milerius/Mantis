@@ -43,8 +43,12 @@ impl Strategy for EarlyDirectional {
     }
 
     fn evaluate(&self, state: &MarketState) -> Option<EntryDecision> {
-        // Must be in the early window.
-        if state.time_elapsed_secs > self.max_entry_time_secs {
+        // Must be in the early window. Scale max_entry_time proportionally
+        // to the timeframe duration so that the same fraction of the window
+        // applies regardless of whether this is a 5m or 15m market.
+        // `max_entry_time_secs` is treated as the threshold for a 15m (900s) window.
+        let effective_max_time = self.max_entry_time_secs * state.timeframe.duration_secs() / 900;
+        if state.time_elapsed_secs > effective_max_time {
             return None;
         }
 
