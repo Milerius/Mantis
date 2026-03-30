@@ -924,7 +924,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     let token_asset_map: SharedTokenAssetMap =
         Arc::new(Mutex::new(HashMap::new()));
 
-    let mut market_mgr = MarketManager::new(Duration::from_secs(30));
+    let mut market_mgr = MarketManager::new(Duration::from_secs(cfg.bot.scan_interval_secs));
     let http_client = Client::new();
     let mut next_scan_at = tokio::time::Instant::now();
 
@@ -980,7 +980,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
     loop {
         // If the PM WS reconnected, force an immediate scanner poll + REST
-        // re-fetch so LatestPrices doesn't stay stale for up to 30 seconds.
+        // re-fetch so LatestPrices doesn't stay stale for the scan interval.
         if pm_needs_refresh.swap(false, std::sync::atomic::Ordering::Relaxed) {
             info!("PM WS reconnected — forcing immediate REST orderbook re-fetch");
             next_scan_at = tokio::time::Instant::now();
@@ -1117,34 +1117,29 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
                         market_mgr.update_markets(markets.clone());
 
-                        // Fetch REST orderbook snapshots for all discovered markets so the
-                        // tracker has initial state immediately — even on quiet markets where
-                        // the PM WebSocket won't fire until the next book change.
-                        #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64 for centuries")]
-                        let now_ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as u64;
+                        // Fetch REST orderbook snapshots only for NEW tokens so the
+                        // tracker has initial state immediately.  Already-subscribed
+                        // markets receive live updates via the PM WebSocket, so
+                        // re-fetching them would be wasteful (~314 REST calls/scan).
+                        if !new_token_ids.is_empty() {
+                            #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64 for centuries")]
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as u64;
 
-                        for m in &markets {
-                            fetch_rest_orderbook(
-                                &http_client,
-                                &m.token_id_up,
-                                &mut local_tracker,
-                                now_ms,
-                            ).await;
-                            fetch_rest_orderbook(
-                                &http_client,
-                                &m.token_id_down,
-                                &mut local_tracker,
-                                now_ms,
-                            ).await;
+                            for token_id in &new_token_ids {
+                                fetch_rest_orderbook(
+                                    &http_client,
+                                    token_id,
+                                    &mut local_tracker,
+                                    now_ms,
+                                ).await;
+                            }
 
                             info!(
-                                condition_id = %m.condition_id,
-                                token_up = %m.token_id_up,
-                                token_down = %m.token_id_down,
-                                "REST orderbook snapshot fetched"
+                                count = new_token_ids.len(),
+                                "REST orderbook snapshots fetched for new tokens"
                             );
                         }
 
@@ -1159,7 +1154,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                         }
                     }
                     Err(e) => {
-                        warn!(error = %e, "market scan failed — retrying in 30s");
+                        warn!(error = %e, "market scan failed — retrying next interval");
                     }
                 }
                 next_scan_at = tokio::time::Instant::now() + market_mgr.scanner_interval;

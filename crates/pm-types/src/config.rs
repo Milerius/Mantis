@@ -104,7 +104,7 @@ fn default_max_positions_per_window() -> usize {
     1
 }
 fn default_scan_interval_secs() -> u64 {
-    30
+    120
 }
 fn default_max_price_age_ms() -> u64 {
     15_000
