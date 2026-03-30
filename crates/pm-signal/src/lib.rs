@@ -11,6 +11,7 @@ extern crate std;
 pub mod arb;
 pub mod early;
 pub mod engine;
+pub mod entry_timer;
 pub mod estimator;
 pub mod hedge;
 pub mod logistic;
@@ -33,6 +34,7 @@ pub use lookup::{LookupCell, LookupTable, MAG_BUCKETS, TIME_BUCKETS};
 pub use momentum::MomentumConfirmation;
 pub use multi::{AnyStrategy, Decisions, MAX_STRATEGIES, StrategyEngine};
 pub use strategy_trait::Strategy;
+pub use entry_timer::{EntryTimer, PendingEntry};
 pub use trend_filter::TrendFilter;
 
 #[cfg(feature = "std")]

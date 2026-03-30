@@ -157,6 +157,45 @@ fn default_min_trend_strength() -> f64 {
     0.0005
 }
 
+// ─── EntryTimingConfig ──────────────────────────────────────────────────────
+
+/// Configuration for smart entry timing.
+///
+/// When enabled, the bot waits after a signal fires for optimal conditions
+/// (spread improvement, better ask price) before executing, up to a timeout.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EntryTimingConfig {
+    /// Enable/disable smart entry timing (default: false — opt-in).
+    #[serde(default = "default_entry_timing_enabled")]
+    pub enabled: bool,
+    /// Maximum seconds to wait for optimal conditions after signal fires.
+    #[serde(default = "default_max_wait_secs")]
+    pub max_wait_secs: u64,
+    /// Minimum spread improvement (fraction narrower than at signal time) to trigger early entry.
+    #[serde(default = "default_min_spread_improvement")]
+    pub min_spread_improvement: f64,
+}
+
+impl Default for EntryTimingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_entry_timing_enabled(),
+            max_wait_secs: default_max_wait_secs(),
+            min_spread_improvement: default_min_spread_improvement(),
+        }
+    }
+}
+
+fn default_entry_timing_enabled() -> bool {
+    false
+}
+fn default_max_wait_secs() -> u64 {
+    5
+}
+fn default_min_spread_improvement() -> f64 {
+    0.02
+}
+
 // ─── Mode ────────────────────────────────────────────────────────────────────
 
 /// Operating mode of the bot.
@@ -257,6 +296,9 @@ pub struct BotSection {
     /// Higher-timeframe EMA trend filter configuration.
     #[serde(default)]
     pub trend_filter: TrendFilterConfig,
+    /// Smart entry timing configuration.
+    #[serde(default)]
+    pub entry_timing: EntryTimingConfig,
 }
 
 // ─── BotConfig ───────────────────────────────────────────────────────────────

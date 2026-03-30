@@ -26,7 +26,7 @@ use pm_market::{
 use pm_market::scanner::scan_active_markets;
 use pm_oracle::{BinanceWs, EmaTracker, OkxWs, OracleRouter, PriceBuffer};
 use pm_risk::{RiskConfig, RiskManager};
-use pm_signal::{TrendFilter, build_engine_from_config};
+use pm_signal::{EntryTimer, PendingEntry, TrendFilter, build_engine_from_config};
 use pm_types::{
     Asset, ContractPrice, MarketState, OpenPosition, Side, Timeframe, Tick, Window, WindowId,
     config::BotConfig,
@@ -92,6 +92,8 @@ struct LiveWindow {
     window: Window,
     /// Whether a position has already been opened in this window.
     position_opened: bool,
+    /// Pending entry waiting for optimal execution conditions (smart entry timing).
+    pending_entry: Option<PendingEntry>,
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -441,6 +443,7 @@ fn handle_window_transition(
     live_windows[slot] = Some(LiveWindow {
         window: new_window,
         position_opened: false,
+        pending_entry: None,
     });
 
     // Open a PBT-compatible window recording.
@@ -505,6 +508,7 @@ fn process_tick(
     ema_tracker: &mut EmaTracker,
     trend_filter: &TrendFilter,
     shared_l2: &SharedL2Manager,
+    entry_timer: Option<&EntryTimer>,
 ) {
     // Update the EMA tracker with the latest price for this asset.
     ema_tracker.update(tick.asset, tick.price.as_f64());
@@ -638,6 +642,83 @@ fn process_tick(
             }
         }
 
+        // ── Check pending entry (smart entry timing) ───────────────────
+        // If there is already a pending entry for this window, check if it
+        // should execute now before evaluating new strategies.
+        if let Some(timer) = entry_timer
+            && let Some(ref mut pending) = lw.pending_entry
+        {
+            // Compute current spread from prices.
+            let current_ask = match pending.decision.side {
+                Side::Up => prices.rec_ask_up,
+                Side::Down => prices.rec_ask_down,
+            };
+            let current_spread = match (prices.rec_ask_up, prices.rec_bid_up) {
+                (Some(ask), Some(bid)) => Some(ask - bid),
+                _ => None,
+            };
+
+            // Update best price tracking.
+            if let Some(ask) = current_ask {
+                EntryTimer::update_best_price(pending, ask);
+            }
+
+            if timer.should_execute(pending, tick.timestamp_ms, current_ask, current_spread) {
+                let decision = pending.decision;
+                // Clear the pending entry before attempting execution.
+                lw.pending_entry = None;
+
+                // Run through risk + executor.
+                let sized_order = match risk.evaluate(
+                    &decision,
+                    window.id,
+                    tick.asset,
+                    executor.balance(),
+                ) {
+                    Ok(order) => order,
+                    Err(rejection) => {
+                        warn!(
+                            asset = %tick.asset,
+                            side = %decision.side,
+                            rejection = ?rejection,
+                            "risk manager rejected pending entry"
+                        );
+                        continue;
+                    }
+                };
+
+                if let Some(fill) = executor.try_open_position(
+                    &decision,
+                    window.id,
+                    tick.asset,
+                    tick.timestamp_ms,
+                    sized_order.size_usdc,
+                ) {
+                    risk.on_position_opened(OpenPosition {
+                        window_id: window.id,
+                        asset: tick.asset,
+                        side: decision.side,
+                        avg_entry: fill.fill_price,
+                        size_usdc: sized_order.size_usdc,
+                        opened_at_ms: tick.timestamp_ms,
+                    });
+                    lw.position_opened = true;
+                    info!(
+                        asset = %tick.asset,
+                        side = %decision.side,
+                        fill_price = fill.fill_price.as_f64(),
+                        size_usdc = fill.size_usdc,
+                        balance = executor.balance(),
+                        "pending entry executed (smart timing)"
+                    );
+                }
+            }
+            // If we have a pending entry (still waiting) or just executed, skip new signals.
+            if lw.position_opened || lw.pending_entry.is_some() {
+                continue;
+            }
+        }
+
         let decisions = engine.evaluate_all(&state);
 
         for decision in &decisions {
@@ -664,6 +745,31 @@ fn process_tick(
                     "trend filter skipped trade"
                 );
                 continue;
+            }
+
+            // ── Smart entry timing gate ─────────────────────────────────
+            // If entry timing is enabled, store the decision as a pending
+            // entry instead of executing immediately. The pending entry will
+            // be checked on subsequent ticks.
+            if let Some(_timer) = entry_timer {
+                let current_spread = match (prices.rec_ask_up, prices.rec_bid_up) {
+                    (Some(ask), Some(bid)) => Some(ask - bid),
+                    _ => None,
+                };
+                lw.pending_entry = Some(PendingEntry {
+                    decision: *decision,
+                    signal_time_ms: tick.timestamp_ms,
+                    initial_spread: current_spread,
+                    best_price_seen: decision.limit_price.as_f64(),
+                });
+                debug!(
+                    asset = %tick.asset,
+                    timeframe = ?timeframe,
+                    side = %decision.side,
+                    "entry timing: queued pending entry"
+                );
+                // Only queue one pending entry per window.
+                break;
             }
 
             // Run decision through risk manager before opening.
@@ -813,6 +919,14 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     let trend_filter = TrendFilter {
         require_trend_alignment: tf_cfg.enabled,
         min_trend_strength: tf_cfg.min_trend_strength,
+    };
+
+    // ── Smart entry timing ─────────────────────────────────────────────────
+    let et_cfg = &cfg.bot.entry_timing;
+    let entry_timer_opt = if et_cfg.enabled {
+        Some(EntryTimer::new(et_cfg.max_wait_secs, et_cfg.min_spread_improvement))
+    } else {
+        None
     };
 
     // Per-(asset, timeframe) window table.
@@ -1062,6 +1176,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     &mut ema_tracker,
                     &trend_filter,
                     &shared_l2,
+                    entry_timer_opt.as_ref(),
                 );
 
                 // ── Periodic cleanup of expired positions ───────────────────

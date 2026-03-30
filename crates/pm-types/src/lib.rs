@@ -23,7 +23,8 @@ pub mod trade;
 pub use asset::{Asset, ExchangeSource, Side, Timeframe, TrendDirection};
 #[cfg(feature = "std")]
 pub use config::{
-    AssetConfig, BacktestConfig, BotConfig, BotSection, DataConfig, Mode, TrendFilterConfig,
+    AssetConfig, BacktestConfig, BotConfig, BotSection, DataConfig, EntryTimingConfig, Mode,
+    TrendFilterConfig,
 };
 pub use market::{OrderId, Signal, Tick, Window, WindowId};
 pub use price::{ContractPrice, Edge, Pnl, Price};
