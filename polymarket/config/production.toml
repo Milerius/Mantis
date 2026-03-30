@@ -18,12 +18,12 @@ timeframes = ["min5", "min15"]
 
 [[bot.assets]]
 asset = "sol"
-enabled = false
+enabled = true
 timeframes = ["min5", "min15"]
 
 [[bot.assets]]
 asset = "xrp"
-enabled = false
+enabled = true
 timeframes = ["min5", "min15"]
 
 # Config E: the winner from A/B testing

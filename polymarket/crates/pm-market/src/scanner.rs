@@ -199,7 +199,7 @@ pub async fn scan_active_markets(
     // without a timeframe tag returns stale markets from months ago.
     for tf_tag in &["5M", "15M"] {
         let url = format!(
-            "{GAMMA_API_BASE}/events?limit=50&active=true&closed=false&tag_slug=up-or-down&tag_slug={tf_tag}"
+            "{GAMMA_API_BASE}/events?limit=100&active=true&closed=false&tag_slug=up-or-down&tag_slug={tf_tag}"
         );
         debug!(url = %url, "scanning Gamma API");
 
