@@ -389,7 +389,9 @@ impl PolymarketWs {
                         let nanos = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
                             .map_or(500, |d| d.subsec_nanos() % 1000);
+                        #[expect(clippy::cast_precision_loss, reason = "backoff_secs <= 30")]
                         let jitter = (backoff_secs as f64) * 0.25 * (f64::from(nanos) / 1000.0 - 0.5);
+                        #[expect(clippy::cast_precision_loss, reason = "backoff_secs <= 30")]
                         let sleep_secs = backoff_secs as f64 + jitter;
                         warn!(
                             backoff_secs = format!("{sleep_secs:.1}"),
@@ -405,7 +407,9 @@ impl PolymarketWs {
                         let nanos = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
                             .map_or(500, |d| d.subsec_nanos() % 1000);
+                        #[expect(clippy::cast_precision_loss, reason = "backoff_secs <= 30")]
                         let jitter = (backoff_secs as f64) * 0.25 * (f64::from(nanos) / 1000.0 - 0.5);
+                        #[expect(clippy::cast_precision_loss, reason = "backoff_secs <= 30")]
                         let sleep_secs = backoff_secs as f64 + jitter;
                         warn!(
                             backoff_secs = format!("{sleep_secs:.1}"),

@@ -73,6 +73,7 @@ impl LatestPrices {
 
     /// Update a single side (Up or Down, bid or ask) without overwriting
     /// the other side. Creates a new entry if none exists yet.
+    #[expect(clippy::too_many_arguments, reason = "both sides + metadata needed per update")]
     pub fn update_side(
         &mut self,
         asset: Asset,

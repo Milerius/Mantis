@@ -38,6 +38,9 @@ use tracing::{debug, info, warn};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+/// Maximum window duration for expired-position cleanup (4 hours).
+const MAX_WINDOW_DURATION_MS: u64 = 4 * 60 * 60 * 1_000;
+
 /// Fallback ask price for the Up contract when no live orderbook is available.
 const FALLBACK_ASK_UP: f64 = 0.55;
 
@@ -245,10 +248,9 @@ fn resolve_orderbook_prices(
     let ob_snap = condition_id_opt.and_then(|cid| {
         match shared_tracker.lock() {
             Ok(tracker) => {
-                if let Some(snap) = tracker.get(cid) {
-                    if snap.ask_up.is_some() || snap.ask_down.is_some() {
+                if let Some(snap) = tracker.get(cid)
+                    && (snap.ask_up.is_some() || snap.ask_down.is_some()) {
                         return Some(*snap);
-                    }
                 }
             }
             Err(e) => {
@@ -822,8 +824,6 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     // ── 6. Main event loop ────────────────────────────────────────────────────
     let slippage = f64::from(cfg.backtest.slippage_bps) * 0.0001;
 
-    // Maximum window duration for expired-position cleanup (4 hours).
-    const MAX_WINDOW_DURATION_MS: u64 = 4 * 60 * 60 * 1_000; // 14_400_000
     let mut next_cleanup_at = tokio::time::Instant::now() + Duration::from_secs(60);
 
     loop {
