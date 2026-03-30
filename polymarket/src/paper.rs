@@ -10,7 +10,8 @@
 //! - [`RiskManager`] — enforces exposure/kill-switch rules before opening positions
 //! - [`SnapshotRecorder`] — records combined spot + orderbook snapshots to plain JSONL
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -18,7 +19,10 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use pm_bookkeeper::{SnapshotRecorder, WindowRecorder};
 use pm_executor::{PaperConfig, PaperExecutor};
-use pm_market::{MarketManager, OrderbookTracker, PolymarketWs};
+use pm_market::{
+    LatestPrices, MarketManager, OrderbookTracker, PolymarketWs, SharedLatestPrices,
+    SharedTokenAssetMap,
+};
 use pm_market::scanner::scan_active_markets;
 use pm_oracle::{BinanceWs, OkxWs, OracleRouter, PriceBuffer};
 use pm_risk::{RiskConfig, RiskManager};
@@ -50,23 +54,52 @@ static FIRST_TICK_LOGGED: std::sync::atomic::AtomicBool =
 static TICK_COUNT: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+// ─── OrderbookPrices ──────────────────────────────────────────────────────────
+
+/// Resolved orderbook prices for both legs of a binary market.
+///
+/// `rec_ask_*` / `rec_bid_*` fields are `Some` only when live PM WebSocket
+/// prices were used; they are `None` when the fallback model was applied. The
+/// snapshot recorder uses these `Option<f64>` values to distinguish live fills
+/// from model fills.  The `contract_*` fields are `Option<ContractPrice>` as
+/// required by [`MarketState`].
+struct OrderbookPrices {
+    /// Recorder-facing raw ask/bid values — `None` means fallback model used.
+    rec_ask_up: Option<f64>,
+    rec_ask_down: Option<f64>,
+    rec_bid_up: Option<f64>,
+    rec_bid_down: Option<f64>,
+    /// MarketState-facing contract prices.
+    contract_ask_up: Option<ContractPrice>,
+    contract_ask_down: Option<ContractPrice>,
+    contract_bid_up: Option<ContractPrice>,
+    contract_bid_down: Option<ContractPrice>,
+}
+
+// ─── Window tracking ─────────────────────────────────────────────────────────
+
+/// Per-(asset, timeframe) window state updated on each tick.
+struct LiveWindow {
+    window: Window,
+    /// Whether a position has already been opened in this window.
+    position_opened: bool,
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Fetch the best ask and bid prices for a single CLOB token from the REST
 /// orderbook endpoint.
 ///
-/// Returns `(ask, bid)` where each is `Some(price)` if the relevant side is
-/// non-empty and the price is in the valid range `(0.01, 0.99)`, or `None`
-/// otherwise.
+/// Pushes any valid prices into `tracker` so the PM WebSocket tracker has
+/// initial state immediately — even on quiet markets where the WS won't fire
+/// until the next book change.
 async fn fetch_rest_orderbook(
     client: &Client,
     token_id: &str,
-    tracker: &std::sync::Arc<std::sync::Mutex<pm_market::OrderbookTracker>>,
+    tracker: &Arc<Mutex<OrderbookTracker>>,
     now_ms: u64,
 ) {
-    let url = format!(
-        "https://clob.polymarket.com/book?token_id={token_id}"
-    );
+    let url = format!("https://clob.polymarket.com/book?token_id={token_id}");
     match client.get(&url).send().await {
         Ok(resp) => match resp.json::<serde_json::Value>().await {
             Ok(book) => {
@@ -113,13 +146,488 @@ async fn fetch_rest_orderbook(
     }
 }
 
-// ─── Window tracking ─────────────────────────────────────────────────────────
+/// Build the fallback [`OrderbookPrices`] from model defaults when no live
+/// orderbook data is available or when live prices look like a resolved market.
+///
+/// Called on every tick where the orderbook snapshot is `None` or the prices
+/// are outside `(0.01, 0.99)`.
+#[inline]
+fn fallback_prices(spot_direction: Side, slippage: f64) -> OrderbookPrices {
+    let base = if spot_direction == Side::Up {
+        FALLBACK_ASK_UP
+    } else {
+        FALLBACK_ASK_DOWN
+    };
+    let opp = 1.0 - base + slippage;
+    OrderbookPrices {
+        rec_ask_up: None,
+        rec_ask_down: None,
+        rec_bid_up: None,
+        rec_bid_down: None,
+        contract_ask_up: ContractPrice::new(base.clamp(0.01, 0.99)),
+        contract_ask_down: ContractPrice::new(opp.clamp(0.01, 0.99)),
+        contract_bid_up: ContractPrice::new((base - 0.02).clamp(0.01, 0.99)),
+        contract_bid_down: ContractPrice::new((opp - 0.02).clamp(0.01, 0.99)),
+    }
+}
 
-/// Per-(asset, timeframe) window state updated on each tick.
-struct LiveWindow {
-    window: Window,
-    /// Whether a position has already been opened in this window.
-    position_opened: bool,
+/// Resolve orderbook prices for a market from the PM WebSocket tracker or fall
+/// back to model defaults.
+///
+/// Called once per (asset, timeframe) per tick — before building [`MarketState`].
+/// Acquires the `shared_tracker` lock once, reads the snapshot, then releases
+/// it immediately. Falls back to [`fallback_prices`] when no live data exists or
+/// when prices appear to be from a resolved (settled) market.
+fn resolve_orderbook_prices(
+    tick: &Tick,
+    timeframe: Timeframe,
+    spot_direction: Side,
+    slippage: f64,
+    condition_id_opt: Option<&str>,
+    shared_tracker: &Arc<Mutex<OrderbookTracker>>,
+    shared_prices: &SharedLatestPrices,
+    market_mgr: &MarketManager,
+) -> OrderbookPrices {
+    // PRIMARY: try the LatestPrices cache (indexed by Asset, Timeframe).
+    // This is populated by PM WS events AND REST snapshots — never stale.
+    if let Ok(cache) = shared_prices.lock() {
+        if let Some(p) = cache.get(tick.asset, timeframe) {
+            let prices_are_sane =
+                p.ask_up > 0.01 && p.ask_up < 0.99 && p.ask_down > 0.01 && p.ask_down < 0.99;
+            if prices_are_sane {
+                return OrderbookPrices {
+                    rec_ask_up: Some(p.ask_up),
+                    rec_ask_down: Some(p.ask_down),
+                    rec_bid_up: Some(p.bid_up),
+                    rec_bid_down: Some(p.bid_down),
+                    contract_ask_up: ContractPrice::new(p.ask_up),
+                    contract_ask_down: ContractPrice::new(p.ask_down),
+                    contract_bid_up: ContractPrice::new(p.bid_up),
+                    contract_bid_down: ContractPrice::new(p.bid_down),
+                };
+            }
+        }
+    }
+
+    // SECONDARY: fall back to condition_id-based OrderbookTracker.
+    let ob_snap = condition_id_opt.and_then(|cid| {
+        if let Ok(tracker) = shared_tracker.lock()
+            && let Some(snap) = tracker.get(cid)
+            && (snap.ask_up.is_some() || snap.ask_down.is_some()) {
+                return Some(*snap);
+            }
+        market_mgr.orderbook(cid).copied()
+    });
+
+    match ob_snap {
+        Some(snap) if snap.ask_up.is_some() && snap.ask_down.is_some() => {
+            let a_up = snap.ask_up.map_or(FALLBACK_ASK_UP, ContractPrice::as_f64);
+            let a_down = snap.ask_down.map_or(FALLBACK_ASK_DOWN, ContractPrice::as_f64);
+            let b_up = snap.bid_up.map_or(a_up - 0.02, ContractPrice::as_f64);
+            let b_down = snap.bid_down.map_or(a_down - 0.02, ContractPrice::as_f64);
+
+            // Sanity-check: prices from a resolved market sit at ~$0.00 or
+            // ~$1.00 (fully settled). Reject anything outside (0.01, 0.99)
+            // for both legs — those are useless for live trading and would
+            // badly mis-price the model.
+            let prices_are_sane =
+                a_up > 0.01 && a_up < 0.99 && a_down > 0.01 && a_down < 0.99;
+
+            if prices_are_sane {
+                debug!(
+                    asset = %tick.asset,
+                    timeframe = ?timeframe,
+                    ask_up = a_up,
+                    ask_down = a_down,
+                    "using live PM WS orderbook prices"
+                );
+                OrderbookPrices {
+                    rec_ask_up: Some(a_up),
+                    rec_ask_down: Some(a_down),
+                    rec_bid_up: Some(b_up),
+                    rec_bid_down: Some(b_down),
+                    contract_ask_up: ContractPrice::new(a_up),
+                    contract_ask_down: ContractPrice::new(a_down),
+                    contract_bid_up: ContractPrice::new(b_up),
+                    contract_bid_down: ContractPrice::new(b_down),
+                }
+            } else {
+                warn!(
+                    asset = %tick.asset,
+                    timeframe = ?timeframe,
+                    ask_up = a_up,
+                    ask_down = a_down,
+                    "PM WS prices look like a resolved market — falling back to model defaults"
+                );
+                fallback_prices(spot_direction, slippage)
+            }
+        }
+        _ => fallback_prices(spot_direction, slippage),
+    }
+}
+
+/// Build a [`MarketState`] from a tick, the current window, and resolved prices.
+///
+/// Called once per (asset, timeframe) per tick after prices have been resolved.
+#[inline]
+fn build_market_state(
+    tick: &Tick,
+    timeframe: Timeframe,
+    window: &Window,
+    prices: &OrderbookPrices,
+) -> MarketState {
+    let magnitude = window.magnitude(tick.price);
+    let time_elapsed_secs =
+        (tick.timestamp_ms.saturating_sub(window.open_time_ms)) / 1_000;
+    let time_remaining_secs = window.time_remaining_secs(tick.timestamp_ms);
+    let spot_direction = window.direction(tick.price);
+
+    MarketState {
+        asset: tick.asset,
+        timeframe,
+        window_id: window.id,
+        window_open_price: window.open_price,
+        current_spot: tick.price,
+        spot_magnitude: magnitude,
+        spot_direction,
+        time_elapsed_secs,
+        time_remaining_secs,
+        contract_ask_up: prices.contract_ask_up,
+        contract_ask_down: prices.contract_ask_down,
+        contract_bid_up: prices.contract_bid_up,
+        contract_bid_down: prices.contract_bid_down,
+    }
+}
+
+/// Format a [`WindowId`] into a stack-allocated buffer without heap allocation.
+///
+/// Writes `"W{inner}"` into `buf` (clearing it first) and returns `buf.as_str()`.
+/// Use instead of `window_id.to_string()` in the hot path.
+#[inline]
+fn window_id_str<'b>(id: WindowId, buf: &'b mut String) -> &'b str {
+    buf.clear();
+    // WindowId::fmt writes "W{inner_u64}" — write! reuses the existing heap buffer.
+    let _ = write!(buf, "{id}");
+    buf.as_str()
+}
+
+/// Handle a window transition: resolve the old window and open a new one.
+///
+/// Called when a tick's timestamp has crossed the close boundary of the current
+/// live window for a given (asset, timeframe) slot. Records the outcome via both
+/// the [`WindowRecorder`] and the [`PaperExecutor`], then initialises a fresh
+/// [`LiveWindow`] for the new period.
+///
+/// # Failures
+///
+/// All recorder failures are logged via `warn!` and do not abort the loop.
+fn handle_window_transition(
+    slot: usize,
+    tick: &Tick,
+    timeframe: Timeframe,
+    window_open_ms: u64,
+    window_close_ms: u64,
+    live_windows: &mut Vec<Option<LiveWindow>>,
+    executor: &mut PaperExecutor,
+    risk: &mut RiskManager,
+    window_recorder: &mut WindowRecorder,
+) {
+    if let Some(old_lw) = live_windows[slot].take() {
+        let outcome = old_lw.window.direction(tick.price);
+
+        // Resolve the window in the executor first so we get the actual
+        // realised P&L for this window.
+        let window_pnl =
+            executor.resolve_window(old_lw.window.id, outcome, tick.timestamp_ms);
+
+        // Notify risk manager with the real P&L so it can track cumulative
+        // daily loss correctly.
+        risk.on_window_resolved(old_lw.window.id, window_pnl);
+
+        // Close the PBT-compatible window recording.
+        // `as_lower_str` / `as_label` return &'static str — zero allocation.
+        let mut win_buf = String::with_capacity(24);
+        let win_id = window_id_str(old_lw.window.id, &mut win_buf);
+        let old_key = WindowRecorder::window_key(
+            old_lw.window.asset.as_lower_str(),
+            old_lw.window.timeframe.as_label(),
+            win_id,
+        );
+        let outcome_str = format!("{outcome}");
+        if let Err(e) = window_recorder.close_window(&old_key, &outcome_str, tick.price.as_f64())
+        {
+            warn!(error = %e, key = %old_key, "failed to close window recording");
+        }
+
+        info!(
+            asset = %tick.asset,
+            timeframe = ?timeframe,
+            window_id = %old_lw.window.id,
+            outcome = %outcome,
+            "window resolved"
+        );
+    }
+
+    let raw_id = (window_open_ms / 1_000) ^ (tick.asset.index() as u64 * 0x9E37_79B9)
+        ^ (timeframe.duration_secs() * 7);
+    let new_window = Window {
+        id: WindowId::new(raw_id),
+        asset: tick.asset,
+        timeframe,
+        open_time_ms: window_open_ms,
+        close_time_ms: window_close_ms,
+        open_price: tick.price,
+    };
+    live_windows[slot] = Some(LiveWindow {
+        window: new_window,
+        position_opened: false,
+    });
+
+    // Open a PBT-compatible window recording.
+    // ISO timestamp conversion only happens on window open/close, not every tick.
+    #[expect(clippy::cast_possible_wrap, reason = "timestamps are well within i64 range for millennia")]
+    let start_iso = chrono::DateTime::from_timestamp_millis(window_open_ms as i64)
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_default();
+    #[expect(clippy::cast_possible_wrap, reason = "timestamps are well within i64 range for millennia")]
+    let end_iso = chrono::DateTime::from_timestamp_millis(window_close_ms as i64)
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_default();
+    let mut win_buf = String::with_capacity(24);
+    let win_id = window_id_str(new_window.id, &mut win_buf);
+    window_recorder.open_window(
+        tick.asset.as_lower_str(),
+        timeframe.as_label(),
+        win_id,
+        &start_iso,
+        &end_iso,
+        tick.price.as_f64(),
+    );
+
+    info!(
+        asset = %tick.asset,
+        timeframe = ?timeframe,
+        window_id = %new_window.id,
+        open_price = tick.price.as_f64(),
+        "new window opened"
+    );
+}
+
+/// Process a single deduplicated tick across all enabled (asset, timeframe) slots.
+///
+/// Called on every tick that passes through the oracle router. For each enabled
+/// timeframe this function:
+/// 1. Transitions the live window if the current tick has crossed a window boundary.
+/// 2. Skips slots where a position has already been opened.
+/// 3. Resolves orderbook prices (live PM WS or model fallback).
+/// 4. Records a combined spot + orderbook snapshot.
+/// 5. Evaluates all strategies and, if any signal fires, attempts a paper fill.
+///
+/// `now_utc` must be computed **once per tick** before calling this function —
+/// it is passed in to avoid redundant `Utc::now()` syscalls inside the
+/// timeframe loop.
+#[allow(clippy::too_many_arguments)]
+fn process_tick(
+    tick: &Tick,
+    enabled_timeframes: &[Timeframe],
+    asset_slot: usize,
+    slippage: f64,
+    now_utc: chrono::DateTime<chrono::Utc>,
+    live_windows: &mut Vec<Option<LiveWindow>>,
+    executor: &mut PaperExecutor,
+    risk: &mut RiskManager,
+    shared_tracker: &Arc<Mutex<OrderbookTracker>>,
+    shared_prices: &SharedLatestPrices,
+    market_mgr: &MarketManager,
+    recorder: &mut SnapshotRecorder,
+    window_recorder: &mut WindowRecorder,
+    engine: &pm_signal::StrategyEngine,
+) {
+    for (tf_idx, &timeframe) in enabled_timeframes.iter().enumerate() {
+        let slot = asset_slot * enabled_timeframes.len() + tf_idx;
+        let duration_ms = timeframe.duration_secs() * 1_000;
+        let window_open_ms = tick.timestamp_ms - (tick.timestamp_ms % duration_ms);
+        let window_close_ms = window_open_ms + duration_ms;
+
+        let need_new = live_windows[slot]
+            .as_ref()
+            .is_none_or(|lw| tick.timestamp_ms >= lw.window.close_time_ms);
+
+        if need_new {
+            handle_window_transition(
+                slot,
+                tick,
+                timeframe,
+                window_open_ms,
+                window_close_ms,
+                live_windows,
+                executor,
+                risk,
+                window_recorder,
+            );
+        }
+
+        let Some(lw) = live_windows[slot].as_mut() else {
+            continue;
+        };
+
+        if lw.position_opened {
+            continue;
+        }
+
+        let window = lw.window;
+        let magnitude = window.magnitude(tick.price);
+        let time_elapsed_secs =
+            (tick.timestamp_ms.saturating_sub(window.open_time_ms)) / 1_000;
+        let spot_direction = window.direction(tick.price);
+
+        if time_elapsed_secs % 30 == 0 && time_elapsed_secs > 0 {
+            debug!(
+                asset = %tick.asset,
+                timeframe = ?timeframe,
+                mag = format!("{:.4}%", magnitude * 100.0),
+                elapsed = time_elapsed_secs,
+                dir = %spot_direction,
+                spot = tick.price.as_f64(),
+                open = window.open_price.as_f64(),
+                "tick sample"
+            );
+        }
+
+        // Match only a market whose window has NOT yet ended so we never bind
+        // to a recently-resolved market that still appears in the scanner list
+        // with stale orderbook prices.  `now_utc` is computed once per tick
+        // outside this loop to avoid repeated syscalls.
+        let condition_id_opt = market_mgr
+            .active_markets()
+            .find(|m| {
+                if m.asset != tick.asset || m.timeframe != timeframe {
+                    return false;
+                }
+                // Accept only markets whose end_date is still in the future.
+                if m.end_date.is_empty() {
+                    return true; // unknown date — pass through
+                }
+                m.end_date
+                    .parse::<chrono::DateTime<chrono::Utc>>()
+                    .map_or(true, |end_dt| end_dt > now_utc)
+            })
+            .map(|m| m.condition_id.clone());
+
+        let prices = resolve_orderbook_prices(
+            tick,
+            timeframe,
+            spot_direction,
+            slippage,
+            condition_id_opt.as_deref(),
+            shared_tracker,
+            shared_prices,
+            market_mgr,
+        );
+
+        let state = build_market_state(tick, timeframe, &window, &prices);
+
+        // Record combined snapshot after building MarketState.
+        if let Err(e) = recorder.record(
+            tick.timestamp_ms,
+            &tick.asset.to_string(),
+            tick.price.as_f64(),
+            prices.rec_ask_up,
+            prices.rec_ask_down,
+            prices.rec_bid_up,
+            prices.rec_bid_down,
+            window_open_ms,
+            timeframe.duration_secs(),
+        ) {
+            warn!(error = %e, "failed to record snapshot");
+        }
+
+        // Record to PBT-compatible per-window buffer.
+        {
+            let mut win_buf = String::with_capacity(24);
+            let win_id = window_id_str(window.id, &mut win_buf);
+            let wkey = WindowRecorder::window_key(
+                tick.asset.as_lower_str(),
+                timeframe.as_label(),
+                win_id,
+            );
+            #[expect(clippy::cast_possible_wrap, reason = "timestamps are well within i64 range for millennia")]
+            let snap_iso = chrono::DateTime::from_timestamp_millis(tick.timestamp_ms as i64)
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_default();
+            if let Err(e) = window_recorder.record_snapshot(
+                &wkey,
+                &snap_iso,
+                tick.price.as_f64(),
+                prices.rec_ask_up,
+                prices.rec_ask_down,
+            ) {
+                warn!(error = %e, "failed to record window snapshot");
+            }
+        }
+
+        let decisions = engine.evaluate_all(&state);
+
+        for decision in &decisions {
+            info!(
+                asset = %tick.asset,
+                timeframe = ?timeframe,
+                side = %decision.side,
+                strategy = %decision.strategy_id,
+                confidence = decision.confidence,
+                limit_price = decision.limit_price.as_f64(),
+                "strategy signal fired"
+            );
+
+            // Run decision through risk manager before opening.
+            let sized_order = match risk.evaluate(
+                decision,
+                window.id,
+                tick.asset,
+                executor.balance(),
+            ) {
+                Ok(order) => order,
+                Err(rejection) => {
+                    warn!(
+                        asset = %tick.asset,
+                        side = %decision.side,
+                        rejection = ?rejection,
+                        "risk manager rejected entry"
+                    );
+                    continue;
+                }
+            };
+
+            if let Some(fill) = executor.try_open_position(
+                decision,
+                window.id,
+                tick.asset,
+                tick.timestamp_ms,
+            ) {
+                // Notify risk manager so it tracks exposure.
+                risk.on_position_opened(OpenPosition {
+                    window_id: window.id,
+                    asset: tick.asset,
+                    side: decision.side,
+                    avg_entry: fill.fill_price,
+                    size_usdc: sized_order.size_usdc,
+                    opened_at_ms: tick.timestamp_ms,
+                });
+
+                lw.position_opened = true;
+                info!(
+                    asset = %tick.asset,
+                    side = %decision.side,
+                    fill_price = fill.fill_price.as_f64(),
+                    size_usdc = fill.size_usdc,
+                    balance = executor.balance(),
+                    "paper fill executed"
+                );
+                // Only one position per window.
+                break;
+            }
+        }
+    }
 }
 
 // ─── run_paper ────────────────────────────────────────────────────────────────
@@ -134,7 +642,6 @@ struct LiveWindow {
 ///
 /// Returns an error if the initial scanner poll fails or if a critical I/O
 /// error occurs during startup.
-#[expect(clippy::too_many_lines, reason = "main trading loop — splitting would harm readability")]
 pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     // ── 1. Collect enabled assets and timeframes ──────────────────────────────
     let enabled_assets: Vec<Asset> = cfg
@@ -220,13 +727,25 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     let shared_tracker: Arc<Mutex<OrderbookTracker>> =
         Arc::new(Mutex::new(OrderbookTracker::new()));
 
+    // Shared token → (Asset, Timeframe, is_up) map, populated after each scan.
+    let token_asset_map: SharedTokenAssetMap =
+        Arc::new(Mutex::new(HashMap::new()));
+
+    // Shared latest prices cache, indexed by (Asset, Timeframe).
+    let shared_prices: SharedLatestPrices =
+        Arc::new(Mutex::new(LatestPrices::new()));
+
     let mut market_mgr = MarketManager::new(Duration::from_secs(30));
     let http_client = Client::new();
     let mut next_scan_at = tokio::time::Instant::now();
 
     let mut subscribed_tokens: HashSet<String> = HashSet::new();
 
-    let (pm_ws, pm_new_tokens_tx, pm_resolutions) = PolymarketWs::new(Vec::new());
+    let (pm_ws, pm_new_tokens_tx, pm_resolutions) = PolymarketWs::new(
+        Vec::new(),
+        Arc::clone(&token_asset_map),
+        Arc::clone(&shared_prices),
+    );
     let pm_tracker = Arc::clone(&shared_tracker);
     let pm_shutdown = shutdown.clone();
     tokio::spawn(async move {
@@ -291,6 +810,21 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                                     &m.condition_id,
                                     &m.token_id_up,
                                     &m.token_id_down,
+                                );
+                            }
+                        }
+
+                        // Populate token → (Asset, Timeframe, is_up) map so the
+                        // PM WS handler can route events to LatestPrices.
+                        if let Ok(mut map) = token_asset_map.lock() {
+                            for m in &markets {
+                                map.insert(
+                                    m.token_id_up.clone(),
+                                    (m.asset, m.timeframe, true),
+                                );
+                                map.insert(
+                                    m.token_id_down.clone(),
+                                    (m.asset, m.timeframe, false),
                                 );
                             }
                         }
@@ -387,334 +921,26 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     );
                 }
 
-                for (tf_idx, &timeframe) in enabled_timeframes.iter().enumerate() {
-                    let slot = asset_slot * enabled_timeframes.len() + tf_idx;
-                    let duration_ms = timeframe.duration_secs() * 1_000;
-                    let window_open_ms = tick.timestamp_ms - (tick.timestamp_ms % duration_ms);
-                    let window_close_ms = window_open_ms + duration_ms;
+                // Compute once per tick — passed into process_tick to avoid
+                // repeated Utc::now() syscalls inside the timeframe loop.
+                let now_utc = chrono::Utc::now();
 
-                    let need_new = live_windows[slot]
-                        .as_ref()
-                        .is_none_or(|lw| tick.timestamp_ms >= lw.window.close_time_ms);
-
-                    if need_new {
-                        if let Some(old_lw) = live_windows[slot].take() {
-                            let outcome = old_lw.window.direction(tick.price);
-
-                            // Resolve the window in the executor first so we
-                            // get the actual realised P&L for this window.
-                            let window_pnl = executor.resolve_window(old_lw.window.id, outcome, tick.timestamp_ms);
-
-                            // Notify risk manager with the real P&L so it can
-                            // track cumulative daily loss correctly.
-                            risk.on_window_resolved(old_lw.window.id, window_pnl);
-
-                            // Close the PBT-compatible window recording.
-                            let old_key = WindowRecorder::window_key(
-                                &old_lw.window.asset.to_string().to_lowercase(),
-                                &format!("{}", old_lw.window.timeframe),
-                                &old_lw.window.id.to_string(),
-                            );
-                            if let Err(e) = window_recorder.close_window(
-                                &old_key,
-                                &format!("{outcome}"),
-                                tick.price.as_f64(),
-                            ) {
-                                warn!(error = %e, key = %old_key, "failed to close window recording");
-                            }
-
-                            info!(
-                                asset = %tick.asset,
-                                timeframe = ?timeframe,
-                                window_id = %old_lw.window.id,
-                                outcome = %outcome,
-                                "window resolved"
-                            );
-                        }
-
-                        let raw_id = (window_open_ms / 1_000) ^ (tick.asset.index() as u64 * 0x9E37_79B9)
-                            ^ (timeframe.duration_secs() * 7);
-                        let new_window = Window {
-                            id: WindowId::new(raw_id),
-                            asset: tick.asset,
-                            timeframe,
-                            open_time_ms: window_open_ms,
-                            close_time_ms: window_close_ms,
-                            open_price: tick.price,
-                        };
-                        live_windows[slot] = Some(LiveWindow {
-                            window: new_window,
-                            position_opened: false,
-                        });
-
-                        // Open a PBT-compatible window recording.
-                        let coin_lower = tick.asset.to_string().to_lowercase();
-                        let tf_label = format!("{timeframe}");
-                        let win_id_str = new_window.id.to_string();
-                        #[expect(clippy::cast_possible_wrap, reason = "timestamps are well within i64 range for millennia")]
-                        let start_iso = chrono::DateTime::from_timestamp_millis(window_open_ms as i64)
-                            .map(|dt| dt.to_rfc3339())
-                            .unwrap_or_default();
-                        #[expect(clippy::cast_possible_wrap, reason = "timestamps are well within i64 range for millennia")]
-                        let end_iso = chrono::DateTime::from_timestamp_millis(window_close_ms as i64)
-                            .map(|dt| dt.to_rfc3339())
-                            .unwrap_or_default();
-                        window_recorder.open_window(
-                            &coin_lower,
-                            &tf_label,
-                            &win_id_str,
-                            &start_iso,
-                            &end_iso,
-                            tick.price.as_f64(),
-                        );
-
-                        info!(
-                            asset = %tick.asset,
-                            timeframe = ?timeframe,
-                            window_id = %new_window.id,
-                            open_price = tick.price.as_f64(),
-                            "new window opened"
-                        );
-                    }
-
-                    let Some(lw) = live_windows[slot].as_mut() else {
-                        continue;
-                    };
-
-                    if lw.position_opened {
-                        continue;
-                    }
-
-                    let window = lw.window;
-                    let magnitude = window.magnitude(tick.price);
-                    let time_elapsed_secs =
-                        (tick.timestamp_ms.saturating_sub(window.open_time_ms)) / 1_000;
-                    let time_remaining_secs = window.time_remaining_secs(tick.timestamp_ms);
-                    let spot_direction = window.direction(tick.price);
-
-                    if time_elapsed_secs % 30 == 0 && time_elapsed_secs > 0 {
-                        debug!(
-                            asset = %tick.asset,
-                            timeframe = ?timeframe,
-                            mag = format!("{:.4}%", magnitude * 100.0),
-                            elapsed = time_elapsed_secs,
-                            dir = %spot_direction,
-                            spot = tick.price.as_f64(),
-                            open = window.open_price.as_f64(),
-                            "tick sample"
-                        );
-                    }
-
-                    // Match only a market whose window has NOT yet ended so we
-                    // never bind to a recently-resolved market that still appears
-                    // in the scanner list with stale orderbook prices.
-                    let now_utc = chrono::Utc::now();
-                    let condition_id_opt = market_mgr
-                        .active_markets()
-                        .find(|m| {
-                            if m.asset != tick.asset || m.timeframe != timeframe {
-                                return false;
-                            }
-                            // Accept only markets whose end_date is still in the future.
-                            if m.end_date.is_empty() {
-                                return true; // unknown date — pass through
-                            }
-                            m.end_date
-                                .parse::<chrono::DateTime<chrono::Utc>>()
-                                .map_or(true, |end_dt| end_dt > now_utc)
-                        })
-                        .map(|m| m.condition_id.clone());
-
-                    let ob_snap = condition_id_opt.as_deref().and_then(|cid| {
-                        if let Ok(tracker) = shared_tracker.lock()
-                            && let Some(snap) = tracker.get(cid)
-                            && (snap.ask_up.is_some() || snap.ask_down.is_some()) {
-                                return Some(*snap);
-                            }
-                        market_mgr.orderbook(cid).copied()
-                    });
-
-                    // Resolve orderbook prices — prefer live PM WS, fall back to model.
-                    // rec_* are Option<f64> for the recorder; contract_* are Option<ContractPrice>
-                    // for MarketState (which already uses Option internally).
-                    let (rec_ask_up, rec_ask_down, rec_bid_up, rec_bid_down,
-                         contract_ask_up, contract_ask_down, contract_bid_up, contract_bid_down) =
-                        match ob_snap {
-                            Some(snap) if snap.ask_up.is_some() && snap.ask_down.is_some() => {
-                                let a_up = snap.ask_up.map_or(FALLBACK_ASK_UP, ContractPrice::as_f64);
-                                let a_down = snap.ask_down.map_or(FALLBACK_ASK_DOWN, ContractPrice::as_f64);
-                                let b_up = snap.bid_up.map_or(a_up - 0.02, ContractPrice::as_f64);
-                                let b_down = snap.bid_down.map_or(a_down - 0.02, ContractPrice::as_f64);
-
-                                // Sanity-check: prices from a resolved market sit at
-                                // ~$0.00 or ~$1.00 (fully settled).  Reject anything
-                                // outside (0.01, 0.99) for both legs — those are useless
-                                // for live trading and would badly mis-price the model.
-                                let prices_are_sane = a_up > 0.01 && a_up < 0.99
-                                    && a_down > 0.01 && a_down < 0.99;
-
-                                if prices_are_sane {
-                                    debug!(
-                                        asset = %tick.asset,
-                                        timeframe = ?timeframe,
-                                        ask_up = a_up,
-                                        ask_down = a_down,
-                                        "using live PM WS orderbook prices"
-                                    );
-                                    (
-                                        Some(a_up), Some(a_down), Some(b_up), Some(b_down),
-                                        ContractPrice::new(a_up),
-                                        ContractPrice::new(a_down),
-                                        ContractPrice::new(b_up),
-                                        ContractPrice::new(b_down),
-                                    )
-                                } else {
-                                    warn!(
-                                        asset = %tick.asset,
-                                        timeframe = ?timeframe,
-                                        ask_up = a_up,
-                                        ask_down = a_down,
-                                        "PM WS prices look like a resolved market — falling back to model defaults"
-                                    );
-                                    let base = if spot_direction == Side::Up { FALLBACK_ASK_UP } else { FALLBACK_ASK_DOWN };
-                                    let opp = 1.0 - base + slippage;
-                                    (
-                                        None, None, None, None,
-                                        ContractPrice::new(base.clamp(0.01, 0.99)),
-                                        ContractPrice::new(opp.clamp(0.01, 0.99)),
-                                        ContractPrice::new((base - 0.02).clamp(0.01, 0.99)),
-                                        ContractPrice::new((opp - 0.02).clamp(0.01, 0.99)),
-                                    )
-                                }
-                            }
-                            _ => {
-                                let base = if spot_direction == Side::Up { FALLBACK_ASK_UP } else { FALLBACK_ASK_DOWN };
-                                let opp = 1.0 - base + slippage;
-                                (
-                                    None, None, None, None,
-                                    ContractPrice::new(base.clamp(0.01, 0.99)),
-                                    ContractPrice::new(opp.clamp(0.01, 0.99)),
-                                    ContractPrice::new((base - 0.02).clamp(0.01, 0.99)),
-                                    ContractPrice::new((opp - 0.02).clamp(0.01, 0.99)),
-                                )
-                            }
-                        };
-
-                    let state = MarketState {
-                        asset: tick.asset,
-                        timeframe,
-                        window_id: window.id,
-                        window_open_price: window.open_price,
-                        current_spot: tick.price,
-                        spot_magnitude: magnitude,
-                        spot_direction,
-                        time_elapsed_secs,
-                        time_remaining_secs,
-                        contract_ask_up,
-                        contract_ask_down,
-                        contract_bid_up,
-                        contract_bid_down,
-                    };
-
-                    // Record combined snapshot after building MarketState — all data available here.
-                    if let Err(e) = recorder.record(
-                        tick.timestamp_ms,
-                        &tick.asset.to_string(),
-                        tick.price.as_f64(),
-                        rec_ask_up,
-                        rec_ask_down,
-                        rec_bid_up,
-                        rec_bid_down,
-                        window_open_ms,
-                        timeframe.duration_secs(),
-                    ) {
-                        warn!(error = %e, "failed to record snapshot");
-                    }
-
-                    // Record to PBT-compatible per-window buffer.
-                    {
-                        let wkey = WindowRecorder::window_key(
-                            &tick.asset.to_string().to_lowercase(),
-                            &format!("{timeframe}"),
-                            &window.id.to_string(),
-                        );
-                        #[expect(clippy::cast_possible_wrap, reason = "timestamps are well within i64 range for millennia")]
-                        let snap_iso = chrono::DateTime::from_timestamp_millis(tick.timestamp_ms as i64)
-                            .map(|dt| dt.to_rfc3339())
-                            .unwrap_or_default();
-                        if let Err(e) = window_recorder.record_snapshot(
-                            &wkey,
-                            &snap_iso,
-                            tick.price.as_f64(),
-                            rec_ask_up,
-                            rec_ask_down,
-                        ) {
-                            warn!(error = %e, "failed to record window snapshot");
-                        }
-                    }
-
-                    let decisions = engine.evaluate_all(&state);
-
-                    for decision in &decisions {
-                        info!(
-                            asset = %tick.asset,
-                            timeframe = ?timeframe,
-                            side = %decision.side,
-                            strategy = %decision.strategy_id,
-                            confidence = decision.confidence,
-                            limit_price = decision.limit_price.as_f64(),
-                            "strategy signal fired"
-                        );
-
-                        // Run decision through risk manager before opening.
-                        let sized_order = match risk.evaluate(
-                            decision,
-                            window.id,
-                            tick.asset,
-                            executor.balance(),
-                        ) {
-                            Ok(order) => order,
-                            Err(rejection) => {
-                                warn!(
-                                    asset = %tick.asset,
-                                    side = %decision.side,
-                                    rejection = ?rejection,
-                                    "risk manager rejected entry"
-                                );
-                                continue;
-                            }
-                        };
-
-                        if let Some(fill) = executor.try_open_position(
-                            decision,
-                            window.id,
-                            tick.asset,
-                            tick.timestamp_ms,
-                        ) {
-                            // Notify risk manager so it tracks exposure.
-                            risk.on_position_opened(OpenPosition {
-                                window_id: window.id,
-                                asset: tick.asset,
-                                side: decision.side,
-                                avg_entry: fill.fill_price,
-                                size_usdc: sized_order.size_usdc,
-                                opened_at_ms: tick.timestamp_ms,
-                            });
-
-                            lw.position_opened = true;
-                            info!(
-                                asset = %tick.asset,
-                                side = %decision.side,
-                                fill_price = fill.fill_price.as_f64(),
-                                size_usdc = fill.size_usdc,
-                                balance = executor.balance(),
-                                "paper fill executed"
-                            );
-                            // Only one position per window.
-                            break;
-                        }
-                    }
-                }
+                process_tick(
+                    &tick,
+                    &enabled_timeframes,
+                    asset_slot,
+                    slippage,
+                    now_utc,
+                    &mut live_windows,
+                    &mut executor,
+                    &mut risk,
+                    &shared_tracker,
+                    &shared_prices,
+                    &market_mgr,
+                    &mut recorder,
+                    &mut window_recorder,
+                    &engine,
+                );
             }
         }
     }

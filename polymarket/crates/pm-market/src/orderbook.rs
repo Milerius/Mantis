@@ -7,9 +7,108 @@
 
 use std::collections::HashMap;
 
-use pm_types::ContractPrice;
+use pm_types::{Asset, ContractPrice, Timeframe};
 use serde::Deserialize;
 use tracing::debug;
+
+// ─── LatestPrices cache ─────────────────────────────────────────────────────
+
+/// Cached best-bid/ask snapshot for a single (Asset, Timeframe) pair.
+///
+/// Updated from both WS `best_bid_ask` events and REST orderbook fetches.
+/// Once set, a stale value is always preferable to a fake fallback.
+#[derive(Debug, Clone, Copy)]
+pub struct CachedPrice {
+    /// Best ask for the Up contract.
+    pub ask_up: f64,
+    /// Best ask for the Down contract.
+    pub ask_down: f64,
+    /// Best bid for the Up contract.
+    pub bid_up: f64,
+    /// Best bid for the Down contract.
+    pub bid_down: f64,
+    /// Unix timestamp in milliseconds of the last update.
+    pub timestamp_ms: u64,
+}
+
+/// Cached latest contract prices per (Asset, Timeframe).
+///
+/// Updated by PM WS events and REST snapshots, read by the paper loop.
+/// After the first update, prices are NEVER None — stale is better than fake.
+pub struct LatestPrices {
+    /// Flat array: `[Asset::COUNT][Timeframe::COUNT]`.
+    prices: [[Option<CachedPrice>; Timeframe::COUNT]; Asset::COUNT],
+}
+
+impl LatestPrices {
+    /// Create an empty cache with no prices.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            prices: [[None; Timeframe::COUNT]; Asset::COUNT],
+        }
+    }
+
+    /// Update prices for an (asset, timeframe) pair.
+    pub fn update(&mut self, asset: Asset, timeframe: Timeframe, price: CachedPrice) {
+        self.prices[asset.index()][timeframe.index()] = Some(price);
+    }
+
+    /// Update a single side (Up or Down, bid or ask) without overwriting
+    /// the other side. Creates a new entry if none exists yet.
+    pub fn update_side(
+        &mut self,
+        asset: Asset,
+        timeframe: Timeframe,
+        is_up: bool,
+        best_bid: f64,
+        best_ask: f64,
+        timestamp_ms: u64,
+    ) {
+        let slot = &mut self.prices[asset.index()][timeframe.index()];
+        if let Some(cached) = slot {
+            if is_up {
+                cached.ask_up = best_ask;
+                cached.bid_up = best_bid;
+            } else {
+                cached.ask_down = best_ask;
+                cached.bid_down = best_bid;
+            }
+            cached.timestamp_ms = timestamp_ms;
+        } else {
+            // First time — set the side we know, use 0.50 placeholder for
+            // the other side (will be overwritten on the next event).
+            let mut cp = CachedPrice {
+                ask_up: 0.50,
+                ask_down: 0.50,
+                bid_up: 0.48,
+                bid_down: 0.48,
+                timestamp_ms,
+            };
+            if is_up {
+                cp.ask_up = best_ask;
+                cp.bid_up = best_bid;
+            } else {
+                cp.ask_down = best_ask;
+                cp.bid_down = best_bid;
+            }
+            *slot = Some(cp);
+        }
+    }
+
+    /// Get the latest cached price. Returns `None` only if we have **never**
+    /// seen a price for this pair — after the first update, always returns `Some`.
+    #[must_use]
+    pub fn get(&self, asset: Asset, timeframe: Timeframe) -> Option<CachedPrice> {
+        self.prices[asset.index()][timeframe.index()]
+    }
+}
+
+impl Default for LatestPrices {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // ─── Public types ────────────────────────────────────────────────────────────
 

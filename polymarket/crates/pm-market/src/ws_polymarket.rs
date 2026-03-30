@@ -16,10 +16,12 @@
 //! [`tokio::sync::mpsc`] channel. The running task will send an updated
 //! subscribe message whenever new IDs arrive.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use pm_types::{Asset, Timeframe};
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
@@ -27,7 +29,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::orderbook::{OrderbookTracker, WS_CLOB_URL};
+use crate::orderbook::{LatestPrices, OrderbookTracker, WS_CLOB_URL};
 
 // ─── Market resolution ──────────────────────────────────────────────────────
 
@@ -171,6 +173,16 @@ fn build_subscribe_message(token_ids: &[String]) -> String {
 /// The paper loop drains this periodically to resolve positions.
 pub type SharedResolutions = Arc<Mutex<Vec<MarketResolution>>>;
 
+/// Shared map: `token_id` -> `(Asset, Timeframe, is_up)`.
+///
+/// Populated by the scanner (via paper loop), read by the WS handler to map
+/// incoming `best_bid_ask` events to the correct (Asset, Timeframe) slot in
+/// [`LatestPrices`].
+pub type SharedTokenAssetMap = Arc<Mutex<HashMap<String, (Asset, Timeframe, bool)>>>;
+
+/// Shared latest-prices cache, indexed by `(Asset, Timeframe)`.
+pub type SharedLatestPrices = Arc<Mutex<LatestPrices>>;
+
 /// Polymarket CLOB WebSocket client.
 ///
 /// Connects to the market channel, subscribes to the initial set of token IDs,
@@ -183,6 +195,10 @@ pub struct PolymarketWs {
     new_tokens_rx: mpsc::Receiver<Vec<String>>,
     /// Shared resolution events pushed when `market_resolved` is received.
     resolved_markets: SharedResolutions,
+    /// Reverse lookup: token_id -> (Asset, Timeframe, is_up).
+    token_asset_map: SharedTokenAssetMap,
+    /// Shared latest prices cache.
+    latest_prices: SharedLatestPrices,
 }
 
 /// Sender half returned to the caller for pushing new token IDs.
@@ -195,7 +211,11 @@ impl PolymarketWs {
     /// IDs, and a [`SharedResolutions`] handle that accumulates
     /// `market_resolved` events for the paper loop to drain.
     #[must_use]
-    pub fn new(token_ids: Vec<String>) -> (Self, NewTokensSender, SharedResolutions) {
+    pub fn new(
+        token_ids: Vec<String>,
+        token_asset_map: SharedTokenAssetMap,
+        latest_prices: SharedLatestPrices,
+    ) -> (Self, NewTokensSender, SharedResolutions) {
         let (tx, rx) = mpsc::channel(64);
         let resolved = Arc::new(Mutex::new(Vec::new()));
         (
@@ -203,6 +223,8 @@ impl PolymarketWs {
                 token_ids,
                 new_tokens_rx: rx,
                 resolved_markets: Arc::clone(&resolved),
+                token_asset_map,
+                latest_prices,
             },
             tx,
             resolved,
@@ -302,6 +324,11 @@ impl PolymarketWs {
                                         }
                                         if let Some(event) = parse_best_bid_ask(text_str) {
                                             handle_best_bid_ask(&tracker, &event);
+                                            handle_latest_prices(
+                                                &self.token_asset_map,
+                                                &self.latest_prices,
+                                                &event,
+                                            );
                                         } else if let Some(resolution) = parse_market_resolved(text_str) {
                                             info!(
                                                 condition_id = %resolution.condition_id,
@@ -415,6 +442,70 @@ fn handle_best_bid_ask(
         ask = best_ask,
         "PM WS: orderbook update"
     );
+}
+
+// ─── LatestPrices update helper ───────────────────────────────────────────────
+
+/// Apply a `best_bid_ask` event to the shared [`LatestPrices`] cache.
+///
+/// Looks up the token's `(Asset, Timeframe, is_up)` in the shared map, then
+/// updates the correct side in the cache. This is the bridge between the WS
+/// token-based events and the `(Asset, Timeframe)`-indexed cache consumed by
+/// the paper loop.
+fn handle_latest_prices(
+    token_asset_map: &SharedTokenAssetMap,
+    latest_prices: &SharedLatestPrices,
+    event: &BestBidAskEvent,
+) {
+    let Ok(best_bid) = event.best_bid.parse::<f64>() else {
+        return;
+    };
+    let Ok(best_ask) = event.best_ask.parse::<f64>() else {
+        return;
+    };
+
+    // Sanity-check: skip resolved-market prices.
+    if best_ask <= 0.01 || best_ask >= 0.99 || best_bid <= 0.01 || best_bid >= 0.99 {
+        return;
+    }
+
+    let timestamp_ms: u64 = event
+        .timestamp
+        .parse::<f64>()
+        .map_or_else(
+            |_| {
+                #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64")]
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
+                ms
+            },
+            |s| {
+                #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "timestamp_ms fits in u64")]
+                let ms = (s * 1_000.0) as u64;
+                ms
+            },
+        );
+
+    let lookup = if let Ok(map) = token_asset_map.lock() {
+        map.get(&event.asset_id).copied()
+    } else {
+        None
+    };
+
+    if let Some((asset, timeframe, is_up)) = lookup {
+        if let Ok(mut prices) = latest_prices.lock() {
+            prices.update_side(asset, timeframe, is_up, best_bid, best_ask, timestamp_ms);
+            debug!(
+                asset = %asset,
+                timeframe = %timeframe,
+                is_up = is_up,
+                bid = best_bid,
+                ask = best_ask,
+                "LatestPrices updated from WS"
+            );
+        }
+    }
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
