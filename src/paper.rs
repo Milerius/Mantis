@@ -44,6 +44,10 @@ const FALLBACK_ASK_UP: f64 = 0.55;
 /// Fallback ask price for the Down contract when no live orderbook is available.
 const FALLBACK_ASK_DOWN: f64 = 0.48;
 
+/// Maximum age (in milliseconds) for cached prices before falling back.
+/// If the PM WebSocket disconnects, prices older than this are considered stale.
+const MAX_PRICE_AGE_MS: u64 = 15_000;
+
 // ─── Module-level statics (atomic logging guards) ────────────────────────────
 
 /// Guards a one-shot "first tick received" log line across loop iterations.
@@ -189,24 +193,41 @@ fn resolve_orderbook_prices(
     market_mgr: &MarketManager,
 ) -> OrderbookPrices {
     // PRIMARY: try the LatestPrices cache (indexed by Asset, Timeframe).
-    // This is populated by PM WS events AND REST snapshots — never stale.
+    // This is populated by PM WS events AND REST snapshots.
     // Only use the cache if BOTH sides have been populated by real events
     // to avoid trading against placeholder 0.50/0.48 prices.
+    #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64 for centuries")]
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
     if let Ok(cache) = shared_prices.lock() {
         if let Some(p) = cache.get(tick.asset, timeframe) {
-            let prices_are_sane =
-                p.ask_up > 0.01 && p.ask_up < 0.99 && p.ask_down > 0.01 && p.ask_down < 0.99;
-            if prices_are_sane && p.both_sides_seen() {
-                return OrderbookPrices {
-                    rec_ask_up: Some(p.ask_up),
-                    rec_ask_down: Some(p.ask_down),
-                    rec_bid_up: Some(p.bid_up),
-                    rec_bid_down: Some(p.bid_down),
-                    contract_ask_up: ContractPrice::new(p.ask_up),
-                    contract_ask_down: ContractPrice::new(p.ask_down),
-                    contract_bid_up: ContractPrice::new(p.bid_up),
-                    contract_bid_down: ContractPrice::new(p.bid_down),
-                };
+            // Staleness guard: if the cached price is older than the threshold,
+            // skip it and fall through to the secondary source.
+            if now_ms.saturating_sub(p.timestamp_ms) > MAX_PRICE_AGE_MS {
+                warn!(
+                    asset = %tick.asset,
+                    timeframe = ?timeframe,
+                    age_ms = now_ms.saturating_sub(p.timestamp_ms),
+                    "cached price is stale — falling back to secondary source"
+                );
+            } else {
+                let prices_are_sane =
+                    p.ask_up > 0.01 && p.ask_up < 0.99 && p.ask_down > 0.01 && p.ask_down < 0.99;
+                if prices_are_sane && p.both_sides_seen() {
+                    return OrderbookPrices {
+                        rec_ask_up: Some(p.ask_up),
+                        rec_ask_down: Some(p.ask_down),
+                        rec_bid_up: Some(p.bid_up),
+                        rec_bid_down: Some(p.bid_down),
+                        contract_ask_up: ContractPrice::new(p.ask_up),
+                        contract_ask_down: ContractPrice::new(p.ask_down),
+                        contract_bid_up: ContractPrice::new(p.bid_up),
+                        contract_bid_down: ContractPrice::new(p.bid_down),
+                    };
+                }
             }
         }
     }
@@ -428,7 +449,7 @@ fn handle_window_transition(
 /// `now_utc` must be computed **once per tick** before calling this function —
 /// it is passed in to avoid redundant `Utc::now()` syscalls inside the
 /// timeframe loop.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn process_tick(
     tick: &Tick,
     enabled_timeframes: &[Timeframe],
@@ -785,6 +806,10 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     // ── 6. Main event loop ────────────────────────────────────────────────────
     let slippage = f64::from(cfg.backtest.slippage_bps) * 0.0001;
 
+    // Maximum window duration for expired-position cleanup (4 hours).
+    const MAX_WINDOW_DURATION_MS: u64 = 4 * 60 * 60 * 1_000; // 14_400_000
+    let mut next_cleanup_at = tokio::time::Instant::now() + Duration::from_secs(60);
+
     loop {
         tokio::select! {
             () = shutdown.cancelled() => {
@@ -870,7 +895,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                                 count = new_token_ids.len(),
                                 "subscribing PM WS to new token IDs"
                             );
-                            if let Err(e) = pm_new_tokens_tx.try_send(new_token_ids) {
+                            if let Err(e) = pm_new_tokens_tx.send(new_token_ids).await {
                                 warn!(error = %e, "failed to send new token IDs to PM WS task");
                             }
                         }
@@ -944,6 +969,21 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     &mut window_recorder,
                     &engine,
                 );
+
+                // ── Periodic cleanup of expired positions ───────────────────
+                if tokio::time::Instant::now() >= next_cleanup_at {
+                    let cleanup_pnl = executor.cleanup_expired_positions(
+                        tick.timestamp_ms,
+                        MAX_WINDOW_DURATION_MS,
+                    );
+                    if cleanup_pnl.as_f64().abs() > f64::EPSILON {
+                        warn!(
+                            pnl = cleanup_pnl.as_f64(),
+                            "expired positions cleaned up"
+                        );
+                    }
+                    next_cleanup_at = tokio::time::Instant::now() + Duration::from_secs(60);
+                }
 
                 // ── Drain market_resolved events ────────────────────────────
                 if let Ok(mut resolutions) = pm_resolutions.lock() {

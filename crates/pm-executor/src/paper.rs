@@ -9,7 +9,7 @@ use pm_types::{
     Asset, ContractPrice, EntryDecision, Fill, OpenPosition, OrderId, OrderReason, Pnl, Side,
     StrategyId, TradeRecord, WindowId,
 };
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 // ─── PaperConfig ─────────────────────────────────────────────────────────────
 
@@ -79,6 +79,7 @@ impl PaperExecutor {
         window_id: WindowId,
         asset: Asset,
         timestamp_ms: u64,
+        size_usdc: f64,
     ) -> Option<Fill> {
         // Guard: position cap per window.
         let count = self
@@ -95,9 +96,8 @@ impl PaperExecutor {
             return None;
         }
 
-        // Compute size: min(max_position_usdc, 5% of balance).
-        let size = self.config.max_position_usdc.min(self.balance * 0.05);
-        if size <= 0.0 {
+        let size = size_usdc;
+        if size <= 0.0 || size > self.balance {
             debug!(%window_id, %asset, "insufficient balance — skipping");
             return None;
         }
@@ -234,6 +234,70 @@ impl PaperExecutor {
         &self.trades
     }
 
+    /// Clean up positions whose windows have expired without being resolved.
+    ///
+    /// Any position older than `max_window_duration_ms` is resolved as a loss
+    /// (worst case assumption — better to lose on paper than leak capital).
+    /// Returns the total realised P&L from cleaned-up positions.
+    ///
+    /// Callers should invoke this periodically (e.g. every 60 seconds or on
+    /// each tick) to prevent unbounded growth of `open_positions` during
+    /// prolonged WS disconnects or when no tick crosses a window boundary.
+    pub fn cleanup_expired_positions(
+        &mut self,
+        current_time_ms: u64,
+        max_window_duration_ms: u64,
+    ) -> Pnl {
+        let mut total_pnl: f64 = 0.0;
+        let mut i = 0;
+        while i < self.open_positions.len() {
+            let pos = &self.open_positions[i].pos;
+            if pos.opened_at_ms + max_window_duration_ms >= current_time_ms {
+                i += 1;
+                continue;
+            }
+
+            let ap = self.open_positions.swap_remove(i);
+            let pos = ap.pos;
+
+            // Resolve as a loss — worst case assumption.
+            let pnl_val = -pos.size_usdc;
+            self.balance += pos.size_usdc + pnl_val; // net zero return
+            total_pnl += pnl_val;
+
+            let exit_price = ContractPrice::new(0.0).unwrap_or_else(|| {
+                unreachable!("0.0 is always a valid ContractPrice")
+            });
+            let pnl = Pnl::new(pnl_val).unwrap_or(Pnl::ZERO);
+
+            warn!(
+                window_id = %pos.window_id,
+                asset = %pos.asset,
+                side = %pos.side,
+                size_usdc = pos.size_usdc,
+                opened_at_ms = pos.opened_at_ms,
+                strategy = %ap.strategy_id,
+                "cleaning up expired position — resolved as loss"
+            );
+
+            self.trades.push(TradeRecord {
+                window_id: pos.window_id,
+                asset: pos.asset,
+                side: pos.side,
+                entry_price: pos.avg_entry,
+                exit_price,
+                size_usdc: pos.size_usdc,
+                pnl,
+                opened_at_ms: pos.opened_at_ms,
+                closed_at_ms: current_time_ms,
+                close_reason: OrderReason::ExpiryClose,
+                strategy_id: ap.strategy_id,
+            });
+        }
+
+        Pnl::new(total_pnl).unwrap_or(Pnl::ZERO)
+    }
+
     /// Number of currently open positions.
     #[must_use]
     pub fn open_position_count(&self) -> usize {
@@ -303,6 +367,7 @@ mod tests {
             WindowId::new(1),
             Asset::Btc,
             1_000,
+            50.0,
         );
 
         assert!(fill.is_some(), "expected a fill");
@@ -321,7 +386,7 @@ mod tests {
 
         let decision = make_decision(Side::Up, 0.55);
         let fill = executor
-            .try_open_position(&decision, WindowId::new(1), Asset::Btc, 1_000)
+            .try_open_position(&decision, WindowId::new(1), Asset::Btc, 1_000, 50.0)
             .expect("fill should succeed");
 
         let balance_after_open = executor.balance();
@@ -352,7 +417,7 @@ mod tests {
 
         let decision = make_decision(Side::Up, 0.55);
         executor
-            .try_open_position(&decision, WindowId::new(1), Asset::Btc, 1_000)
+            .try_open_position(&decision, WindowId::new(1), Asset::Btc, 1_000, 50.0)
             .expect("fill should succeed");
 
         // Resolve as a loss (Down outcome != Up side).
@@ -382,7 +447,7 @@ mod tests {
 
         let decision = make_decision(Side::Up, 0.55);
         let fill = executor
-            .try_open_position(&decision, WindowId::new(1), Asset::Btc, 1_000)
+            .try_open_position(&decision, WindowId::new(1), Asset::Btc, 1_000, 50.0)
             .expect("fill should succeed");
 
         // Entry should be 0.55 + 0.01 (100 bps) = 0.56
@@ -402,9 +467,9 @@ mod tests {
 
         let decision = make_decision(Side::Up, 0.55);
         let first = executor
-            .try_open_position(&decision, WindowId::new(1), Asset::Btc, 1_000);
+            .try_open_position(&decision, WindowId::new(1), Asset::Btc, 1_000, 50.0);
         let second = executor
-            .try_open_position(&decision, WindowId::new(1), Asset::Btc, 2_000);
+            .try_open_position(&decision, WindowId::new(1), Asset::Btc, 2_000, 50.0);
 
         assert!(first.is_some(), "first fill should succeed");
         assert!(second.is_none(), "second fill should be blocked by cap");
@@ -421,7 +486,7 @@ mod tests {
 
         let decision = make_decision(Side::Down, 0.48);
         executor
-            .try_open_position(&decision, WindowId::new(1), Asset::Eth, 1_000)
+            .try_open_position(&decision, WindowId::new(1), Asset::Eth, 1_000, 50.0)
             .expect("fill should succeed");
 
         assert!(executor.has_position_in_window(WindowId::new(1)));
