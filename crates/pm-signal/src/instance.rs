@@ -12,7 +12,6 @@ use pm_types::{
 };
 
 use crate::AnyStrategy;
-use crate::strategy_trait::Strategy;
 
 /// Maximum number of (asset, timeframe) slots.
 /// 4 assets x 4 timeframes = 16.
@@ -31,6 +30,7 @@ pub struct ConcreteStrategyInstance {
     // -- Balance & positions --
     balance: f64,
     open_positions: Vec<ActivePosition>,
+    #[expect(dead_code)] // accumulated for future export/inspection
     trades: Vec<TradeRecord>,
 
     // -- Risk params --
@@ -59,6 +59,7 @@ struct ActivePosition {
     pos: OpenPosition,
     slot: usize,
     strategy_id: StrategyId,
+    #[expect(dead_code)] // stored for future trade-record enrichment
     label: StrategyLabel,
 }
 
