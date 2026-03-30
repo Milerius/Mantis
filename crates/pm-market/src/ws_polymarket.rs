@@ -346,8 +346,13 @@ impl PolymarketWs {
                                                 winning_token = %resolution.winning_token_id,
                                                 "PM WS: market_resolved event"
                                             );
-                                            if let Ok(mut resolutions) = self.resolved_markets.lock() {
-                                                resolutions.push(resolution);
+                                            match self.resolved_markets.lock() {
+                                                Ok(mut resolutions) => {
+                                                    resolutions.push(resolution);
+                                                }
+                                                Err(e) => {
+                                                    warn!(error = %e, "resolved_markets mutex poisoned — skipping update");
+                                                }
                                             }
                                         }
                                     }
@@ -520,23 +525,30 @@ fn handle_latest_prices(
             },
         );
 
-    let lookup = if let Ok(map) = token_asset_map.lock() {
-        map.get(&event.asset_id).copied()
-    } else {
-        None
+    let lookup = match token_asset_map.lock() {
+        Ok(map) => map.get(&event.asset_id).copied(),
+        Err(e) => {
+            warn!(error = %e, "token_asset_map mutex poisoned — skipping update");
+            None
+        }
     };
 
     if let Some((asset, timeframe, is_up)) = lookup {
-        if let Ok(mut prices) = latest_prices.lock() {
-            prices.update_side(asset, timeframe, is_up, best_bid, best_ask, timestamp_ms);
-            debug!(
-                asset = %asset,
-                timeframe = %timeframe,
-                is_up = is_up,
-                bid = best_bid,
-                ask = best_ask,
-                "LatestPrices updated from WS"
-            );
+        match latest_prices.lock() {
+            Ok(mut prices) => {
+                prices.update_side(asset, timeframe, is_up, best_bid, best_ask, timestamp_ms);
+                debug!(
+                    asset = %asset,
+                    timeframe = %timeframe,
+                    is_up = is_up,
+                    bid = best_bid,
+                    ask = best_ask,
+                    "LatestPrices updated from WS"
+                );
+            }
+            Err(e) => {
+                warn!(error = %e, "latest_prices mutex poisoned — skipping update");
+            }
         }
     }
 }

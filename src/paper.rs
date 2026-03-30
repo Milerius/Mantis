@@ -114,10 +114,12 @@ async fn fetch_rest_orderbook(
                             .and_then(|p| p.as_str())
                             .and_then(|s| s.parse().ok())
                             .unwrap_or(0.0);
-                        if price > 0.01 && price < 0.99
-                            && let Ok(mut t) = tracker.lock() {
-                                t.update(token_id, "SELL", price, now_ms);
+                        if price > 0.01 && price < 0.99 {
+                            match tracker.lock() {
+                                Ok(mut t) => { t.update(token_id, "SELL", price, now_ms); }
+                                Err(e) => { warn!(error = %e, "tracker mutex poisoned — skipping ask update"); }
                             }
+                        }
                     }
                 if let Some(bids) = book.get("bids").and_then(|a| a.as_array())
                     && let Some(best) = bids.first() {
@@ -126,10 +128,12 @@ async fn fetch_rest_orderbook(
                             .and_then(|p| p.as_str())
                             .and_then(|s| s.parse().ok())
                             .unwrap_or(0.0);
-                        if price > 0.01 && price < 0.99
-                            && let Ok(mut t) = tracker.lock() {
-                                t.update(token_id, "BUY", price, now_ms);
+                        if price > 0.01 && price < 0.99 {
+                            match tracker.lock() {
+                                Ok(mut t) => { t.update(token_id, "BUY", price, now_ms); }
+                                Err(e) => { warn!(error = %e, "tracker mutex poisoned — skipping bid update"); }
                             }
+                        }
                     }
             }
             Err(e) => {
@@ -202,43 +206,55 @@ fn resolve_orderbook_prices(
         .unwrap_or_default()
         .as_millis() as u64;
 
-    if let Ok(cache) = shared_prices.lock()
-        && let Some(p) = cache.get(tick.asset, timeframe)
-    {
-        // Staleness guard: if the cached price is older than the threshold,
-        // skip it and fall through to the secondary source.
-        if now_ms.saturating_sub(p.timestamp_ms) > MAX_PRICE_AGE_MS {
-            warn!(
-                asset = %tick.asset,
-                timeframe = ?timeframe,
-                age_ms = now_ms.saturating_sub(p.timestamp_ms),
-                "cached price is stale — falling back to secondary source"
-            );
-        } else {
-            let prices_are_sane =
-                p.ask_up > 0.01 && p.ask_up < 0.99 && p.ask_down > 0.01 && p.ask_down < 0.99;
-            if prices_are_sane && p.both_sides_seen() {
-                return OrderbookPrices {
-                    rec_ask_up: Some(p.ask_up),
-                    rec_ask_down: Some(p.ask_down),
-                    rec_bid_up: Some(p.bid_up),
-                    rec_bid_down: Some(p.bid_down),
-                    contract_ask_up: ContractPrice::new(p.ask_up),
-                    contract_ask_down: ContractPrice::new(p.ask_down),
-                    contract_bid_up: ContractPrice::new(p.bid_up),
-                    contract_bid_down: ContractPrice::new(p.bid_down),
-                };
+    match shared_prices.lock() {
+        Ok(cache) => {
+            if let Some(p) = cache.get(tick.asset, timeframe) {
+                // Staleness guard: if the cached price is older than the threshold,
+                // skip it and fall through to the secondary source.
+                if now_ms.saturating_sub(p.timestamp_ms) > MAX_PRICE_AGE_MS {
+                    warn!(
+                        asset = %tick.asset,
+                        timeframe = ?timeframe,
+                        age_ms = now_ms.saturating_sub(p.timestamp_ms),
+                        "cached price is stale — falling back to secondary source"
+                    );
+                } else {
+                    let prices_are_sane =
+                        p.ask_up > 0.01 && p.ask_up < 0.99 && p.ask_down > 0.01 && p.ask_down < 0.99;
+                    if prices_are_sane && p.both_sides_seen() {
+                        return OrderbookPrices {
+                            rec_ask_up: Some(p.ask_up),
+                            rec_ask_down: Some(p.ask_down),
+                            rec_bid_up: Some(p.bid_up),
+                            rec_bid_down: Some(p.bid_down),
+                            contract_ask_up: ContractPrice::new(p.ask_up),
+                            contract_ask_down: ContractPrice::new(p.ask_down),
+                            contract_bid_up: ContractPrice::new(p.bid_up),
+                            contract_bid_down: ContractPrice::new(p.bid_down),
+                        };
+                    }
+                }
             }
+        }
+        Err(e) => {
+            warn!(error = %e, "shared_prices mutex poisoned — skipping update");
         }
     }
 
     // SECONDARY: fall back to condition_id-based OrderbookTracker.
     let ob_snap = condition_id_opt.and_then(|cid| {
-        if let Ok(tracker) = shared_tracker.lock()
-            && let Some(snap) = tracker.get(cid)
-            && (snap.ask_up.is_some() || snap.ask_down.is_some()) {
-                return Some(*snap);
+        match shared_tracker.lock() {
+            Ok(tracker) => {
+                if let Some(snap) = tracker.get(cid) {
+                    if snap.ask_up.is_some() || snap.ask_down.is_some() {
+                        return Some(*snap);
+                    }
+                }
             }
+            Err(e) => {
+                warn!(error = %e, "shared_tracker mutex poisoned — skipping update");
+            }
+        }
         market_mgr.orderbook(cid).copied()
     });
 
@@ -839,28 +855,38 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                             }
                         }
 
-                        if let Ok(mut tracker) = shared_tracker.lock() {
-                            for m in &markets {
-                                tracker.register_market(
-                                    &m.condition_id,
-                                    &m.token_id_up,
-                                    &m.token_id_down,
-                                );
+                        match shared_tracker.lock() {
+                            Ok(mut tracker) => {
+                                for m in &markets {
+                                    tracker.register_market(
+                                        &m.condition_id,
+                                        &m.token_id_up,
+                                        &m.token_id_down,
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "shared_tracker mutex poisoned — skipping market registration");
                             }
                         }
 
                         // Populate token → (Asset, Timeframe, is_up) map so the
                         // PM WS handler can route events to LatestPrices.
-                        if let Ok(mut map) = token_asset_map.lock() {
-                            for m in &markets {
-                                map.insert(
-                                    m.token_id_up.clone(),
-                                    (m.asset, m.timeframe, true),
-                                );
-                                map.insert(
-                                    m.token_id_down.clone(),
-                                    (m.asset, m.timeframe, false),
-                                );
+                        match token_asset_map.lock() {
+                            Ok(mut map) => {
+                                for m in &markets {
+                                    map.insert(
+                                        m.token_id_up.clone(),
+                                        (m.asset, m.timeframe, true),
+                                    );
+                                    map.insert(
+                                        m.token_id_down.clone(),
+                                        (m.asset, m.timeframe, false),
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "token_asset_map mutex poisoned — skipping update");
                             }
                         }
 
@@ -993,8 +1019,11 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                 }
 
                 // ── Drain market_resolved events ────────────────────────────
-                if let Ok(mut resolutions) = pm_resolutions.lock() {
-                    for res in resolutions.drain(..) {
+                match pm_resolutions.lock() {
+                    Err(e) => {
+                        warn!(error = %e, "pm_resolutions mutex poisoned — skipping drain");
+                    }
+                    Ok(mut resolutions) => { for res in resolutions.drain(..) {
                         // Find the matching market to determine (asset, timeframe)
                         // and whether the winning token is Up or Down.
                         let matched = market_mgr.active_markets().find(|m| {
@@ -1042,19 +1071,25 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                             }
                         }
                     }
-                }
+                    } // Ok arm
+                } // match
             }
         }
     }
 
     // ── 7. Drain any remaining resolutions ──────────────────────────────────
-    if let Ok(mut resolutions) = pm_resolutions.lock() {
-        for res in resolutions.drain(..) {
-            info!(
-                condition_id = %res.condition_id,
-                winning_token = %res.winning_token_id,
-                "draining final market_resolved event on shutdown"
-            );
+    match pm_resolutions.lock() {
+        Ok(mut resolutions) => {
+            for res in resolutions.drain(..) {
+                info!(
+                    condition_id = %res.condition_id,
+                    winning_token = %res.winning_token_id,
+                    "draining final market_resolved event on shutdown"
+                );
+            }
+        }
+        Err(e) => {
+            warn!(error = %e, "pm_resolutions mutex poisoned — skipping final drain");
         }
     }
 
