@@ -33,6 +33,12 @@ type = "early_directional"
 max_entry_time_secs = 150
 min_spot_magnitude = 0.002
 max_entry_price = 0.53
+balance = 250.0
+max_position_usdc = 25.0
+max_exposure_usdc = 100.0
+kelly_fraction = 0.25
+max_daily_loss = 50.0
+slippage_bps = 10
 
 [[bot.strategies]]
 type = "momentum_confirmation"
@@ -40,6 +46,12 @@ min_entry_time_secs = 180
 max_entry_time_secs = 480
 min_spot_magnitude = 0.003
 max_entry_price = 0.72
+balance = 250.0
+max_position_usdc = 25.0
+max_exposure_usdc = 100.0
+kelly_fraction = 0.25
+max_daily_loss = 50.0
+slippage_bps = 10
 
 # Disabled: CompleteSetArb only buys one leg — needs proper two-leg execution.
 # [[bot.strategies]]
