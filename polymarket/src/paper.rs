@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use pm_bookkeeper::SnapshotRecorder;
+use pm_bookkeeper::{SnapshotRecorder, WindowRecorder};
 use pm_executor::{PaperConfig, PaperExecutor};
 use pm_market::{MarketManager, OrderbookTracker, PolymarketWs};
 use pm_market::scanner::scan_active_markets;
@@ -144,7 +144,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
     let mut subscribed_tokens: HashSet<String> = HashSet::new();
 
-    let (pm_ws, pm_new_tokens_tx) = PolymarketWs::new(Vec::new());
+    let (pm_ws, pm_new_tokens_tx, pm_resolutions) = PolymarketWs::new(Vec::new());
     let pm_tracker = Arc::clone(&shared_tracker);
     let pm_shutdown = shutdown.clone();
     tokio::spawn(async move {
@@ -162,6 +162,11 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
         path = %data_dir.join("live").join(format!("{session_id}_snapshots.jsonl")).display(),
         "snapshot recorder started"
     );
+
+    // ── Per-window PBT-compatible recorder ───────────────────────────────────
+    let mut window_recorder = WindowRecorder::new(data_dir)
+        .context("failed to create window recorder")?;
+    info!("PBT-compatible window recorder started");
 
     // ── 5. Graceful shutdown signal ───────────────────────────────────────────
     let ctrlc_shutdown = shutdown.clone();
@@ -447,6 +452,20 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
                             executor.resolve_window(old_lw.window.id, outcome, tick.timestamp_ms);
 
+                            // Close the PBT-compatible window recording.
+                            let old_key = WindowRecorder::window_key(
+                                &old_lw.window.asset.to_string().to_lowercase(),
+                                &format!("{}", old_lw.window.timeframe),
+                                &old_lw.window.id.to_string(),
+                            );
+                            if let Err(e) = window_recorder.close_window(
+                                &old_key,
+                                &format!("{outcome}"),
+                                tick.price.as_f64(),
+                            ) {
+                                warn!(error = %e, key = %old_key, "failed to close window recording");
+                            }
+
                             info!(
                                 asset = %tick.asset,
                                 timeframe = ?timeframe,
@@ -470,6 +489,26 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                             window: new_window,
                             position_opened: false,
                         });
+
+                        // Open a PBT-compatible window recording.
+                        let coin_lower = tick.asset.to_string().to_lowercase();
+                        let tf_label = format!("{timeframe}");
+                        let win_id_str = new_window.id.to_string();
+                        let start_iso = chrono::DateTime::from_timestamp_millis(window_open_ms as i64)
+                            .map(|dt| dt.to_rfc3339())
+                            .unwrap_or_default();
+                        let end_iso = chrono::DateTime::from_timestamp_millis(window_close_ms as i64)
+                            .map(|dt| dt.to_rfc3339())
+                            .unwrap_or_default();
+                        window_recorder.open_window(
+                            &coin_lower,
+                            &tf_label,
+                            &win_id_str,
+                            &start_iso,
+                            &end_iso,
+                            tick.price.as_f64(),
+                        );
+
                         info!(
                             asset = %tick.asset,
                             timeframe = ?timeframe,
@@ -635,6 +674,27 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                         warn!(error = %e, "failed to record snapshot");
                     }
 
+                    // Record to PBT-compatible per-window buffer.
+                    {
+                        let wkey = WindowRecorder::window_key(
+                            &tick.asset.to_string().to_lowercase(),
+                            &format!("{timeframe}"),
+                            &window.id.to_string(),
+                        );
+                        let snap_iso = chrono::DateTime::from_timestamp_millis(tick.timestamp_ms as i64)
+                            .map(|dt| dt.to_rfc3339())
+                            .unwrap_or_default();
+                        if let Err(e) = window_recorder.record_snapshot(
+                            &wkey,
+                            &snap_iso,
+                            tick.price.as_f64(),
+                            rec_ask_up,
+                            rec_ask_down,
+                        ) {
+                            warn!(error = %e, "failed to record window snapshot");
+                        }
+                    }
+
                     let decisions = engine.evaluate_all(&state);
 
                     for decision in &decisions {
@@ -701,7 +761,18 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
         }
     }
 
-    // ── 7. Flush recorder and print summary ───────────────────────────────────
+    // ── 7. Drain any remaining resolutions ──────────────────────────────────
+    if let Ok(mut resolutions) = pm_resolutions.lock() {
+        for res in resolutions.drain(..) {
+            info!(
+                condition_id = %res.condition_id,
+                winning_token = %res.winning_token_id,
+                "draining final market_resolved event on shutdown"
+            );
+        }
+    }
+
+    // ── 8. Flush recorder and print summary ───────────────────────────────────
     if let Err(e) = recorder.flush() {
         warn!(error = %e, "failed to flush recorder on shutdown");
     }

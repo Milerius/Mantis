@@ -46,4 +46,4 @@ pub mod ws_polymarket;
 pub use manager::MarketManager;
 pub use orderbook::{OrderbookSnapshot, OrderbookTracker};
 pub use scanner::{MarketInfo, ScanError, scan_active_markets};
-pub use ws_polymarket::{NewTokensSender, PolymarketWs};
+pub use ws_polymarket::{MarketResolution, NewTokensSender, PolymarketWs, SharedResolutions};

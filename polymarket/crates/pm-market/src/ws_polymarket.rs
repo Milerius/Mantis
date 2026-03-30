@@ -29,6 +29,20 @@ use tracing::{debug, info, warn};
 
 use crate::orderbook::{OrderbookTracker, WS_CLOB_URL};
 
+// ─── Market resolution ──────────────────────────────────────────────────────
+
+/// Notification emitted when the Polymarket WebSocket sends a `market_resolved`
+/// event indicating that a market's Chainlink oracle has settled.
+#[derive(Debug, Clone)]
+pub struct MarketResolution {
+    /// The condition ID of the resolved market.
+    pub condition_id: String,
+    /// The token ID of the winning outcome (Up or Down).
+    pub winning_token_id: String,
+    /// Unix timestamp in milliseconds when the resolution was observed.
+    pub timestamp_ms: u64,
+}
+
 // ─── Wire types ──────────────────────────────────────────────────────────────
 
 /// The `best_bid_ask` event received from the Polymarket market channel.
@@ -97,6 +111,38 @@ pub(crate) fn parse_best_bid_ask(raw: &str) -> Option<BestBidAskEvent> {
     })
 }
 
+/// Parse a raw WebSocket text message, returning a [`MarketResolution`] when
+/// the message is a `market_resolved` event.
+///
+/// Returns `None` for non-`market_resolved` events or parse failures.
+pub(crate) fn parse_market_resolved(raw: &str) -> Option<MarketResolution> {
+    if !raw.contains("market_resolved") {
+        return None;
+    }
+    let env: WsEnvelope = serde_json::from_str(raw).ok()?;
+    if env.event_type != "market_resolved" {
+        return None;
+    }
+    if env.asset_id.is_empty() || env.market.is_empty() {
+        return None;
+    }
+    let timestamp_ms: u64 = env
+        .timestamp
+        .parse::<f64>()
+        .map(|s| (s * 1_000.0) as u64)
+        .unwrap_or_else(|_| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0)
+        });
+    Some(MarketResolution {
+        condition_id: env.market,
+        winning_token_id: env.asset_id,
+        timestamp_ms,
+    })
+}
+
 // ─── Subscription message builder ────────────────────────────────────────────
 
 /// Build the JSON subscribe message for the given token IDs.
@@ -113,6 +159,11 @@ fn build_subscribe_message(token_ids: &[String]) -> String {
 
 // ─── PolymarketWs ─────────────────────────────────────────────────────────────
 
+/// Shared container for market resolution events detected by the WebSocket.
+///
+/// The paper loop drains this periodically to resolve positions.
+pub type SharedResolutions = Arc<Mutex<Vec<MarketResolution>>>;
+
 /// Polymarket CLOB WebSocket client.
 ///
 /// Connects to the market channel, subscribes to the initial set of token IDs,
@@ -123,6 +174,8 @@ pub struct PolymarketWs {
     token_ids: Vec<String>,
     /// Channel receiver for dynamically adding new token IDs at runtime.
     new_tokens_rx: mpsc::Receiver<Vec<String>>,
+    /// Shared resolution events pushed when `market_resolved` is received.
+    resolved_markets: SharedResolutions,
 }
 
 /// Sender half returned to the caller for pushing new token IDs.
@@ -131,12 +184,22 @@ pub type NewTokensSender = mpsc::Sender<Vec<String>>;
 impl PolymarketWs {
     /// Create a new client with an initial set of token IDs.
     ///
-    /// Also returns a [`NewTokensSender`] that the caller can use to push
-    /// additional token IDs to subscribe to after markets are discovered.
+    /// Returns the client, a [`NewTokensSender`] for pushing additional token
+    /// IDs, and a [`SharedResolutions`] handle that accumulates
+    /// `market_resolved` events for the paper loop to drain.
     #[must_use]
-    pub fn new(token_ids: Vec<String>) -> (Self, NewTokensSender) {
+    pub fn new(token_ids: Vec<String>) -> (Self, NewTokensSender, SharedResolutions) {
         let (tx, rx) = mpsc::channel(64);
-        (Self { token_ids, new_tokens_rx: rx }, tx)
+        let resolved = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                token_ids,
+                new_tokens_rx: rx,
+                resolved_markets: Arc::clone(&resolved),
+            },
+            tx,
+            resolved,
+        )
     }
 
     /// Run the WebSocket connection until `shutdown` is cancelled.
@@ -231,6 +294,15 @@ impl PolymarketWs {
                                         }
                                         if let Some(event) = parse_best_bid_ask(text_str) {
                                             handle_best_bid_ask(&tracker, &event);
+                                        } else if let Some(resolution) = parse_market_resolved(text_str) {
+                                            info!(
+                                                condition_id = %resolution.condition_id,
+                                                winning_token = %resolution.winning_token_id,
+                                                "PM WS: market_resolved event"
+                                            );
+                                            if let Ok(mut resolutions) = self.resolved_markets.lock() {
+                                                resolutions.push(resolution);
+                                            }
                                         }
                                     }
                                     Some(Ok(Message::Ping(data))) => {
@@ -405,6 +477,27 @@ mod tests {
         let bid = snap.bid_up.expect("bid_up should be set");
         assert!((ask.as_f64() - 0.52).abs() < 1e-10, "ask_up mismatch");
         assert!((bid.as_f64() - 0.48).abs() < 1e-10, "bid_up mismatch");
+    }
+
+    #[test]
+    fn parse_market_resolved_valid() {
+        let raw = r#"{"event_type":"market_resolved","asset_id":"tok_up","market":"cond_1","timestamp":"1774782000"}"#;
+        let res = parse_market_resolved(raw).expect("should parse market_resolved event");
+        assert_eq!(res.condition_id, "cond_1");
+        assert_eq!(res.winning_token_id, "tok_up");
+        assert_eq!(res.timestamp_ms, 1_774_782_000_000);
+    }
+
+    #[test]
+    fn parse_market_resolved_wrong_event_type() {
+        let raw = r#"{"event_type":"best_bid_ask","asset_id":"tok_up","market":"cond_1","best_bid":"0.48","best_ask":"0.52"}"#;
+        assert!(parse_market_resolved(raw).is_none());
+    }
+
+    #[test]
+    fn parse_market_resolved_missing_fields_returns_none() {
+        let raw = r#"{"event_type":"market_resolved","asset_id":"","market":"","timestamp":"0"}"#;
+        assert!(parse_market_resolved(raw).is_none());
     }
 
     #[test]
