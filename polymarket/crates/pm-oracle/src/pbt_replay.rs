@@ -96,9 +96,17 @@ fn build_observations(
         Some(ms) => ms,
         None => return Vec::new(),
     };
+    // Use btc_price_start if available. For non-BTC coins (ETH, SOL, XRP),
+    // this field is often None — fall back to the first snapshot's spot price.
     let open_price = match market.btc_price_start.and_then(Price::new) {
         Some(p) => p,
-        None => return Vec::new(),
+        None => {
+            // Fallback: use the first snapshot's spot price as open.
+            match snapshots.first().and_then(|s| s.btc_price).and_then(Price::new) {
+                Some(p) => p,
+                None => return Vec::new(),
+            }
+        }
     };
     let winner = parse_winner(&market.winner);
 

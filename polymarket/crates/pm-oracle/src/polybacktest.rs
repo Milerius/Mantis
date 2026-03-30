@@ -75,9 +75,9 @@ pub struct PbtSnapshot {
     pub market_id: Option<String>,
     /// Spot price of the underlying at snapshot time.
     ///
-    /// Despite the field name (`btc_price`), this is the spot price for whatever
-    /// coin the market tracks (BTC, ETH, or SOL). Can be `null` for very recent
-    /// or incomplete snapshots.
+    /// The PBT API names this field after the coin (`btc_price`, `eth_price`,
+    /// `sol_price`, `xrp_price`). We accept all variants via serde aliases.
+    #[serde(alias = "eth_price", alias = "sol_price", alias = "xrp_price")]
     pub btc_price: Option<f64>,
     /// Best ask price for the Up contract. Can be `null` for empty orderbooks.
     pub price_up: Option<f64>,
