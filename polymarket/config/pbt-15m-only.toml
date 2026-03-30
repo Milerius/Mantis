@@ -16,6 +16,28 @@ asset = "eth"
 enabled = false
 timeframes = []
 
+[[bot.strategies]]
+type = "early_directional"
+max_entry_time_secs = 180
+min_spot_magnitude = 0.001
+max_entry_price = 0.58
+
+[[bot.strategies]]
+type = "momentum_confirmation"
+min_entry_time_secs = 180
+max_entry_time_secs = 480
+min_spot_magnitude = 0.003
+max_entry_price = 0.72
+
+[[bot.strategies]]
+type = "complete_set_arb"
+max_combined_cost = 0.98
+min_profit_per_share = 0.01
+
+[[bot.strategies]]
+type = "hedge_lock"
+max_combined_cost = 0.95
+
 [backtest]
 start_date = "2026-03-01"
 end_date = "2026-03-29"

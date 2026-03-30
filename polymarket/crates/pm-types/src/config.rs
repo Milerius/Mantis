@@ -13,11 +13,91 @@
 extern crate std;
 
 use std::string::String;
+use std::vec;
 use std::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
 use crate::asset::{Asset, Timeframe};
+
+// ─── StrategyConfig ──────────────────────────────────────────────────────────
+
+/// Per-strategy configuration loaded from `[[bot.strategies]]` TOML blocks.
+///
+/// Each variant maps to a concrete strategy in `pm-signal`.  The `type` field
+/// in the TOML table selects the variant; remaining fields are the parameters.
+///
+/// Example:
+/// ```toml
+/// [[bot.strategies]]
+/// type = "early_directional"
+/// max_entry_time_secs = 180
+/// min_spot_magnitude   = 0.001
+/// max_entry_price      = 0.58
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StrategyConfig {
+    /// Parameters for [`pm_signal::EarlyDirectional`].
+    EarlyDirectional {
+        /// Maximum seconds elapsed since window open to still enter.
+        max_entry_time_secs: u64,
+        /// Minimum absolute spot move fraction required (e.g. `0.001` = 0.1 %).
+        min_spot_magnitude: f64,
+        /// Maximum contract ask price to accept (e.g. `0.58`).
+        max_entry_price: f64,
+    },
+    /// Parameters for [`pm_signal::MomentumConfirmation`].
+    MomentumConfirmation {
+        /// Earliest seconds elapsed before this strategy activates.
+        min_entry_time_secs: u64,
+        /// Latest seconds elapsed after which this strategy no longer fires.
+        max_entry_time_secs: u64,
+        /// Minimum absolute spot move fraction required (e.g. `0.003` = 0.3 %).
+        min_spot_magnitude: f64,
+        /// Maximum contract ask price to accept (e.g. `0.72`).
+        max_entry_price: f64,
+    },
+    /// Parameters for [`pm_signal::CompleteSetArb`].
+    CompleteSetArb {
+        /// Maximum acceptable combined ask (Up + Down) to trigger entry.
+        max_combined_cost: f64,
+        /// Minimum profit-per-share required (i.e. `1 - combined`).
+        min_profit_per_share: f64,
+    },
+    /// Parameters for [`pm_signal::HedgeLock`].
+    HedgeLock {
+        /// Maximum combined cost (entry + hedge ask) to still enter.
+        max_combined_cost: f64,
+    },
+}
+
+/// Default strategy list — mirrors the hardcoded values used before
+/// configurable strategies were introduced.
+///
+/// Applied automatically when `strategies` is absent from the TOML.
+pub fn default_strategies() -> Vec<StrategyConfig> {
+    vec![
+        StrategyConfig::EarlyDirectional {
+            max_entry_time_secs: 180,
+            min_spot_magnitude: 0.001,
+            max_entry_price: 0.58,
+        },
+        StrategyConfig::MomentumConfirmation {
+            min_entry_time_secs: 180,
+            max_entry_time_secs: 480,
+            min_spot_magnitude: 0.003,
+            max_entry_price: 0.72,
+        },
+        StrategyConfig::CompleteSetArb {
+            max_combined_cost: 0.98,
+            min_profit_per_share: 0.01,
+        },
+        StrategyConfig::HedgeLock {
+            max_combined_cost: 0.95,
+        },
+    ]
+}
 
 // ─── Mode ────────────────────────────────────────────────────────────────────
 
@@ -101,6 +181,12 @@ pub struct BotSection {
     pub kelly_fraction: f64,
     /// Per-asset configuration blocks.
     pub assets: Vec<AssetConfig>,
+    /// Strategy parameter sets to enable.
+    ///
+    /// If absent from the TOML, the four built-in defaults are used so that
+    /// old config files continue to work without modification.
+    #[serde(default = "default_strategies")]
+    pub strategies: Vec<StrategyConfig>,
 }
 
 // ─── BotConfig ───────────────────────────────────────────────────────────────
@@ -246,5 +332,117 @@ log_dir = "logs"
         let cfg: BotConfig = toml::from_str(toml).expect("paper mode should deserialize");
         assert_eq!(cfg.bot.mode, Mode::Paper);
         assert!(cfg.bot.assets.is_empty());
+        // Absent strategies → defaults applied.
+        assert_eq!(cfg.bot.strategies.len(), 4);
+    }
+
+    #[test]
+    fn strategies_default_when_absent() {
+        let cfg: BotConfig =
+            toml::from_str(DEFAULT_TOML).expect("valid TOML should deserialize");
+        // No [[bot.strategies]] block → default_strategies() is used.
+        let defaults = default_strategies();
+        assert_eq!(cfg.bot.strategies, defaults);
+    }
+
+    #[test]
+    fn deserialize_explicit_strategies() {
+        let toml = r#"
+[bot]
+mode = "backtest"
+min_edge = 0.03
+max_position_usdc = 25.0
+max_total_exposure_usdc = 500.0
+max_daily_loss_usdc = 100.0
+kelly_fraction = 0.25
+assets = []
+
+[[bot.strategies]]
+type = "early_directional"
+max_entry_time_secs = 120
+min_spot_magnitude = 0.002
+max_entry_price = 0.55
+
+[[bot.strategies]]
+type = "complete_set_arb"
+max_combined_cost = 0.97
+min_profit_per_share = 0.02
+
+[backtest]
+start_date = "2025-01-01"
+end_date = "2025-06-01"
+initial_balance = 500.0
+slippage_bps = 10
+
+[data]
+cache_dir = "data"
+log_dir = "logs"
+"#;
+        let cfg: BotConfig = toml::from_str(toml).expect("strategies should deserialize");
+        assert_eq!(cfg.bot.strategies.len(), 2);
+        assert_eq!(
+            cfg.bot.strategies[0],
+            StrategyConfig::EarlyDirectional {
+                max_entry_time_secs: 120,
+                min_spot_magnitude: 0.002,
+                max_entry_price: 0.55,
+            }
+        );
+        assert_eq!(
+            cfg.bot.strategies[1],
+            StrategyConfig::CompleteSetArb {
+                max_combined_cost: 0.97,
+                min_profit_per_share: 0.02,
+            }
+        );
+    }
+
+    #[test]
+    fn deserialize_all_strategy_variants() {
+        let toml = r#"
+[bot]
+mode = "backtest"
+min_edge = 0.03
+max_position_usdc = 25.0
+max_total_exposure_usdc = 500.0
+max_daily_loss_usdc = 100.0
+kelly_fraction = 0.25
+assets = []
+
+[[bot.strategies]]
+type = "early_directional"
+max_entry_time_secs = 180
+min_spot_magnitude = 0.001
+max_entry_price = 0.58
+
+[[bot.strategies]]
+type = "momentum_confirmation"
+min_entry_time_secs = 180
+max_entry_time_secs = 480
+min_spot_magnitude = 0.003
+max_entry_price = 0.72
+
+[[bot.strategies]]
+type = "complete_set_arb"
+max_combined_cost = 0.98
+min_profit_per_share = 0.01
+
+[[bot.strategies]]
+type = "hedge_lock"
+max_combined_cost = 0.95
+
+[backtest]
+start_date = "2025-01-01"
+end_date = "2025-06-01"
+initial_balance = 500.0
+slippage_bps = 10
+
+[data]
+cache_dir = "data"
+log_dir = "logs"
+"#;
+        let cfg: BotConfig = toml::from_str(toml).expect("all strategy variants should deserialize");
+        assert_eq!(cfg.bot.strategies.len(), 4);
+        assert_eq!(cfg.bot.strategies, default_strategies());
     }
 }

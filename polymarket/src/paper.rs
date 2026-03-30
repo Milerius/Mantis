@@ -22,7 +22,7 @@ use pm_market::{MarketManager, OrderbookTracker, PolymarketWs};
 use pm_market::scanner::scan_active_markets;
 use pm_oracle::{BinanceWs, OkxWs, OracleRouter, PriceBuffer};
 use pm_risk::{RiskConfig, RiskManager};
-use pm_signal::{AnyStrategy, CompleteSetArb, EarlyDirectional, HedgeLock, MomentumConfirmation, StrategyEngine};
+use pm_signal::build_engine_from_config;
 use pm_types::{
     Asset, ContractPrice, MarketState, OpenPosition, Pnl, Side, Timeframe, Tick, Window, WindowId,
     config::BotConfig,
@@ -125,12 +125,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     };
     let mut risk = RiskManager::new(risk_config);
 
-    let engine = StrategyEngine::from_any(vec![
-        AnyStrategy::Early(EarlyDirectional::new(300, 0.005, 0.65)),
-        AnyStrategy::Momentum(MomentumConfirmation::new(300, 900, 0.005, 0.65)),
-        AnyStrategy::Arb(CompleteSetArb::new(0.98, 0.015)),
-        AnyStrategy::Hedge(HedgeLock::new(0.98)),
-    ]);
+    let engine = build_engine_from_config(&cfg.bot.strategies);
 
     let mut oracle_router = OracleRouter::new();
     let mut price_buffer = PriceBuffer::new();

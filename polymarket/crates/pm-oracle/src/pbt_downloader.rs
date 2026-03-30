@@ -9,7 +9,7 @@
 
 use std::{
     fs,
-    io::{self, BufRead as _, BufReader, Write as _},
+    io::{self, BufRead as _, BufReader, Read as _, Write as _},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -94,10 +94,10 @@ pub fn read_pbt_cache(path: &Path) -> io::Result<(PbtMarket, Vec<PbtSnapshot>)> 
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     // Remaining lines are snapshots.
-    let mut snapshots = Vec::new();
+    let mut snapshots = Vec::with_capacity(8000);
     for line_result in lines {
         let line = line_result?;
-        if line.trim().is_empty() {
+        if line.is_empty() {
             continue;
         }
         let snap: PbtSnapshot = serde_json::from_str(&line)
