@@ -20,9 +20,11 @@ pub mod trade;
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 
-pub use asset::{Asset, ExchangeSource, Side, Timeframe};
+pub use asset::{Asset, ExchangeSource, Side, Timeframe, TrendDirection};
 #[cfg(feature = "std")]
-pub use config::{AssetConfig, BacktestConfig, BotConfig, BotSection, DataConfig, Mode};
+pub use config::{
+    AssetConfig, BacktestConfig, BotConfig, BotSection, DataConfig, Mode, TrendFilterConfig,
+};
 pub use market::{OrderId, Signal, Tick, Window, WindowId};
 pub use price::{ContractPrice, Edge, Pnl, Price};
 pub use strategy::{EntryDecision, MarketState, StrategyId};

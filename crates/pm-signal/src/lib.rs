@@ -18,6 +18,7 @@ pub mod lookup;
 pub mod momentum;
 pub mod multi;
 pub mod strategy_trait;
+pub mod trend_filter;
 
 #[cfg(feature = "std")]
 pub mod builder;
@@ -32,6 +33,7 @@ pub use lookup::{LookupCell, LookupTable, MAG_BUCKETS, TIME_BUCKETS};
 pub use momentum::MomentumConfirmation;
 pub use multi::{AnyStrategy, Decisions, MAX_STRATEGIES, StrategyEngine};
 pub use strategy_trait::Strategy;
+pub use trend_filter::TrendFilter;
 
 #[cfg(feature = "std")]
 pub use builder::build_engine_from_config;

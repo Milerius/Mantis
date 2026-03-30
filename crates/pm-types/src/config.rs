@@ -110,6 +110,53 @@ fn default_max_price_age_ms() -> u64 {
     15_000
 }
 
+// ─── TrendFilterConfig ──────────────────────────────────────────────────────
+
+/// Trend filter configuration.
+///
+/// Controls the EMA-based higher-timeframe trend filter that prevents
+/// trading against the prevailing trend.  Particularly important for
+/// short (5 m) windows where signal-to-noise is low.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TrendFilterConfig {
+    /// Enable/disable the trend filter.
+    #[serde(default = "default_trend_filter_enabled")]
+    pub enabled: bool,
+    /// Fast EMA period in ticks (default: 20, ~10 min at 2 ticks/sec).
+    #[serde(default = "default_trend_fast_period")]
+    pub fast_period: usize,
+    /// Slow EMA period in ticks (default: 60, ~30 min).
+    #[serde(default = "default_trend_slow_period")]
+    pub slow_period: usize,
+    /// Minimum trend strength to consider the trend established (default: 0.0005).
+    #[serde(default = "default_min_trend_strength")]
+    pub min_trend_strength: f64,
+}
+
+impl Default for TrendFilterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_trend_filter_enabled(),
+            fast_period: default_trend_fast_period(),
+            slow_period: default_trend_slow_period(),
+            min_trend_strength: default_min_trend_strength(),
+        }
+    }
+}
+
+fn default_trend_filter_enabled() -> bool {
+    true
+}
+fn default_trend_fast_period() -> usize {
+    20
+}
+fn default_trend_slow_period() -> usize {
+    60
+}
+fn default_min_trend_strength() -> f64 {
+    0.0005
+}
+
 // ─── Mode ────────────────────────────────────────────────────────────────────
 
 /// Operating mode of the bot.
@@ -207,6 +254,9 @@ pub struct BotSection {
     /// Maximum age of cached prices in milliseconds before fallback (default: 15000).
     #[serde(default = "default_max_price_age_ms")]
     pub max_price_age_ms: u64,
+    /// Higher-timeframe EMA trend filter configuration.
+    #[serde(default)]
+    pub trend_filter: TrendFilterConfig,
 }
 
 // ─── BotConfig ───────────────────────────────────────────────────────────────

@@ -24,9 +24,9 @@ use pm_market::{
     SharedL2Manager, SharedLatestPrices, SharedTokenAssetMap,
 };
 use pm_market::scanner::scan_active_markets;
-use pm_oracle::{BinanceWs, OkxWs, OracleRouter, PriceBuffer};
+use pm_oracle::{BinanceWs, EmaTracker, OkxWs, OracleRouter, PriceBuffer};
 use pm_risk::{RiskConfig, RiskManager};
-use pm_signal::build_engine_from_config;
+use pm_signal::{TrendFilter, build_engine_from_config};
 use pm_types::{
     Asset, ContractPrice, MarketState, OpenPosition, Side, Timeframe, Tick, Window, WindowId,
     config::BotConfig,
@@ -502,8 +502,13 @@ fn process_tick(
     recorder: &mut SnapshotRecorder,
     window_recorder: &mut WindowRecorder,
     engine: &pm_signal::StrategyEngine,
+    ema_tracker: &mut EmaTracker,
+    trend_filter: &TrendFilter,
     shared_l2: &SharedL2Manager,
 ) {
+    // Update the EMA tracker with the latest price for this asset.
+    ema_tracker.update(tick.asset, tick.price.as_f64());
+
     for (tf_idx, &timeframe) in enabled_timeframes.iter().enumerate() {
         let slot = asset_slot * enabled_timeframes.len() + tf_idx;
         let duration_ms = timeframe.duration_secs() * 1_000;
@@ -646,6 +651,21 @@ fn process_tick(
                 "strategy signal fired"
             );
 
+            // Check trend filter before passing to risk manager.
+            let trend = ema_tracker.trend(tick.asset);
+            let strength = ema_tracker.trend_strength(tick.asset);
+            if trend_filter.should_skip(decision.side, trend, strength) {
+                debug!(
+                    asset = %tick.asset,
+                    timeframe = ?timeframe,
+                    side = %decision.side,
+                    trend = ?trend,
+                    strength = strength,
+                    "trend filter skipped trade"
+                );
+                continue;
+            }
+
             // Run decision through risk manager before opening.
             let sized_order = match risk.evaluate(
                 decision,
@@ -786,6 +806,14 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
     let mut oracle_router = OracleRouter::new();
     let mut price_buffer = PriceBuffer::new();
+
+    // ── EMA-based trend filter ──────────────────────────────────────────────
+    let tf_cfg = &cfg.bot.trend_filter;
+    let mut ema_tracker = EmaTracker::new(tf_cfg.fast_period, tf_cfg.slow_period);
+    let trend_filter = TrendFilter {
+        require_trend_alignment: tf_cfg.enabled,
+        min_trend_strength: tf_cfg.min_trend_strength,
+    };
 
     // Per-(asset, timeframe) window table.
     let num_slots = enabled_assets.len() * enabled_timeframes.len();
@@ -1031,6 +1059,8 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     &mut recorder,
                     &mut window_recorder,
                     &engine,
+                    &mut ema_tracker,
+                    &trend_filter,
                     &shared_l2,
                 );
 
