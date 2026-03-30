@@ -9,7 +9,7 @@ kelly_fraction = 0.25
 [[bot.assets]]
 asset = "btc"
 enabled = true
-timeframes = ["min5"]
+timeframes = ["min15"]
 
 [[bot.assets]]
 asset = "eth"

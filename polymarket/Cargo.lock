@@ -1271,6 +1271,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "pm-types",
+ "rayon",
  "reqwest",
  "serde",
  "serde_json",

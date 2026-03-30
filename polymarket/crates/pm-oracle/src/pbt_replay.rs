@@ -6,11 +6,12 @@
 
 use std::{
     io,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use chrono::DateTime;
 use pm_types::{Asset, ContractPrice, ExchangeSource, Price, Side, Tick, Timeframe};
+use rayon::prelude::*;
 
 use crate::pbt_downloader::{pbt_cache_path, read_pbt_cache};
 use crate::polybacktest::{PbtMarket, PbtSnapshot};
@@ -138,6 +139,15 @@ fn build_observations(
     obs
 }
 
+/// Load and parse a single `.jsonl.gz` cache file, returning all observations it contains.
+///
+/// Returns `Ok(Vec::new())` (with a warning) rather than propagating errors so that
+/// a single corrupt file does not abort an entire parallel load.
+fn load_single_file(path: &PathBuf, asset: Asset, timeframe: Timeframe) -> io::Result<Vec<PbtObservation>> {
+    let (market, snapshots) = read_pbt_cache(path)?;
+    Ok(build_observations(&market, &snapshots, asset, timeframe))
+}
+
 // ─── PbtReplay ──────────────────────────────────────────────────────────────
 
 /// Replays cached PolyBackTest data as a time-sorted observation stream.
@@ -175,22 +185,32 @@ impl PbtReplay {
         let prefix = format!("{coin}_{market_type}_");
         let suffix = ".jsonl.gz";
 
-        let mut observations = Vec::new();
+        // Collect matching paths up front so we can hand them to rayon.
+        let paths: Vec<PathBuf> = std::fs::read_dir(cache_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let name = e.file_name();
+                let s = name.to_string_lossy();
+                s.starts_with(&prefix) && s.ends_with(suffix)
+            })
+            .map(|e| e.path())
+            .collect();
 
-        // Scan cache directory for matching files.
-        let entries = std::fs::read_dir(cache_dir)?;
-        for entry in entries {
-            let entry = entry?;
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if !name_str.starts_with(&prefix) || !name_str.ends_with(suffix) {
-                continue;
-            }
+        // Process files in parallel — each file is fully independent.
+        let all_observations: Vec<Vec<PbtObservation>> = paths
+            .par_iter()
+            .filter_map(|path| {
+                match load_single_file(path, asset, timeframe) {
+                    Ok(obs) => Some(obs),
+                    Err(e) => {
+                        tracing::warn!(path = %path.display(), error = %e, "failed to load PBT file");
+                        None
+                    }
+                }
+            })
+            .collect();
 
-            let (market, snapshots) = read_pbt_cache(&entry.path())?;
-            let obs = build_observations(&market, &snapshots, asset, timeframe);
-            observations.extend(obs);
-        }
+        let mut observations: Vec<PbtObservation> = all_observations.into_iter().flatten().collect();
 
         // Sort by timestamp for deterministic replay.
         observations.sort_by_key(|o| o.tick.timestamp_ms);
@@ -225,13 +245,26 @@ impl PbtReplay {
             )
         })?;
 
-        let mut observations = Vec::new();
-        for mid in market_ids {
-            let path = pbt_cache_path(cache_dir, coin, market_type, mid);
-            let (market, snapshots) = read_pbt_cache(&path)?;
-            let obs = build_observations(&market, &snapshots, asset, timeframe);
-            observations.extend(obs);
-        }
+        // Resolve paths up front, then process in parallel.
+        let paths: Vec<PathBuf> = market_ids
+            .iter()
+            .map(|mid| pbt_cache_path(cache_dir, coin, market_type, mid))
+            .collect();
+
+        let all_observations: Vec<Vec<PbtObservation>> = paths
+            .par_iter()
+            .filter_map(|path| {
+                match load_single_file(path, asset, timeframe) {
+                    Ok(obs) => Some(obs),
+                    Err(e) => {
+                        tracing::warn!(path = %path.display(), error = %e, "failed to load PBT file");
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        let mut observations: Vec<PbtObservation> = all_observations.into_iter().flatten().collect();
         observations.sort_by_key(|o| o.tick.timestamp_ms);
         Ok(Self {
             observations,
