@@ -329,6 +329,7 @@ fn build_instances_from_config_produces_correct_count() {
     let strategies = vec![
         StrategyConfig::EarlyDirectional {
             label: "ED-tight".into(),
+            mode: String::new(),
             max_entry_time_secs: 150,
             min_spot_magnitude: 0.002,
             max_entry_price: 0.53,
@@ -341,6 +342,7 @@ fn build_instances_from_config_produces_correct_count() {
         },
         StrategyConfig::MomentumConfirmation {
             label: "MC-tight".into(),
+            mode: String::new(),
             min_entry_time_secs: 180,
             max_entry_time_secs: 480,
             min_spot_magnitude: 0.003,
@@ -367,6 +369,7 @@ fn build_instances_each_fires_on_appropriate_signal() {
     let strategies = vec![
         StrategyConfig::EarlyDirectional {
             label: "ED".into(),
+            mode: String::new(),
             max_entry_time_secs: 150,
             min_spot_magnitude: 0.002,
             max_entry_price: 0.53,
@@ -379,6 +382,7 @@ fn build_instances_each_fires_on_appropriate_signal() {
         },
         StrategyConfig::MomentumConfirmation {
             label: "MC".into(),
+            mode: String::new(),
             min_entry_time_secs: 180,
             max_entry_time_secs: 480,
             min_spot_magnitude: 0.003,

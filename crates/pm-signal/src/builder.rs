@@ -11,7 +11,7 @@ use pm_types::config::StrategyConfig;
 
 use crate::{
     AnyStrategy, CompleteSetArb, ConcreteStrategyInstance, EarlyDirectional, HedgeLock,
-    MomentumConfirmation, StrategyEngine,
+    LateWindowSniper, MeanReversion, MomentumConfirmation, StrategyEngine,
 };
 
 /// Build a [`StrategyEngine`] from a slice of [`StrategyConfig`] values.
@@ -85,6 +85,50 @@ pub fn build_engine_from_config(strategies: &[StrategyConfig]) -> StrategyEngine
             StrategyConfig::HedgeLock { max_combined_cost, .. } => {
                 AnyStrategy::Hedge(HedgeLock::new(*max_combined_cost))
             }
+            StrategyConfig::LateWindowSniper {
+                label,
+                max_remaining_secs,
+                min_spot_magnitude,
+                max_entry_price,
+                ..
+            } => {
+                let lbl = if label.is_empty() {
+                    let auto = std::format!("LWS-{max_entry_price}");
+                    StrategyLabel::new(&auto)
+                } else {
+                    StrategyLabel::new(label)
+                };
+                AnyStrategy::LateSniper(
+                    LateWindowSniper::new(
+                        *max_remaining_secs,
+                        *min_spot_magnitude,
+                        *max_entry_price,
+                    )
+                    .with_label(lbl),
+                )
+            }
+            StrategyConfig::MeanReversion {
+                label,
+                min_elapsed_secs,
+                min_spot_magnitude,
+                max_opposite_price,
+                ..
+            } => {
+                let lbl = if label.is_empty() {
+                    let auto = std::format!("MR-{max_opposite_price}");
+                    StrategyLabel::new(&auto)
+                } else {
+                    StrategyLabel::new(label)
+                };
+                AnyStrategy::MeanRev(
+                    MeanReversion::new(
+                        *min_elapsed_secs,
+                        *min_spot_magnitude,
+                        *max_opposite_price,
+                    )
+                    .with_label(lbl),
+                )
+            }
         })
         .collect();
     StrategyEngine::from_any(any_strategies)
@@ -105,6 +149,7 @@ pub fn build_instances_from_config(
                 match s {
                     StrategyConfig::EarlyDirectional {
                         label,
+                        mode: _,
                         max_entry_time_secs,
                         min_spot_magnitude,
                         max_entry_price,
@@ -141,6 +186,7 @@ pub fn build_instances_from_config(
                     }
                     StrategyConfig::MomentumConfirmation {
                         label,
+                        mode: _,
                         min_entry_time_secs,
                         max_entry_time_secs,
                         min_spot_magnitude,
@@ -178,6 +224,7 @@ pub fn build_instances_from_config(
                         )
                     }
                     StrategyConfig::CompleteSetArb {
+                        mode: _,
                         max_combined_cost,
                         min_profit_per_share,
                         balance,
@@ -203,6 +250,7 @@ pub fn build_instances_from_config(
                         )
                     }
                     StrategyConfig::HedgeLock {
+                        mode: _,
                         max_combined_cost,
                         balance,
                         max_position_usdc,
@@ -214,6 +262,80 @@ pub fn build_instances_from_config(
                         let strat = AnyStrategy::Hedge(HedgeLock::new(*max_combined_cost));
                         (
                             std::string::String::from("HL"),
+                            strat,
+                            *balance,
+                            *max_position_usdc,
+                            *max_exposure_usdc,
+                            *kelly_fraction,
+                            *max_daily_loss,
+                            *slippage_bps,
+                        )
+                    }
+                    StrategyConfig::LateWindowSniper {
+                        label,
+                        mode: _,
+                        max_remaining_secs,
+                        min_spot_magnitude,
+                        max_entry_price,
+                        balance,
+                        max_position_usdc,
+                        max_exposure_usdc,
+                        kelly_fraction,
+                        max_daily_loss,
+                        slippage_bps,
+                    } => {
+                        let auto_label = if label.is_empty() {
+                            std::format!("LWS-{max_entry_price}")
+                        } else {
+                            label.clone()
+                        };
+                        let strat = AnyStrategy::LateSniper(
+                            LateWindowSniper::new(
+                                *max_remaining_secs,
+                                *min_spot_magnitude,
+                                *max_entry_price,
+                            )
+                            .with_label(StrategyLabel::new(&auto_label)),
+                        );
+                        (
+                            auto_label,
+                            strat,
+                            *balance,
+                            *max_position_usdc,
+                            *max_exposure_usdc,
+                            *kelly_fraction,
+                            *max_daily_loss,
+                            *slippage_bps,
+                        )
+                    }
+                    StrategyConfig::MeanReversion {
+                        label,
+                        mode: _,
+                        min_elapsed_secs,
+                        min_spot_magnitude,
+                        max_opposite_price,
+                        balance,
+                        max_position_usdc,
+                        max_exposure_usdc,
+                        kelly_fraction,
+                        max_daily_loss,
+                        slippage_bps,
+                    } => {
+                        let auto_label = if label.is_empty() {
+                            std::format!("MR-{max_opposite_price}")
+                        } else {
+                            label.clone()
+                        };
+                        let strat = AnyStrategy::MeanRev(
+                            MeanReversion::new(
+                                *min_elapsed_secs,
+                                *min_spot_magnitude,
+                                *max_opposite_price,
+                            )
+                            .with_label(StrategyLabel::new(&auto_label)),
+                        );
+                        (
+                            auto_label,
                             strat,
                             *balance,
                             *max_position_usdc,
