@@ -215,8 +215,8 @@ mod tests {
     use alloc::{boxed::Box, vec};
 
     use pm_types::{
-        Asset, ContractPrice, EntryDecision, MarketState, Price, Side, StrategyId, Timeframe,
-        WindowId,
+        Asset, ContractPrice, EntryDecision, MarketState, Price, Side, StrategyId, StrategyLabel,
+        Timeframe, WindowId,
     };
 
     use super::*;
@@ -239,6 +239,7 @@ mod tests {
                 limit_price: ContractPrice::new(0.50).expect("valid"),
                 confidence: self.confidence,
                 strategy_id: self.id,
+                label: StrategyLabel::EMPTY,
             })
         }
     }

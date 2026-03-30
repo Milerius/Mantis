@@ -333,7 +333,7 @@ impl PaperExecutor {
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "test helpers use expect for conciseness")]
 mod tests {
-    use pm_types::{Asset, ContractPrice, EntryDecision, Side, StrategyId, WindowId};
+    use pm_types::{Asset, ContractPrice, EntryDecision, Side, StrategyId, StrategyLabel, WindowId};
 
     use super::*;
 
@@ -352,6 +352,7 @@ mod tests {
             limit_price: ContractPrice::new(limit_price).expect("valid limit_price"),
             confidence: 0.8,
             strategy_id: StrategyId::EarlyDirectional,
+            label: StrategyLabel::EMPTY,
         }
     }
 

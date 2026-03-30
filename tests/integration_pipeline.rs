@@ -10,7 +10,7 @@ use pm_risk::{RiskConfig, RiskManager};
 use pm_signal::{AnyStrategy, EarlyDirectional, StrategyEngine, build_engine_from_config};
 use pm_types::{
     Asset, ContractPrice, EntryDecision, MarketState, Price, Rejection, Side, StrategyId,
-    Timeframe, WindowId,
+    StrategyLabel, Timeframe, WindowId,
     config::{StrategyConfig, default_strategies},
 };
 
@@ -22,6 +22,7 @@ fn default_risk_config() -> RiskConfig {
         max_total_exposure_usdc: 200.0,
         max_daily_loss_usdc: 100.0,
         kelly_fraction: 0.25,
+        max_same_side_positions: 2,
     }
 }
 
@@ -262,6 +263,7 @@ fn pnl_calculation_win_entry_at_half() {
         limit_price: ContractPrice::new(0.50).expect("valid"),
         confidence: 0.8,
         strategy_id: StrategyId::EarlyDirectional,
+        label: StrategyLabel::EMPTY,
     };
 
     executor
@@ -294,6 +296,7 @@ fn balance_updates_correctly_across_wins_and_losses() {
         limit_price: ContractPrice::new(0.50).expect("valid"),
         confidence: 0.8,
         strategy_id: StrategyId::EarlyDirectional,
+        label: StrategyLabel::EMPTY,
     };
     let size1 = 50.0;
     executor
@@ -313,6 +316,7 @@ fn balance_updates_correctly_across_wins_and_losses() {
         limit_price: ContractPrice::new(0.60).expect("valid"),
         confidence: 0.8,
         strategy_id: StrategyId::EarlyDirectional,
+        label: StrategyLabel::EMPTY,
     };
     executor
         .try_open_position(&d2, WindowId::new(2), Asset::Eth, 2_000, 40.0)
@@ -367,6 +371,7 @@ fn risk_correlation_guard_blocks_third_same_side() {
         limit_price: ContractPrice::new(0.50).expect("valid"),
         confidence: 0.5,
         strategy_id: StrategyId::EarlyDirectional,
+        label: StrategyLabel::EMPTY,
     };
     let result = risk.evaluate(&decision, WindowId::new(3), Asset::Sol, 500.0);
     assert_eq!(result, Err(Rejection::CorrelationGuard));
@@ -400,6 +405,7 @@ fn risk_correlation_guard_allows_opposite_side() {
         limit_price: ContractPrice::new(0.50).expect("valid"),
         confidence: 0.5,
         strategy_id: StrategyId::EarlyDirectional,
+        label: StrategyLabel::EMPTY,
     };
     let result = risk.evaluate(&decision, WindowId::new(3), Asset::Sol, 500.0);
     assert!(result.is_ok(), "opposite side should not trigger correlation guard");
@@ -412,6 +418,7 @@ fn risk_exposure_limit_blocks_when_exceeded() {
         max_total_exposure_usdc: 100.0,
         max_daily_loss_usdc: 200.0,
         kelly_fraction: 0.25,
+        max_same_side_positions: 2,
     });
 
     // Open a position using 90 USDC of 100 USDC limit.
@@ -430,6 +437,7 @@ fn risk_exposure_limit_blocks_when_exceeded() {
         limit_price: ContractPrice::new(0.50).expect("valid"),
         confidence: 0.8,
         strategy_id: StrategyId::MomentumConfirmation,
+        label: StrategyLabel::EMPTY,
     };
     let result = risk.evaluate(&decision, WindowId::new(2), Asset::Eth, 1_000.0);
     assert_eq!(result, Err(Rejection::TotalExposureLimitBreached));
@@ -445,6 +453,7 @@ fn risk_kill_switch_blocks_all_trades() {
         limit_price: ContractPrice::new(0.50).expect("valid"),
         confidence: 0.9,
         strategy_id: StrategyId::EarlyDirectional,
+        label: StrategyLabel::EMPTY,
     };
     let result = risk.evaluate(&decision, WindowId::new(1), Asset::Btc, 10_000.0);
     assert_eq!(result, Err(Rejection::KillSwitchActive));
@@ -457,6 +466,7 @@ fn risk_daily_loss_triggers_kill_switch_behavior() {
         max_total_exposure_usdc: 200.0,
         max_daily_loss_usdc: 50.0,
         kelly_fraction: 0.25,
+        max_same_side_positions: 2,
     });
 
     // Record enough losses to breach the daily limit.
@@ -475,6 +485,7 @@ fn risk_daily_loss_triggers_kill_switch_behavior() {
         limit_price: ContractPrice::new(0.50).expect("valid"),
         confidence: 0.5,
         strategy_id: StrategyId::EarlyDirectional,
+        label: StrategyLabel::EMPTY,
     };
     let result = risk.evaluate(&decision, WindowId::new(3), Asset::Btc, 500.0);
     assert_eq!(
@@ -557,6 +568,7 @@ fn build_engine_from_config_default_strategies() {
 #[test]
 fn build_engine_early_directional_fires_in_correct_window() {
     let strategies = vec![StrategyConfig::EarlyDirectional {
+        label: String::new(),
         max_entry_time_secs: 120,
         min_spot_magnitude: 0.003,
         max_entry_price: 0.55,
@@ -583,6 +595,7 @@ fn build_engine_early_directional_fires_in_correct_window() {
 #[test]
 fn build_engine_momentum_fires_with_sustained_move() {
     let strategies = vec![StrategyConfig::MomentumConfirmation {
+        label: String::new(),
         min_entry_time_secs: 180,
         max_entry_time_secs: 480,
         min_spot_magnitude: 0.003,
@@ -631,11 +644,13 @@ fn build_engine_empty_config_produces_no_signals() {
 fn build_engine_multiple_strategies_highest_confidence_wins() {
     let strategies = vec![
         StrategyConfig::EarlyDirectional {
+            label: String::new(),
             max_entry_time_secs: 180,
             min_spot_magnitude: 0.001,
             max_entry_price: 0.58,
         },
         StrategyConfig::MomentumConfirmation {
+            label: String::new(),
             min_entry_time_secs: 30,
             max_entry_time_secs: 180,
             min_spot_magnitude: 0.001,

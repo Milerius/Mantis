@@ -107,6 +107,55 @@ impl MarketState {
     }
 }
 
+// ─── StrategyLabel ───────────────────────────────────────────────────────────
+
+/// Compact strategy label (max 16 ASCII bytes, no heap allocation).
+/// Used to distinguish strategy variants (e.g. "tight" vs "loose").
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StrategyLabel {
+    buf: [u8; 16],
+    len: u8,
+}
+
+impl StrategyLabel {
+    /// Empty label.
+    pub const EMPTY: Self = Self { buf: [0; 16], len: 0 };
+
+    /// Create a label from a string (truncated to 16 bytes).
+    #[must_use]
+    pub fn new(s: &str) -> Self {
+        let mut buf = [0u8; 16];
+        let len = s.len().min(16);
+        buf[..len].copy_from_slice(&s.as_bytes()[..len]);
+        Self { buf, len: len as u8 }
+    }
+
+    /// Get the label as a string slice.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        // SAFETY: we only write valid UTF-8 bytes from &str in `new`.
+        core::str::from_utf8(&self.buf[..self.len as usize]).unwrap_or("")
+    }
+}
+
+impl Default for StrategyLabel {
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
+impl core::fmt::Debug for StrategyLabel {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "\"{}\"", self.as_str())
+    }
+}
+
+impl core::fmt::Display for StrategyLabel {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 // ─── EntryDecision ───────────────────────────────────────────────────────────
 
 /// A strategy's recommendation to enter a position.
@@ -121,6 +170,9 @@ pub struct EntryDecision {
     pub confidence: f64,
     /// Strategy that produced this decision.
     pub strategy_id: StrategyId,
+    /// Human-readable label to distinguish variants (e.g. "tight", "loose").
+    #[cfg_attr(feature = "std", serde(skip))]
+    pub label: StrategyLabel,
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

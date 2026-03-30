@@ -92,8 +92,114 @@ struct LiveWindow {
     window: Window,
     /// Whether a position has already been opened in this window.
     position_opened: bool,
+    /// Set after a signal has been evaluated (filled or rejected) to prevent
+    /// re-evaluating the same window on every subsequent tick.
+    signal_attempted: bool,
     /// Pending entry waiting for optimal execution conditions (smart entry timing).
     pending_entry: Option<PendingEntry>,
+}
+
+// ─── Session Stats ──────────────────────────────────────────────────────────
+
+/// Tracks live session performance metrics.
+struct SessionStats {
+    start_time: std::time::Instant,
+    initial_balance: f64,
+    total_signals: u32,
+    total_fills: u32,
+    total_trend_filtered: u32,
+    total_risk_rejected: u32,
+    wins: u32,
+    losses: u32,
+    realized_pnl: f64,
+    biggest_win: f64,
+    biggest_loss: f64,
+    wins_by_strategy: std::collections::HashMap<String, u32>,
+    losses_by_strategy: std::collections::HashMap<String, u32>,
+    last_summary_at: std::time::Instant,
+}
+
+impl SessionStats {
+    fn new(initial_balance: f64) -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            start_time: now,
+            initial_balance,
+            total_signals: 0,
+            total_fills: 0,
+            total_trend_filtered: 0,
+            total_risk_rejected: 0,
+            wins: 0,
+            losses: 0,
+            realized_pnl: 0.0,
+            biggest_win: 0.0,
+            biggest_loss: 0.0,
+            wins_by_strategy: std::collections::HashMap::new(),
+            losses_by_strategy: std::collections::HashMap::new(),
+            last_summary_at: now,
+        }
+    }
+
+    fn record_resolution(&mut self, pnl: f64, strategy_name: &str) {
+        if pnl >= 0.0 {
+            self.wins += 1;
+            *self.wins_by_strategy.entry(strategy_name.to_string()).or_insert(0) += 1;
+            if pnl > self.biggest_win {
+                self.biggest_win = pnl;
+            }
+        } else {
+            self.losses += 1;
+            *self.losses_by_strategy.entry(strategy_name.to_string()).or_insert(0) += 1;
+            if pnl < self.biggest_loss {
+                self.biggest_loss = pnl;
+            }
+        }
+        self.realized_pnl += pnl;
+    }
+
+    fn win_rate(&self) -> f64 {
+        let total = self.wins + self.losses;
+        if total == 0 { 0.0 } else { self.wins as f64 / total as f64 * 100.0 }
+    }
+
+    fn log_summary(&mut self, current_balance: f64, open_positions: usize) {
+        let uptime = self.start_time.elapsed();
+        let mins = uptime.as_secs() / 60;
+        let _total_closed = self.wins + self.losses;
+        let roi = (current_balance - self.initial_balance) / self.initial_balance * 100.0;
+
+        info!(
+            uptime_min = mins,
+            balance = format!("${:.2}", current_balance),
+            roi = format!("{:+.1}%", roi),
+            realized_pnl = format!("${:+.2}", self.realized_pnl),
+            open_positions = open_positions,
+            signals = self.total_signals,
+            fills = self.total_fills,
+            trend_filtered = self.total_trend_filtered,
+            risk_rejected = self.total_risk_rejected,
+            closed = format!("{}W/{}L ({:.0}%)", self.wins, self.losses, self.win_rate()),
+            biggest_win = format!("${:.2}", self.biggest_win),
+            biggest_loss = format!("${:.2}", self.biggest_loss),
+            "📊 SESSION SUMMARY"
+        );
+
+        // Per-strategy breakdown
+        let mut all_strats: std::collections::HashSet<String> = self.wins_by_strategy.keys().cloned().collect();
+        all_strats.extend(self.losses_by_strategy.keys().cloned());
+        for strat in &all_strats {
+            let w = self.wins_by_strategy.get(strat).copied().unwrap_or(0);
+            let l = self.losses_by_strategy.get(strat).copied().unwrap_or(0);
+            let wr = if w + l > 0 { w as f64 / (w + l) as f64 * 100.0 } else { 0.0 };
+            info!(
+                strategy = %strat,
+                record = format!("{}W/{}L ({:.0}%)", w, l, wr),
+                "  strategy breakdown"
+            );
+        }
+
+        self.last_summary_at = std::time::Instant::now();
+    }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -373,6 +479,7 @@ fn handle_window_transition(
     executor: &mut PaperExecutor,
     risk: &mut RiskManager,
     window_recorder: &mut WindowRecorder,
+    stats: &mut SessionStats,
 ) {
     if let Some(old_lw) = live_windows[slot].take() {
         let outcome = old_lw.window.direction(tick.price);
@@ -401,13 +508,35 @@ fn handle_window_transition(
             warn!(error = %e, key = %old_key, "failed to close window recording");
         }
 
-        info!(
-            asset = %tick.asset,
-            timeframe = ?timeframe,
-            window_id = %old_lw.window.id,
-            outcome = %outcome,
-            "window resolved"
-        );
+        let pnl_val = window_pnl.as_f64();
+        let had_position = old_lw.position_opened;
+
+        if had_position {
+            // Find what strategy opened this position (use "unknown" if not tracked)
+            let strat_name = "mixed"; // TODO: track strategy per position
+            stats.record_resolution(pnl_val, strat_name);
+
+            let result = if pnl_val >= 0.0 { "WIN" } else { "LOSS" };
+            info!(
+                asset = %tick.asset,
+                timeframe = ?timeframe,
+                window_id = %old_lw.window.id,
+                outcome = %outcome,
+                result = result,
+                pnl = format!("${:+.2}", pnl_val),
+                balance = format!("${:.2}", executor.balance()),
+                record = format!("{}W/{}L ({:.0}%)", stats.wins, stats.losses, stats.win_rate()),
+                "window resolved — TRADE CLOSED"
+            );
+        } else {
+            info!(
+                asset = %tick.asset,
+                timeframe = ?timeframe,
+                window_id = %old_lw.window.id,
+                outcome = %outcome,
+                "window resolved — no position"
+            );
+        }
     }
 
     let raw_id = (window_open_ms / 1_000) ^ (tick.asset.index() as u64 * 0x9E37_79B9)
@@ -423,6 +552,7 @@ fn handle_window_transition(
     live_windows[slot] = Some(LiveWindow {
         window: new_window,
         position_opened: false,
+                signal_attempted: false,
         pending_entry: None,
     });
 
@@ -489,6 +619,7 @@ fn process_tick(
     trend_filter: &TrendFilter,
     local_l2: &L2OrderbookManager,
     entry_timer: Option<&EntryTimer>,
+    stats: &mut SessionStats,
 ) {
     // Update the EMA tracker with the latest price for this asset.
     ema_tracker.update(tick.asset, tick.price.as_f64());
@@ -514,6 +645,7 @@ fn process_tick(
                 executor,
                 risk,
                 window_recorder,
+                stats,
             );
         }
 
@@ -521,7 +653,7 @@ fn process_tick(
             continue;
         };
 
-        if lw.position_opened {
+        if lw.position_opened || lw.signal_attempted {
             continue;
         }
 
@@ -562,9 +694,11 @@ fn process_tick(
                     .parse::<chrono::DateTime<chrono::Utc>>()
                     .map_or(true, |end_dt| end_dt > now_utc)
             })
-            .map(|m| (m.condition_id.clone(), m.token_id_up.clone()));
-        let condition_id_opt = matched_ids.as_ref().map(|(cid, _)| cid.clone());
-        let up_token_id_opt = matched_ids.as_ref().map(|(_, tid)| tid.as_str());
+            .map(|m| (m.condition_id.clone(), m.token_id_up.clone(), m.liquidity, m.spread));
+        let condition_id_opt = matched_ids.as_ref().map(|(cid, _, _, _)| cid.clone());
+        let up_token_id_opt = matched_ids.as_ref().map(|(_, tid, _, _)| tid.as_str());
+        let market_liquidity = matched_ids.as_ref().map(|(_, _, liq, _)| *liq).unwrap_or(0.0);
+        let market_spread = matched_ids.as_ref().map(|(_, _, _, spr)| *spr).unwrap_or(0.0);
 
         let mut prices = resolve_orderbook_prices(
             tick,
@@ -702,13 +836,18 @@ fn process_tick(
         let decisions = engine.evaluate_all(&state);
 
         for decision in &decisions {
+            stats.total_signals += 1;
             info!(
                 asset = %tick.asset,
                 timeframe = ?timeframe,
                 side = %decision.side,
                 strategy = %decision.strategy_id,
+                variant = %decision.label,
                 confidence = decision.confidence,
                 limit_price = decision.limit_price.as_f64(),
+                liquidity = format!("${:.0}", market_liquidity),
+                spread = format!("{:.3}", market_spread),
+                imbalance = format!("{:.2}", prices.orderbook_imbalance.unwrap_or(0.0)),
                 "strategy signal fired"
             );
 
@@ -716,10 +855,12 @@ fn process_tick(
             let trend = ema_tracker.trend(tick.asset);
             let strength = ema_tracker.trend_strength(tick.asset);
             if trend_filter.should_skip(decision.side, trend, strength) {
-                debug!(
+                stats.total_trend_filtered += 1;
+                info!(
                     asset = %tick.asset,
                     timeframe = ?timeframe,
                     side = %decision.side,
+                    strategy = %decision.strategy_id,
                     trend = ?trend,
                     strength = strength,
                     "trend filter skipped trade"
@@ -752,6 +893,9 @@ fn process_tick(
                 break;
             }
 
+            // Mark this window as attempted so we don't re-evaluate on the next tick.
+            lw.signal_attempted = true;
+
             // Run decision through risk manager before opening.
             let sized_order = match risk.evaluate(
                 decision,
@@ -761,13 +905,14 @@ fn process_tick(
             ) {
                 Ok(order) => order,
                 Err(rejection) => {
+                    stats.total_risk_rejected += 1;
                     warn!(
                         asset = %tick.asset,
                         side = %decision.side,
                         rejection = ?rejection,
                         "risk manager rejected entry"
                     );
-                    continue;
+                    break; // stop evaluating more decisions for this window
                 }
             };
 
@@ -789,12 +934,18 @@ fn process_tick(
                 });
 
                 lw.position_opened = true;
+                stats.total_fills += 1;
                 info!(
                     asset = %tick.asset,
                     side = %decision.side,
+                    strategy = %decision.strategy_id,
+                    variant = %decision.label,
                     fill_price = fill.fill_price.as_f64(),
                     size_usdc = fill.size_usdc,
-                    balance = executor.balance(),
+                    balance = format!("${:.2}", executor.balance()),
+                    record = format!("{}W/{}L", stats.wins, stats.losses),
+                    liquidity = format!("${:.0}", market_liquidity),
+                    spread = format!("{:.3}", market_spread),
                     "paper fill executed"
                 );
                 // Only one position per window.
@@ -885,6 +1036,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
         max_total_exposure_usdc: cfg.bot.max_total_exposure_usdc,
         max_daily_loss_usdc: cfg.bot.max_daily_loss_usdc,
         kelly_fraction: cfg.bot.kelly_fraction,
+        max_same_side_positions: 4,
     };
     let mut risk = RiskManager::new(risk_config);
 
@@ -892,6 +1044,9 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
     let mut oracle_router = OracleRouter::new();
     let mut price_buffer = PriceBuffer::new();
+
+    // ── Session stats ────────────────────────────────────────────────────────
+    let mut stats = SessionStats::new(cfg.backtest.initial_balance);
 
     // ── EMA-based trend filter ──────────────────────────────────────────────
     let tf_cfg = &cfg.bot.trend_filter;
@@ -1014,6 +1169,17 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                                 local_prices.update_side(asset, timeframe, is_up, best_bid, best_ask, timestamp_ms);
                             }
                         }
+                    }
+                    PmEvent::Book { token_id, bids, asks, timestamp_ms } => {
+                        // Convert BookLevels to a BookEvent for the L2 manager.
+                        let book_event = pm_market::l2_orderbook::BookEvent {
+                            event_type: "book".to_string(),
+                            asset_id: token_id,
+                            bids,
+                            asks,
+                            timestamp: timestamp_ms.to_string(),
+                        };
+                        local_l2.process_book_event(&book_event.asset_id, &book_event, timestamp_ms);
                     }
                     PmEvent::PriceChange { token_id, changes, timestamp_ms } => {
                         local_l2.process_price_change(&token_id, &changes, timestamp_ms);
@@ -1225,7 +1391,14 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     &trend_filter,
                     &local_l2,
                     entry_timer_opt.as_ref(),
+                    &mut stats,
                 );
+
+                // ── Periodic session summary (every 5 min) ─────────────────
+                if stats.last_summary_at.elapsed() >= std::time::Duration::from_secs(300) {
+                    let open_pos = risk.open_position_count();
+                    stats.log_summary(executor.balance(), open_pos);
+                }
 
                 // ── Periodic cleanup of expired positions ───────────────────
                 if tokio::time::Instant::now() >= next_cleanup_at {

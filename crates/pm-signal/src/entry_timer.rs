@@ -96,7 +96,7 @@ impl EntryTimer {
 
 #[cfg(test)]
 mod tests {
-    use pm_types::{ContractPrice, Side, StrategyId};
+    use pm_types::{ContractPrice, Side, StrategyId, StrategyLabel};
 
     use super::*;
 
@@ -106,6 +106,7 @@ mod tests {
             limit_price: ContractPrice::new(limit_price).expect("valid"),
             confidence: 0.8,
             strategy_id: StrategyId::EarlyDirectional,
+            label: StrategyLabel::EMPTY,
         }
     }
 

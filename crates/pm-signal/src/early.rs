@@ -3,7 +3,7 @@
 //! Fires shortly after window open when the spot price has already moved
 //! significantly and the contract is still cheap enough to buy.
 
-use pm_types::{EntryDecision, MarketState, StrategyId};
+use pm_types::{EntryDecision, MarketState, StrategyId, StrategyLabel};
 
 use crate::strategy_trait::Strategy;
 
@@ -22,6 +22,8 @@ pub struct EarlyDirectional {
     pub min_spot_magnitude: f64,
     /// Maximum contract ask price to enter (e.g. `0.65`).
     pub max_entry_price: f64,
+    /// Human-readable label to distinguish variants (e.g. "tight", "loose").
+    pub label: StrategyLabel,
 }
 
 impl EarlyDirectional {
@@ -33,7 +35,16 @@ impl EarlyDirectional {
             max_entry_time_secs,
             min_spot_magnitude,
             max_entry_price,
+            label: StrategyLabel::EMPTY,
         }
+    }
+
+    /// Construct with an explicit label.
+    #[inline]
+    #[must_use]
+    pub fn with_label(mut self, label: StrategyLabel) -> Self {
+        self.label = label;
+        self
     }
 }
 
@@ -95,6 +106,7 @@ impl Strategy for EarlyDirectional {
             limit_price: ask,
             confidence,
             strategy_id: StrategyId::EarlyDirectional,
+            label: self.label,
         })
     }
 }

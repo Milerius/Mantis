@@ -4,7 +4,7 @@
 //! below `max_combined_cost` and the implied profit-per-share exceeds
 //! `min_profit_per_share`.
 
-use pm_types::{EntryDecision, MarketState, Side, StrategyId};
+use pm_types::{EntryDecision, MarketState, Side, StrategyId, StrategyLabel};
 
 use crate::strategy_trait::Strategy;
 
@@ -67,6 +67,7 @@ impl Strategy for CompleteSetArb {
             limit_price,
             confidence,
             strategy_id: StrategyId::CompleteSetArb,
+            label: StrategyLabel::EMPTY,
         })
     }
 }

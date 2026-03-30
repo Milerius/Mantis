@@ -40,6 +40,9 @@ use crate::asset::{Asset, Timeframe};
 pub enum StrategyConfig {
     /// Parameters for [`pm_signal::EarlyDirectional`].
     EarlyDirectional {
+        /// Human-readable label to distinguish variants (e.g. "tight", "loose").
+        #[serde(default)]
+        label: String,
         /// Maximum seconds elapsed since window open to still enter.
         max_entry_time_secs: u64,
         /// Minimum absolute spot move fraction required (e.g. `0.001` = 0.1 %).
@@ -49,6 +52,9 @@ pub enum StrategyConfig {
     },
     /// Parameters for [`pm_signal::MomentumConfirmation`].
     MomentumConfirmation {
+        /// Human-readable label to distinguish variants (e.g. "tight", "loose").
+        #[serde(default)]
+        label: String,
         /// Earliest seconds elapsed before this strategy activates.
         min_entry_time_secs: u64,
         /// Latest seconds elapsed after which this strategy no longer fires.
@@ -80,11 +86,13 @@ pub enum StrategyConfig {
 pub fn default_strategies() -> Vec<StrategyConfig> {
     vec![
         StrategyConfig::EarlyDirectional {
+            label: String::new(),
             max_entry_time_secs: 180,
             min_spot_magnitude: 0.001,
             max_entry_price: 0.58,
         },
         StrategyConfig::MomentumConfirmation {
+            label: String::new(),
             min_entry_time_secs: 180,
             max_entry_time_secs: 480,
             min_spot_magnitude: 0.003,
@@ -495,6 +503,7 @@ log_dir = "logs"
         assert_eq!(
             cfg.bot.strategies[0],
             StrategyConfig::EarlyDirectional {
+                label: String::new(),
                 max_entry_time_secs: 120,
                 min_spot_magnitude: 0.002,
                 max_entry_price: 0.55,

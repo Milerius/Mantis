@@ -1,0 +1,75 @@
+[bot]
+mode = "paper"
+min_edge = 0.01
+max_position_usdc = 25.0
+max_total_exposure_usdc = 500.0
+max_daily_loss_usdc = 200.0
+kelly_fraction = 0.25
+
+[[bot.assets]]
+asset = "btc"
+enabled = true
+timeframes = ["min5", "min15"]
+
+[[bot.assets]]
+asset = "eth"
+enabled = true
+timeframes = ["min5", "min15"]
+
+[[bot.assets]]
+asset = "sol"
+enabled = true
+timeframes = ["min5", "min15"]
+
+[[bot.assets]]
+asset = "xrp"
+enabled = true
+timeframes = ["min5", "min15"]
+
+# Strategy A: Tight EarlyDirectional (production config E)
+[[bot.strategies]]
+type = "early_directional"
+label = "ED-tight"
+max_entry_time_secs = 150
+min_spot_magnitude = 0.002
+max_entry_price = 0.53
+
+# Strategy B: Looser EarlyDirectional — catches weaker moves
+[[bot.strategies]]
+type = "early_directional"
+label = "ED-loose"
+max_entry_time_secs = 200
+min_spot_magnitude = 0.001
+max_entry_price = 0.58
+
+# Strategy C: Production momentum
+[[bot.strategies]]
+type = "momentum_confirmation"
+label = "MC-tight"
+min_entry_time_secs = 180
+max_entry_time_secs = 480
+min_spot_magnitude = 0.003
+max_entry_price = 0.72
+
+# Strategy D: Looser momentum — catches smaller sustained moves
+[[bot.strategies]]
+type = "momentum_confirmation"
+label = "MC-loose"
+min_entry_time_secs = 120
+max_entry_time_secs = 600
+min_spot_magnitude = 0.001
+max_entry_price = 0.65
+
+# Trend filter OFF for now — we want maximum signal volume for data collection
+[bot.trend_filter]
+enabled = false
+
+[backtest]
+start_date = "2025-10-01"
+end_date = "2026-03-30"
+initial_balance = 500.0
+slippage_bps = 10
+
+[data]
+cache_dir = "data"
+log_dir = "logs"

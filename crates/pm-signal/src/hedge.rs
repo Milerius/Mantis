@@ -3,7 +3,7 @@
 //! When an existing position is losing, this strategy considers buying the
 //! opposite side if the combined cost of both legs is still below $1.
 
-use pm_types::{ContractPrice, EntryDecision, MarketState, Side, StrategyId};
+use pm_types::{ContractPrice, EntryDecision, MarketState, Side, StrategyId, StrategyLabel};
 
 use crate::strategy_trait::Strategy;
 
@@ -64,6 +64,7 @@ impl HedgeLock {
             limit_price: hedge_ask,
             confidence,
             strategy_id: StrategyId::HedgeLock,
+            label: StrategyLabel::EMPTY,
         })
     }
 }

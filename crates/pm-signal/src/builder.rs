@@ -5,6 +5,7 @@
 
 extern crate std;
 
+use pm_types::StrategyLabel;
 use pm_types::config::StrategyConfig;
 
 use crate::{
@@ -29,25 +30,49 @@ pub fn build_engine_from_config(strategies: &[StrategyConfig]) -> StrategyEngine
         .iter()
         .map(|s| match s {
             StrategyConfig::EarlyDirectional {
+                label,
                 max_entry_time_secs,
                 min_spot_magnitude,
                 max_entry_price,
-            } => AnyStrategy::Early(EarlyDirectional::new(
-                *max_entry_time_secs,
-                *min_spot_magnitude,
-                *max_entry_price,
-            )),
+            } => {
+                let lbl = if label.is_empty() {
+                    let auto = std::format!("ED-{max_entry_price}");
+                    StrategyLabel::new(&auto)
+                } else {
+                    StrategyLabel::new(label)
+                };
+                AnyStrategy::Early(
+                    EarlyDirectional::new(
+                        *max_entry_time_secs,
+                        *min_spot_magnitude,
+                        *max_entry_price,
+                    )
+                    .with_label(lbl),
+                )
+            }
             StrategyConfig::MomentumConfirmation {
+                label,
                 min_entry_time_secs,
                 max_entry_time_secs,
                 min_spot_magnitude,
                 max_entry_price,
-            } => AnyStrategy::Momentum(MomentumConfirmation::new(
-                *min_entry_time_secs,
-                *max_entry_time_secs,
-                *min_spot_magnitude,
-                *max_entry_price,
-            )),
+            } => {
+                let lbl = if label.is_empty() {
+                    let auto = std::format!("MC-{max_entry_price}");
+                    StrategyLabel::new(&auto)
+                } else {
+                    StrategyLabel::new(label)
+                };
+                AnyStrategy::Momentum(
+                    MomentumConfirmation::new(
+                        *min_entry_time_secs,
+                        *max_entry_time_secs,
+                        *min_spot_magnitude,
+                        *max_entry_price,
+                    )
+                    .with_label(lbl),
+                )
+            }
             StrategyConfig::CompleteSetArb {
                 max_combined_cost,
                 min_profit_per_share,
