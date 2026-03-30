@@ -4,7 +4,7 @@
 //! `trades` channel for each configured asset, and publishes [`Tick`]s to
 //! a broadcast channel. Reconnects automatically on disconnect.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::{SinkExt, StreamExt};
 use pm_types::{Asset, ExchangeSource, Price, Tick};
@@ -146,6 +146,8 @@ impl OkxWs {
         let sub_msg =
             Message::Text(subscribe_message(&self.assets).to_string().into());
 
+        let mut backoff_secs: u64 = 1;
+
         loop {
             if shutdown.is_cancelled() {
                 break;
@@ -154,6 +156,7 @@ impl OkxWs {
             match connect_async(OKX_WS_URL).await {
                 Ok((ws_stream, _)) => {
                     debug!("OKX WS connected: {OKX_WS_URL}");
+                    backoff_secs = 1; // reset on successful connect
                     let (mut write, mut read) = ws_stream.split();
 
                     // Send the subscribe payload.
@@ -197,8 +200,19 @@ impl OkxWs {
             if shutdown.is_cancelled() {
                 break;
             }
-            warn!("OKX WS: reconnecting in 1s");
-            tokio::time::sleep(Duration::from_secs(1)).await;
+
+            // Exponential backoff with jitter (±12.5%).
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(500, |d| d.subsec_nanos() % 1000);
+            let jitter = (backoff_secs as f64) * 0.25 * (f64::from(nanos) / 1000.0 - 0.5);
+            let sleep_secs = backoff_secs as f64 + jitter;
+            warn!(
+                backoff_secs = format!("{sleep_secs:.1}"),
+                "OKX WS: reconnecting"
+            );
+            tokio::time::sleep(Duration::from_secs_f64(sleep_secs)).await;
+            backoff_secs = (backoff_secs * 2).min(30);
         }
 
         Ok(())

@@ -18,7 +18,8 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::{SinkExt, StreamExt};
 use pm_types::{Asset, Timeframe};
@@ -199,6 +200,9 @@ pub struct PolymarketWs {
     token_asset_map: SharedTokenAssetMap,
     /// Shared latest prices cache.
     latest_prices: SharedLatestPrices,
+    /// Flag set on WS reconnect to signal the scanner to do an immediate
+    /// REST orderbook re-fetch. Cleared by the scanner after fetching.
+    needs_rest_refresh: Arc<AtomicBool>,
 }
 
 /// Sender half returned to the caller for pushing new token IDs.
@@ -208,16 +212,19 @@ impl PolymarketWs {
     /// Create a new client with an initial set of token IDs.
     ///
     /// Returns the client, a [`NewTokensSender`] for pushing additional token
-    /// IDs, and a [`SharedResolutions`] handle that accumulates
-    /// `market_resolved` events for the paper loop to drain.
+    /// IDs, a [`SharedResolutions`] handle that accumulates `market_resolved`
+    /// events for the paper loop to drain, and an [`Arc<AtomicBool>`] flag that
+    /// is set to `true` on WS reconnect so the scanner can trigger an immediate
+    /// REST orderbook re-fetch.
     #[must_use]
     pub fn new(
         token_ids: Vec<String>,
         token_asset_map: SharedTokenAssetMap,
         latest_prices: SharedLatestPrices,
-    ) -> (Self, NewTokensSender, SharedResolutions) {
+    ) -> (Self, NewTokensSender, SharedResolutions, Arc<AtomicBool>) {
         let (tx, rx) = mpsc::channel(64);
         let resolved = Arc::new(Mutex::new(Vec::new()));
+        let needs_refresh = Arc::new(AtomicBool::new(false));
         (
             Self {
                 token_ids,
@@ -225,9 +232,11 @@ impl PolymarketWs {
                 resolved_markets: Arc::clone(&resolved),
                 token_asset_map,
                 latest_prices,
+                needs_rest_refresh: Arc::clone(&needs_refresh),
             },
             tx,
             resolved,
+            needs_refresh,
         )
     }
 
@@ -248,6 +257,7 @@ impl PolymarketWs {
         shutdown: CancellationToken,
     ) {
         let mut subscribed: Vec<String> = self.token_ids.clone();
+        let mut backoff_secs: u64 = 1;
 
         loop {
             if shutdown.is_cancelled() {
@@ -257,6 +267,7 @@ impl PolymarketWs {
             match connect_async(WS_CLOB_URL).await {
                 Ok((ws_stream, _)) => {
                     info!("PM WS connected: {WS_CLOB_URL}");
+                    backoff_secs = 1; // reset on successful connect
                     let (mut write, mut read) = ws_stream.split();
 
                     // Send initial subscribe message.
@@ -367,14 +378,36 @@ impl PolymarketWs {
                     };
 
                     if disconnected && !shutdown.is_cancelled() {
-                        warn!("PM WS: disconnected — reconnecting in 2s");
-                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        // Signal that REST re-fetch is needed after reconnect.
+                        self.needs_rest_refresh.store(true, Ordering::Relaxed);
+
+                        let nanos = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map_or(500, |d| d.subsec_nanos() % 1000);
+                        let jitter = (backoff_secs as f64) * 0.25 * (f64::from(nanos) / 1000.0 - 0.5);
+                        let sleep_secs = backoff_secs as f64 + jitter;
+                        warn!(
+                            backoff_secs = format!("{sleep_secs:.1}"),
+                            "PM WS: disconnected — reconnecting"
+                        );
+                        tokio::time::sleep(Duration::from_secs_f64(sleep_secs)).await;
+                        backoff_secs = (backoff_secs * 2).min(30);
                     }
                 }
                 Err(e) => {
                     warn!("PM WS connect error: {e}");
                     if !shutdown.is_cancelled() {
-                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        let nanos = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map_or(500, |d| d.subsec_nanos() % 1000);
+                        let jitter = (backoff_secs as f64) * 0.25 * (f64::from(nanos) / 1000.0 - 0.5);
+                        let sleep_secs = backoff_secs as f64 + jitter;
+                        warn!(
+                            backoff_secs = format!("{sleep_secs:.1}"),
+                            "PM WS: reconnecting"
+                        );
+                        tokio::time::sleep(Duration::from_secs_f64(sleep_secs)).await;
+                        backoff_secs = (backoff_secs * 2).min(30);
                     }
                 }
             }

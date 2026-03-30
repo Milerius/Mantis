@@ -4,7 +4,7 @@
 //! for each configured asset and publishes [`Tick`]s to a broadcast channel.
 //! Reconnects automatically on disconnect.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
 use pm_types::{Asset, ExchangeSource, Price, Tick};
@@ -123,6 +123,8 @@ impl BinanceWs {
         let path = streams.join("/");
         let url = format!("wss://stream.binance.com:9443/ws/{path}");
 
+        let mut backoff_secs: u64 = 1;
+
         loop {
             if shutdown.is_cancelled() {
                 break;
@@ -131,6 +133,7 @@ impl BinanceWs {
             match connect_async(&url).await {
                 Ok((ws_stream, _)) => {
                     debug!("Binance WS connected: {url}");
+                    backoff_secs = 1; // reset on successful connect
                     let (_, mut read) = ws_stream.split();
 
                     loop {
@@ -169,8 +172,19 @@ impl BinanceWs {
             if shutdown.is_cancelled() {
                 break;
             }
-            warn!("Binance WS: reconnecting in 1s");
-            tokio::time::sleep(Duration::from_secs(1)).await;
+
+            // Exponential backoff with jitter (±12.5%).
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(500, |d| d.subsec_nanos() % 1000);
+            let jitter = (backoff_secs as f64) * 0.25 * (f64::from(nanos) / 1000.0 - 0.5);
+            let sleep_secs = backoff_secs as f64 + jitter;
+            warn!(
+                backoff_secs = format!("{sleep_secs:.1}"),
+                "Binance WS: reconnecting"
+            );
+            tokio::time::sleep(Duration::from_secs_f64(sleep_secs)).await;
+            backoff_secs = (backoff_secs * 2).min(30);
         }
 
         Ok(())
