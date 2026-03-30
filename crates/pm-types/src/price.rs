@@ -309,4 +309,75 @@ mod tests {
         assert_eq!(p.as_f64(), value);
         assert_eq!(p.to_string(), value.to_string());
     }
+
+    // ─── Property-based tests ───────────────────────────────────────────────
+
+    mod proptest_price {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn any_f64() -> impl Strategy<Value = f64> {
+            proptest::num::f64::ANY
+        }
+
+        proptest! {
+            #[test]
+            fn price_rejects_nan_inf(x in any_f64()) {
+                if x.is_nan() || x.is_infinite() || x < 0.0 {
+                    prop_assert!(Price::new(x).is_none());
+                }
+            }
+
+            #[test]
+            fn price_accepts_finite_non_negative(x in 0.0_f64..f64::MAX) {
+                prop_assert!(Price::new(x).is_some());
+            }
+
+            #[test]
+            fn contract_price_rejects_out_of_range(x in any_f64()) {
+                if x.is_nan() || x.is_infinite() || x < 0.0 || x > 1.0 {
+                    prop_assert!(ContractPrice::new(x).is_none());
+                }
+            }
+
+            #[test]
+            fn contract_price_accepts_in_range(x in 0.0_f64..=1.0) {
+                prop_assert!(ContractPrice::new(x).is_some());
+            }
+
+            #[test]
+            fn pnl_rejects_non_finite(x in any_f64()) {
+                if !x.is_finite() {
+                    prop_assert!(Pnl::new(x).is_none());
+                }
+            }
+
+            #[test]
+            fn edge_rejects_non_finite(x in any_f64()) {
+                if !x.is_finite() {
+                    prop_assert!(Edge::new(x).is_none());
+                }
+            }
+
+            #[test]
+            fn price_roundtrip(x in 0.0_f64..1e15) {
+                if let Some(p) = Price::new(x) {
+                    prop_assert_eq!(p.as_f64(), x);
+                }
+            }
+
+            #[test]
+            fn price_ordering(a in 0.0_f64..1e15, b in 0.0_f64..1e15) {
+                if let (Some(pa), Some(pb)) = (Price::new(a), Price::new(b)) {
+                    if a < b {
+                        prop_assert!(pa < pb);
+                    } else if a > b {
+                        prop_assert!(pa > pb);
+                    } else {
+                        prop_assert!(pa == pb);
+                    }
+                }
+            }
+        }
+    }
 }
