@@ -811,6 +811,13 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     let mut next_cleanup_at = tokio::time::Instant::now() + Duration::from_secs(60);
 
     loop {
+        // If the PM WS reconnected, force an immediate scanner poll + REST
+        // re-fetch so LatestPrices doesn't stay stale for up to 30 seconds.
+        if pm_needs_refresh.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            info!("PM WS reconnected — forcing immediate REST orderbook re-fetch");
+            next_scan_at = tokio::time::Instant::now();
+        }
+
         tokio::select! {
             () = shutdown.cancelled() => {
                 info!("shutdown signal received — exiting main loop");
