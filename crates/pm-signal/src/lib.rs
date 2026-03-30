@@ -40,6 +40,6 @@ pub use entry_timer::{EntryTimer, PendingEntry};
 pub use trend_filter::TrendFilter;
 
 #[cfg(feature = "std")]
-pub use builder::build_engine_from_config;
+pub use builder::{build_engine_from_config, build_instances_from_config};
 #[cfg(feature = "std")]
 pub use instance::ConcreteStrategyInstance;
