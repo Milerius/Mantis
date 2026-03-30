@@ -29,6 +29,19 @@ pub struct CachedPrice {
     pub bid_down: f64,
     /// Unix timestamp in milliseconds of the last update.
     pub timestamp_ms: u64,
+    /// Whether the Up side has been populated by a real WS/REST event.
+    pub up_seen: bool,
+    /// Whether the Down side has been populated by a real WS/REST event.
+    pub down_seen: bool,
+}
+
+impl CachedPrice {
+    /// Returns `true` if both the Up and Down sides have been populated by
+    /// real WS or REST events (not placeholders).
+    #[must_use]
+    pub fn both_sides_seen(&self) -> bool {
+        self.up_seen && self.down_seen
+    }
 }
 
 /// Cached latest contract prices per (Asset, Timeframe).
@@ -50,7 +63,11 @@ impl LatestPrices {
     }
 
     /// Update prices for an (asset, timeframe) pair.
-    pub fn update(&mut self, asset: Asset, timeframe: Timeframe, price: CachedPrice) {
+    ///
+    /// A full update sets both `up_seen` and `down_seen` to `true`.
+    pub fn update(&mut self, asset: Asset, timeframe: Timeframe, mut price: CachedPrice) {
+        price.up_seen = true;
+        price.down_seen = true;
         self.prices[asset.index()][timeframe.index()] = Some(price);
     }
 
@@ -70,9 +87,11 @@ impl LatestPrices {
             if is_up {
                 cached.ask_up = best_ask;
                 cached.bid_up = best_bid;
+                cached.up_seen = true;
             } else {
                 cached.ask_down = best_ask;
                 cached.bid_down = best_bid;
+                cached.down_seen = true;
             }
             cached.timestamp_ms = timestamp_ms;
         } else {
@@ -84,13 +103,17 @@ impl LatestPrices {
                 bid_up: 0.48,
                 bid_down: 0.48,
                 timestamp_ms,
+                up_seen: false,
+                down_seen: false,
             };
             if is_up {
                 cp.ask_up = best_ask;
                 cp.bid_up = best_bid;
+                cp.up_seen = true;
             } else {
                 cp.ask_down = best_ask;
                 cp.bid_down = best_bid;
+                cp.down_seen = true;
             }
             *slot = Some(cp);
         }

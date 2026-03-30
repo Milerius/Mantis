@@ -190,11 +190,13 @@ fn resolve_orderbook_prices(
 ) -> OrderbookPrices {
     // PRIMARY: try the LatestPrices cache (indexed by Asset, Timeframe).
     // This is populated by PM WS events AND REST snapshots — never stale.
+    // Only use the cache if BOTH sides have been populated by real events
+    // to avoid trading against placeholder 0.50/0.48 prices.
     if let Ok(cache) = shared_prices.lock() {
         if let Some(p) = cache.get(tick.asset, timeframe) {
             let prices_are_sane =
                 p.ask_up > 0.01 && p.ask_up < 0.99 && p.ask_down > 0.01 && p.ask_down < 0.99;
-            if prices_are_sane {
+            if prices_are_sane && p.both_sides_seen() {
                 return OrderbookPrices {
                     rec_ask_up: Some(p.ask_up),
                     rec_ask_down: Some(p.ask_down),
@@ -603,6 +605,7 @@ fn process_tick(
                 window.id,
                 tick.asset,
                 tick.timestamp_ms,
+                sized_order.size_usdc,
             ) {
                 // Notify risk manager so it tracks exposure.
                 risk.on_position_opened(OpenPosition {
@@ -941,6 +944,58 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     &mut window_recorder,
                     &engine,
                 );
+
+                // ── Drain market_resolved events ────────────────────────────
+                if let Ok(mut resolutions) = pm_resolutions.lock() {
+                    for res in resolutions.drain(..) {
+                        // Find the matching market to determine (asset, timeframe)
+                        // and whether the winning token is Up or Down.
+                        let matched = market_mgr.active_markets().find(|m| {
+                            m.condition_id == res.condition_id
+                        });
+
+                        let Some(mkt) = matched else {
+                            warn!(
+                                condition_id = %res.condition_id,
+                                "market_resolved for unknown condition — ignoring"
+                            );
+                            continue;
+                        };
+
+                        let outcome = if res.winning_token_id == mkt.token_id_up {
+                            Side::Up
+                        } else {
+                            Side::Down
+                        };
+
+                        // Find the live window slot for this (asset, timeframe).
+                        let asset_idx = enabled_assets.iter().position(|a| *a == mkt.asset);
+                        let tf_idx = enabled_timeframes.iter().position(|t| *t == mkt.timeframe);
+
+                        if let (Some(ai), Some(ti)) = (asset_idx, tf_idx) {
+                            let slot = ai * enabled_timeframes.len() + ti;
+                            if let Some(lw) = live_windows[slot].as_mut() {
+                                let window_id = lw.window.id;
+                                let window_pnl = executor.resolve_window(
+                                    window_id,
+                                    outcome,
+                                    res.timestamp_ms,
+                                );
+                                risk.on_window_resolved(window_id, window_pnl);
+                                lw.position_opened = true;
+
+                                info!(
+                                    condition_id = %res.condition_id,
+                                    asset = %mkt.asset,
+                                    timeframe = ?mkt.timeframe,
+                                    %outcome,
+                                    pnl = window_pnl.as_f64(),
+                                    "market resolved early — positions closed"
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
     }
