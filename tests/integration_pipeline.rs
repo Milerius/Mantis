@@ -572,6 +572,12 @@ fn build_engine_early_directional_fires_in_correct_window() {
         max_entry_time_secs: 120,
         min_spot_magnitude: 0.003,
         max_entry_price: 0.55,
+        balance: 125.0,
+        max_position_usdc: 25.0,
+        max_exposure_usdc: 100.0,
+        kelly_fraction: 0.25,
+        max_daily_loss: 50.0,
+        slippage_bps: 10,
     }];
     let engine = build_engine_from_config(&strategies);
 
@@ -600,6 +606,12 @@ fn build_engine_momentum_fires_with_sustained_move() {
         max_entry_time_secs: 480,
         min_spot_magnitude: 0.003,
         max_entry_price: 0.72,
+        balance: 125.0,
+        max_position_usdc: 25.0,
+        max_exposure_usdc: 100.0,
+        kelly_fraction: 0.25,
+        max_daily_loss: 50.0,
+        slippage_bps: 10,
     }];
     let engine = build_engine_from_config(&strategies);
 
@@ -648,6 +660,12 @@ fn build_engine_multiple_strategies_highest_confidence_wins() {
             max_entry_time_secs: 180,
             min_spot_magnitude: 0.001,
             max_entry_price: 0.58,
+            balance: 125.0,
+            max_position_usdc: 25.0,
+            max_exposure_usdc: 100.0,
+            kelly_fraction: 0.25,
+            max_daily_loss: 50.0,
+            slippage_bps: 10,
         },
         StrategyConfig::MomentumConfirmation {
             label: String::new(),
@@ -655,6 +673,12 @@ fn build_engine_multiple_strategies_highest_confidence_wins() {
             max_entry_time_secs: 180,
             min_spot_magnitude: 0.001,
             max_entry_price: 0.72,
+            balance: 125.0,
+            max_position_usdc: 25.0,
+            max_exposure_usdc: 100.0,
+            kelly_fraction: 0.25,
+            max_daily_loss: 50.0,
+            slippage_bps: 10,
         },
     ];
     let engine = build_engine_from_config(&strategies);

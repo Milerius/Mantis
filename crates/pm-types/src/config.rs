@@ -49,6 +49,25 @@ pub enum StrategyConfig {
         min_spot_magnitude: f64,
         /// Maximum contract ask price to accept (e.g. `0.58`).
         max_entry_price: f64,
+        // ── Per-instance risk params (optional, defaults applied) ──
+        /// Starting USDC balance for this instance.
+        #[serde(default = "default_instance_balance")]
+        balance: f64,
+        /// Maximum USDC allocated to a single position.
+        #[serde(default = "default_instance_max_position")]
+        max_position_usdc: f64,
+        /// Maximum total USDC exposure across all open positions.
+        #[serde(default = "default_instance_max_exposure")]
+        max_exposure_usdc: f64,
+        /// Kelly fraction applied to raw Kelly sizing.
+        #[serde(default = "default_instance_kelly")]
+        kelly_fraction: f64,
+        /// Maximum USDC loss tolerated within a single calendar day.
+        #[serde(default = "default_instance_max_daily_loss")]
+        max_daily_loss: f64,
+        /// Simulated slippage in basis points applied to each fill.
+        #[serde(default = "default_instance_slippage")]
+        slippage_bps: u32,
     },
     /// Parameters for [`pm_signal::MomentumConfirmation`].
     MomentumConfirmation {
@@ -63,6 +82,25 @@ pub enum StrategyConfig {
         min_spot_magnitude: f64,
         /// Maximum contract ask price to accept (e.g. `0.72`).
         max_entry_price: f64,
+        // ── Per-instance risk params (optional, defaults applied) ──
+        /// Starting USDC balance for this instance.
+        #[serde(default = "default_instance_balance")]
+        balance: f64,
+        /// Maximum USDC allocated to a single position.
+        #[serde(default = "default_instance_max_position")]
+        max_position_usdc: f64,
+        /// Maximum total USDC exposure across all open positions.
+        #[serde(default = "default_instance_max_exposure")]
+        max_exposure_usdc: f64,
+        /// Kelly fraction applied to raw Kelly sizing.
+        #[serde(default = "default_instance_kelly")]
+        kelly_fraction: f64,
+        /// Maximum USDC loss tolerated within a single calendar day.
+        #[serde(default = "default_instance_max_daily_loss")]
+        max_daily_loss: f64,
+        /// Simulated slippage in basis points applied to each fill.
+        #[serde(default = "default_instance_slippage")]
+        slippage_bps: u32,
     },
     /// Parameters for [`pm_signal::CompleteSetArb`].
     CompleteSetArb {
@@ -70,11 +108,49 @@ pub enum StrategyConfig {
         max_combined_cost: f64,
         /// Minimum profit-per-share required (i.e. `1 - combined`).
         min_profit_per_share: f64,
+        // ── Per-instance risk params (optional, defaults applied) ──
+        /// Starting USDC balance for this instance.
+        #[serde(default = "default_instance_balance")]
+        balance: f64,
+        /// Maximum USDC allocated to a single position.
+        #[serde(default = "default_instance_max_position")]
+        max_position_usdc: f64,
+        /// Maximum total USDC exposure across all open positions.
+        #[serde(default = "default_instance_max_exposure")]
+        max_exposure_usdc: f64,
+        /// Kelly fraction applied to raw Kelly sizing.
+        #[serde(default = "default_instance_kelly")]
+        kelly_fraction: f64,
+        /// Maximum USDC loss tolerated within a single calendar day.
+        #[serde(default = "default_instance_max_daily_loss")]
+        max_daily_loss: f64,
+        /// Simulated slippage in basis points applied to each fill.
+        #[serde(default = "default_instance_slippage")]
+        slippage_bps: u32,
     },
     /// Parameters for [`pm_signal::HedgeLock`].
     HedgeLock {
         /// Maximum combined cost (entry + hedge ask) to still enter.
         max_combined_cost: f64,
+        // ── Per-instance risk params (optional, defaults applied) ──
+        /// Starting USDC balance for this instance.
+        #[serde(default = "default_instance_balance")]
+        balance: f64,
+        /// Maximum USDC allocated to a single position.
+        #[serde(default = "default_instance_max_position")]
+        max_position_usdc: f64,
+        /// Maximum total USDC exposure across all open positions.
+        #[serde(default = "default_instance_max_exposure")]
+        max_exposure_usdc: f64,
+        /// Kelly fraction applied to raw Kelly sizing.
+        #[serde(default = "default_instance_kelly")]
+        kelly_fraction: f64,
+        /// Maximum USDC loss tolerated within a single calendar day.
+        #[serde(default = "default_instance_max_daily_loss")]
+        max_daily_loss: f64,
+        /// Simulated slippage in basis points applied to each fill.
+        #[serde(default = "default_instance_slippage")]
+        slippage_bps: u32,
     },
 }
 
@@ -90,6 +166,12 @@ pub fn default_strategies() -> Vec<StrategyConfig> {
             max_entry_time_secs: 180,
             min_spot_magnitude: 0.001,
             max_entry_price: 0.58,
+            balance: default_instance_balance(),
+            max_position_usdc: default_instance_max_position(),
+            max_exposure_usdc: default_instance_max_exposure(),
+            kelly_fraction: default_instance_kelly(),
+            max_daily_loss: default_instance_max_daily_loss(),
+            slippage_bps: default_instance_slippage(),
         },
         StrategyConfig::MomentumConfirmation {
             label: String::new(),
@@ -97,15 +179,52 @@ pub fn default_strategies() -> Vec<StrategyConfig> {
             max_entry_time_secs: 480,
             min_spot_magnitude: 0.003,
             max_entry_price: 0.72,
+            balance: default_instance_balance(),
+            max_position_usdc: default_instance_max_position(),
+            max_exposure_usdc: default_instance_max_exposure(),
+            kelly_fraction: default_instance_kelly(),
+            max_daily_loss: default_instance_max_daily_loss(),
+            slippage_bps: default_instance_slippage(),
         },
         StrategyConfig::CompleteSetArb {
             max_combined_cost: 0.98,
             min_profit_per_share: 0.01,
+            balance: default_instance_balance(),
+            max_position_usdc: default_instance_max_position(),
+            max_exposure_usdc: default_instance_max_exposure(),
+            kelly_fraction: default_instance_kelly(),
+            max_daily_loss: default_instance_max_daily_loss(),
+            slippage_bps: default_instance_slippage(),
         },
         StrategyConfig::HedgeLock {
             max_combined_cost: 0.95,
+            balance: default_instance_balance(),
+            max_position_usdc: default_instance_max_position(),
+            max_exposure_usdc: default_instance_max_exposure(),
+            kelly_fraction: default_instance_kelly(),
+            max_daily_loss: default_instance_max_daily_loss(),
+            slippage_bps: default_instance_slippage(),
         },
     ]
+}
+
+fn default_instance_balance() -> f64 {
+    125.0
+}
+fn default_instance_max_position() -> f64 {
+    25.0
+}
+fn default_instance_max_exposure() -> f64 {
+    100.0
+}
+fn default_instance_kelly() -> f64 {
+    0.25
+}
+fn default_instance_max_daily_loss() -> f64 {
+    50.0
+}
+fn default_instance_slippage() -> u32 {
+    10
 }
 
 fn default_max_positions_per_window() -> usize {
@@ -507,6 +626,12 @@ log_dir = "logs"
                 max_entry_time_secs: 120,
                 min_spot_magnitude: 0.002,
                 max_entry_price: 0.55,
+                balance: default_instance_balance(),
+                max_position_usdc: default_instance_max_position(),
+                max_exposure_usdc: default_instance_max_exposure(),
+                kelly_fraction: default_instance_kelly(),
+                max_daily_loss: default_instance_max_daily_loss(),
+                slippage_bps: default_instance_slippage(),
             }
         );
         assert_eq!(
@@ -514,6 +639,12 @@ log_dir = "logs"
             StrategyConfig::CompleteSetArb {
                 max_combined_cost: 0.97,
                 min_profit_per_share: 0.02,
+                balance: default_instance_balance(),
+                max_position_usdc: default_instance_max_position(),
+                max_exposure_usdc: default_instance_max_exposure(),
+                kelly_fraction: default_instance_kelly(),
+                max_daily_loss: default_instance_max_daily_loss(),
+                slippage_bps: default_instance_slippage(),
             }
         );
     }

@@ -34,6 +34,7 @@ pub fn build_engine_from_config(strategies: &[StrategyConfig]) -> StrategyEngine
                 max_entry_time_secs,
                 min_spot_magnitude,
                 max_entry_price,
+                ..
             } => {
                 let lbl = if label.is_empty() {
                     let auto = std::format!("ED-{max_entry_price}");
@@ -56,6 +57,7 @@ pub fn build_engine_from_config(strategies: &[StrategyConfig]) -> StrategyEngine
                 max_entry_time_secs,
                 min_spot_magnitude,
                 max_entry_price,
+                ..
             } => {
                 let lbl = if label.is_empty() {
                     let auto = std::format!("MC-{max_entry_price}");
@@ -76,8 +78,9 @@ pub fn build_engine_from_config(strategies: &[StrategyConfig]) -> StrategyEngine
             StrategyConfig::CompleteSetArb {
                 max_combined_cost,
                 min_profit_per_share,
+                ..
             } => AnyStrategy::Arb(CompleteSetArb::new(*max_combined_cost, *min_profit_per_share)),
-            StrategyConfig::HedgeLock { max_combined_cost } => {
+            StrategyConfig::HedgeLock { max_combined_cost, .. } => {
                 AnyStrategy::Hedge(HedgeLock::new(*max_combined_cost))
             }
         })
