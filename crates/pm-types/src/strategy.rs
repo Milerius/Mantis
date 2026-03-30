@@ -74,6 +74,11 @@ pub struct MarketState {
     pub contract_bid_up: Option<ContractPrice>,
     /// Current bid for the Down contract.
     pub contract_bid_down: Option<ContractPrice>,
+    /// Orderbook imbalance at top 5 levels. Range `[-1, 1]`.
+    ///
+    /// Positive = buy pressure (bullish), negative = sell pressure (bearish).
+    /// `None` when no L2 orderbook data is available.
+    pub orderbook_imbalance: Option<f64>,
 }
 
 impl MarketState {
@@ -143,6 +148,7 @@ mod tests {
             contract_ask_down: ContractPrice::new(ask_down),
             contract_bid_up: ContractPrice::new(ask_up - 0.02),
             contract_bid_down: ContractPrice::new(ask_down - 0.02),
+            orderbook_imbalance: None,
         }
     }
 

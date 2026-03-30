@@ -36,6 +36,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod l2_orderbook;
 pub mod manager;
 pub mod orderbook;
 pub mod scanner;
@@ -46,6 +47,7 @@ pub mod ws_polymarket;
 pub use manager::MarketManager;
 pub use orderbook::{CachedPrice, LatestPrices, OrderbookSnapshot, OrderbookTracker};
 pub use scanner::{MarketInfo, ScanError, scan_active_markets};
+pub use l2_orderbook::{L2OrderbookManager, SharedL2Manager};
 pub use ws_polymarket::{
     MarketResolution, NewTokensSender, PolymarketWs, SharedLatestPrices, SharedResolutions,
     SharedTokenAssetMap,

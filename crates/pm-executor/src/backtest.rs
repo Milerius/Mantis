@@ -493,6 +493,7 @@ pub fn run_backtest<P: ContractPriceProvider>(
                 // Bids approximated as ask - 0.02; clamped to [0, 1].
                 contract_bid_up: ContractPrice::new((ask_up.as_f64() - 0.02).clamp(0.0, 1.0)),
                 contract_bid_down: ContractPrice::new((ask_down.as_f64() - 0.02).clamp(0.0, 1.0)),
+                orderbook_imbalance: None,
             };
 
             // FIX 2: evaluate_all returns zero-alloc Decisions array.

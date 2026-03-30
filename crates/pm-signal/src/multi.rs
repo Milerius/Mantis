@@ -268,6 +268,7 @@ mod tests {
             contract_ask_down: ContractPrice::new(0.48),
             contract_bid_up: ContractPrice::new(0.53),
             contract_bid_down: ContractPrice::new(0.46),
+            orderbook_imbalance: None,
         }
     }
 

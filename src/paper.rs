@@ -20,8 +20,8 @@ use anyhow::{Context as _, Result};
 use pm_bookkeeper::{SnapshotRecorder, WindowRecorder};
 use pm_executor::{PaperConfig, PaperExecutor};
 use pm_market::{
-    LatestPrices, MarketManager, OrderbookTracker, PolymarketWs, SharedLatestPrices,
-    SharedTokenAssetMap,
+    L2OrderbookManager, LatestPrices, MarketManager, OrderbookTracker, PolymarketWs,
+    SharedL2Manager, SharedLatestPrices, SharedTokenAssetMap,
 };
 use pm_market::scanner::scan_active_markets;
 use pm_oracle::{BinanceWs, OkxWs, OracleRouter, PriceBuffer};
@@ -81,6 +81,8 @@ struct OrderbookPrices {
     contract_ask_down: Option<ContractPrice>,
     contract_bid_up: Option<ContractPrice>,
     contract_bid_down: Option<ContractPrice>,
+    /// L2 orderbook imbalance at top 5 levels, if available.
+    orderbook_imbalance: Option<f64>,
 }
 
 // ─── Window tracking ─────────────────────────────────────────────────────────
@@ -179,6 +181,7 @@ fn fallback_prices(spot_direction: Side, slippage: f64) -> OrderbookPrices {
         contract_ask_down: ContractPrice::new(opp.clamp(0.01, 0.99)),
         contract_bid_up: ContractPrice::new((base - 0.02).clamp(0.01, 0.99)),
         contract_bid_down: ContractPrice::new((opp - 0.02).clamp(0.01, 0.99)),
+        orderbook_imbalance: None,
     }
 }
 
@@ -234,6 +237,7 @@ fn resolve_orderbook_prices(
                             contract_ask_down: ContractPrice::new(p.ask_down),
                             contract_bid_up: ContractPrice::new(p.bid_up),
                             contract_bid_down: ContractPrice::new(p.bid_down),
+                            orderbook_imbalance: None,
                         };
                     }
                 }
@@ -291,6 +295,7 @@ fn resolve_orderbook_prices(
                     contract_ask_down: ContractPrice::new(a_down),
                     contract_bid_up: ContractPrice::new(b_up),
                     contract_bid_down: ContractPrice::new(b_down),
+                    orderbook_imbalance: None,
                 }
             } else {
                 warn!(
@@ -337,7 +342,21 @@ fn build_market_state(
         contract_ask_down: prices.contract_ask_down,
         contract_bid_up: prices.contract_bid_up,
         contract_bid_down: prices.contract_bid_down,
+        orderbook_imbalance: prices.orderbook_imbalance,
     }
+}
+
+/// Compute L2 orderbook imbalance for the Up token of a market.
+///
+/// Returns `None` if no L2 data is available for the token.
+fn compute_l2_imbalance(
+    l2_manager: &SharedL2Manager,
+    up_token_id: Option<&str>,
+) -> Option<f64> {
+    let token_id = up_token_id?;
+    let mgr = l2_manager.lock().ok()?;
+    let book = mgr.get_book(token_id)?;
+    Some(book.imbalance(5))
 }
 
 /// Format a [`WindowId`] into a stack-allocated buffer without heap allocation.
@@ -483,6 +502,7 @@ fn process_tick(
     recorder: &mut SnapshotRecorder,
     window_recorder: &mut WindowRecorder,
     engine: &pm_signal::StrategyEngine,
+    shared_l2: &SharedL2Manager,
 ) {
     for (tf_idx, &timeframe) in enabled_timeframes.iter().enumerate() {
         let slot = asset_slot * enabled_timeframes.len() + tf_idx;
@@ -539,7 +559,7 @@ fn process_tick(
         // to a recently-resolved market that still appears in the scanner list
         // with stale orderbook prices.  `now_utc` is computed once per tick
         // outside this loop to avoid repeated syscalls.
-        let condition_id_opt = market_mgr
+        let matched_ids = market_mgr
             .active_markets()
             .find(|m| {
                 if m.asset != tick.asset || m.timeframe != timeframe {
@@ -553,9 +573,11 @@ fn process_tick(
                     .parse::<chrono::DateTime<chrono::Utc>>()
                     .map_or(true, |end_dt| end_dt > now_utc)
             })
-            .map(|m| m.condition_id.clone());
+            .map(|m| (m.condition_id.clone(), m.token_id_up.clone()));
+        let condition_id_opt = matched_ids.as_ref().map(|(cid, _)| cid.clone());
+        let up_token_id_opt = matched_ids.as_ref().map(|(_, tid)| tid.as_str());
 
-        let prices = resolve_orderbook_prices(
+        let mut prices = resolve_orderbook_prices(
             tick,
             timeframe,
             spot_direction,
@@ -565,6 +587,10 @@ fn process_tick(
             shared_prices,
             market_mgr,
         );
+
+        // Compute L2 orderbook imbalance from the Up token's full-depth book.
+        prices.orderbook_imbalance =
+            compute_l2_imbalance(shared_l2, up_token_id_opt);
 
         let state = build_market_state(tick, timeframe, &window, &prices);
 
@@ -783,10 +809,14 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
     let mut subscribed_tokens: HashSet<String> = HashSet::new();
 
+    // Shared L2 orderbook manager for computing imbalance signals.
+    let shared_l2: SharedL2Manager = Arc::new(Mutex::new(L2OrderbookManager::new()));
+
     let (pm_ws, pm_new_tokens_tx, pm_resolutions, pm_needs_refresh) = PolymarketWs::new(
         Vec::new(),
         Arc::clone(&token_asset_map),
         Arc::clone(&shared_prices),
+        Arc::clone(&shared_l2),
     );
     let pm_tracker = Arc::clone(&shared_tracker);
     let pm_shutdown = shutdown.clone();
@@ -1001,6 +1031,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     &mut recorder,
                     &mut window_recorder,
                     &engine,
+                    &shared_l2,
                 );
 
                 // ── Periodic cleanup of expired positions ───────────────────

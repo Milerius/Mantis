@@ -30,6 +30,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use crate::l2_orderbook::{self, SharedL2Manager};
 use crate::orderbook::{LatestPrices, OrderbookTracker, WS_CLOB_URL};
 
 // ─── Market resolution ──────────────────────────────────────────────────────
@@ -203,6 +204,8 @@ pub struct PolymarketWs {
     /// Flag set on WS reconnect to signal the scanner to do an immediate
     /// REST orderbook re-fetch. Cleared by the scanner after fetching.
     needs_rest_refresh: Arc<AtomicBool>,
+    /// Shared L2 orderbook manager for full-depth reconstruction.
+    l2_manager: SharedL2Manager,
 }
 
 /// Sender half returned to the caller for pushing new token IDs.
@@ -221,6 +224,7 @@ impl PolymarketWs {
         token_ids: Vec<String>,
         token_asset_map: SharedTokenAssetMap,
         latest_prices: SharedLatestPrices,
+        l2_manager: SharedL2Manager,
     ) -> (Self, NewTokensSender, SharedResolutions, Arc<AtomicBool>) {
         let (tx, rx) = mpsc::channel(64);
         let resolved = Arc::new(Mutex::new(Vec::new()));
@@ -233,6 +237,7 @@ impl PolymarketWs {
                 token_asset_map,
                 latest_prices,
                 needs_rest_refresh: Arc::clone(&needs_refresh),
+                l2_manager,
             },
             tx,
             resolved,
@@ -340,6 +345,8 @@ impl PolymarketWs {
                                                 &self.latest_prices,
                                                 &event,
                                             );
+                                        } else if let Some(pc_event) = l2_orderbook::parse_price_change(text_str) {
+                                            handle_price_change(&self.l2_manager, &pc_event);
                                         } else if let Some(resolution) = parse_market_resolved(text_str) {
                                             info!(
                                                 condition_id = %resolution.condition_id,
@@ -553,6 +560,46 @@ fn handle_latest_prices(
             Err(e) => {
                 warn!(error = %e, "latest_prices mutex poisoned — skipping update");
             }
+        }
+    }
+}
+
+// ─── L2 price_change handler ─────────────────────────────────────────────────
+
+/// Apply a `price_change` event to the shared L2 orderbook manager.
+fn handle_price_change(
+    l2_manager: &SharedL2Manager,
+    event: &l2_orderbook::PriceChangeEvent,
+) {
+    let timestamp_ms: u64 = event
+        .timestamp
+        .parse::<f64>()
+        .map_or_else(
+            |_| {
+                #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64 for centuries")]
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
+                ms
+            },
+            |s| {
+                #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "timestamp_ms fits in u64")]
+                let ms = (s * 1_000.0) as u64;
+                ms
+            },
+        );
+
+    match l2_manager.lock() {
+        Ok(mut mgr) => {
+            mgr.process_price_change(&event.asset_id, &event.changes, timestamp_ms);
+            debug!(
+                asset_id = %event.asset_id,
+                num_changes = event.changes.len(),
+                "PM WS: L2 price_change applied"
+            );
+        }
+        Err(e) => {
+            warn!(error = %e, "l2_manager mutex poisoned — skipping price_change");
         }
     }
 }
