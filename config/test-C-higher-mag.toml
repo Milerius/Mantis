@@ -1,0 +1,44 @@
+[bot]
+mode = "backtest"
+min_edge = 0.03
+max_position_usdc = 25.0
+max_total_exposure_usdc = 500.0
+max_daily_loss_usdc = 100.0
+kelly_fraction = 0.25
+
+[[bot.assets]]
+asset = "btc"
+enabled = true
+timeframes = ["min15"]
+
+[[bot.strategies]]
+type = "early_directional"
+max_entry_time_secs = 180
+min_spot_magnitude = 0.002
+max_entry_price = 0.58
+
+[[bot.strategies]]
+type = "momentum_confirmation"
+min_entry_time_secs = 180
+max_entry_time_secs = 480
+min_spot_magnitude = 0.003
+max_entry_price = 0.72
+
+[[bot.strategies]]
+type = "complete_set_arb"
+max_combined_cost = 0.98
+min_profit_per_share = 0.01
+
+[[bot.strategies]]
+type = "hedge_lock"
+max_combined_cost = 0.95
+
+[backtest]
+start_date = "2026-03-01"
+end_date = "2026-03-29"
+initial_balance = 500.0
+slippage_bps = 10
+
+[data]
+cache_dir = "data"
+log_dir = "logs"

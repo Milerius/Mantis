@@ -1,0 +1,90 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85.0"
+license = "Apache-2.0"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "deny"
+panic_in_result_fn = "deny"
+unimplemented = "deny"
+allow_attributes = "deny"
+dbg_macro = "deny"
+todo = "deny"
+module_name_repetitions = "allow"
+similar_names = "allow"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[workspace.dependencies]
+pm-types = { path = "crates/pm-types", version = "0.1.0" }
+pm-signal = { path = "crates/pm-signal", version = "0.1.0" }
+pm-oracle = { path = "crates/pm-oracle", version = "0.1.0" }
+pm-executor = { path = "crates/pm-executor", version = "0.1.0" }
+pm-bookkeeper = { path = "crates/pm-bookkeeper", version = "0.1.0" }
+pm-market = { path = "crates/pm-market", version = "0.1.0" }
+pm-risk = { path = "crates/pm-risk", version = "0.1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+chrono = { version = "0.4", features = ["serde"] }
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+thiserror = "2"
+criterion = { version = "0.5", features = ["html_reports"] }
+flate2 = "1"
+anyhow = "1"
+rayon = "1"
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["rt"] }
+
+[package]
+name = "polymarket-bot"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "polymarket"
+path = "src/main.rs"
+
+[dependencies]
+pm-types = { workspace = true, features = ["std"] }
+pm-signal = { workspace = true, features = ["std"] }
+pm-oracle = { workspace = true }
+pm-executor = { workspace = true }
+pm-bookkeeper = { workspace = true }
+pm-market = { workspace = true }
+pm-risk = { workspace = true }
+clap = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+pm-types = { path = "crates/pm-types", features = ["std"] }
+pm-signal = { path = "crates/pm-signal", features = ["std"] }
+pm-risk = { path = "crates/pm-risk" }
+pm-executor = { path = "crates/pm-executor" }
+
+[lints]
+workspace = true

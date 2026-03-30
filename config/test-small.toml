@@ -1,0 +1,37 @@
+[bot]
+mode = "backtest"
+min_edge = 0.03
+max_position_usdc = 25.0
+max_total_exposure_usdc = 500.0
+max_daily_loss_usdc = 100.0
+kelly_fraction = 0.25
+
+[[bot.assets]]
+asset = "btc"
+enabled = true
+timeframes = ["min15"]
+
+[[bot.assets]]
+asset = "eth"
+enabled = false
+timeframes = ["min15"]
+
+[[bot.assets]]
+asset = "sol"
+enabled = false
+timeframes = ["min15"]
+
+[[bot.assets]]
+asset = "xrp"
+enabled = false
+timeframes = ["min15"]
+
+[backtest]
+start_date = "2026-03-25"
+end_date = "2026-03-27"
+initial_balance = 500.0
+slippage_bps = 10
+
+[data]
+cache_dir = "data"
+log_dir = "logs"
