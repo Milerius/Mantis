@@ -125,7 +125,7 @@ pub enum AnyStrategy {
 impl AnyStrategy {
     /// Evaluate the strategy — no virtual dispatch for the four concrete arms.
     #[inline]
-    fn evaluate(&self, state: &MarketState) -> Option<EntryDecision> {
+    pub fn evaluate(&self, state: &MarketState) -> Option<EntryDecision> {
         match self {
             Self::Arb(s) => s.evaluate(state),
             Self::Early(s) => s.evaluate(state),

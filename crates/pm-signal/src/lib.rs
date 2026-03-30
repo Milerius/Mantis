@@ -23,6 +23,8 @@ pub mod trend_filter;
 
 #[cfg(feature = "std")]
 pub mod builder;
+#[cfg(feature = "std")]
+pub mod instance;
 
 pub use arb::CompleteSetArb;
 pub use early::EarlyDirectional;
@@ -39,3 +41,5 @@ pub use trend_filter::TrendFilter;
 
 #[cfg(feature = "std")]
 pub use builder::build_engine_from_config;
+#[cfg(feature = "std")]
+pub use instance::ConcreteStrategyInstance;
