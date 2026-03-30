@@ -73,6 +73,7 @@ impl PaperExecutor {
     /// - Balance is too low to cover the position size.
     ///
     /// The entry price is clamped to `[0.01, 0.99]` after slippage is applied.
+    #[expect(clippy::too_many_arguments, reason = "size_usdc must be passed from risk manager")]
     pub fn try_open_position(
         &mut self,
         decision: &EntryDecision,

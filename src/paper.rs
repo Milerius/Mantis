@@ -202,32 +202,32 @@ fn resolve_orderbook_prices(
         .unwrap_or_default()
         .as_millis() as u64;
 
-    if let Ok(cache) = shared_prices.lock() {
-        if let Some(p) = cache.get(tick.asset, timeframe) {
-            // Staleness guard: if the cached price is older than the threshold,
-            // skip it and fall through to the secondary source.
-            if now_ms.saturating_sub(p.timestamp_ms) > MAX_PRICE_AGE_MS {
-                warn!(
-                    asset = %tick.asset,
-                    timeframe = ?timeframe,
-                    age_ms = now_ms.saturating_sub(p.timestamp_ms),
-                    "cached price is stale — falling back to secondary source"
-                );
-            } else {
-                let prices_are_sane =
-                    p.ask_up > 0.01 && p.ask_up < 0.99 && p.ask_down > 0.01 && p.ask_down < 0.99;
-                if prices_are_sane && p.both_sides_seen() {
-                    return OrderbookPrices {
-                        rec_ask_up: Some(p.ask_up),
-                        rec_ask_down: Some(p.ask_down),
-                        rec_bid_up: Some(p.bid_up),
-                        rec_bid_down: Some(p.bid_down),
-                        contract_ask_up: ContractPrice::new(p.ask_up),
-                        contract_ask_down: ContractPrice::new(p.ask_down),
-                        contract_bid_up: ContractPrice::new(p.bid_up),
-                        contract_bid_down: ContractPrice::new(p.bid_down),
-                    };
-                }
+    if let Ok(cache) = shared_prices.lock()
+        && let Some(p) = cache.get(tick.asset, timeframe)
+    {
+        // Staleness guard: if the cached price is older than the threshold,
+        // skip it and fall through to the secondary source.
+        if now_ms.saturating_sub(p.timestamp_ms) > MAX_PRICE_AGE_MS {
+            warn!(
+                asset = %tick.asset,
+                timeframe = ?timeframe,
+                age_ms = now_ms.saturating_sub(p.timestamp_ms),
+                "cached price is stale — falling back to secondary source"
+            );
+        } else {
+            let prices_are_sane =
+                p.ask_up > 0.01 && p.ask_up < 0.99 && p.ask_down > 0.01 && p.ask_down < 0.99;
+            if prices_are_sane && p.both_sides_seen() {
+                return OrderbookPrices {
+                    rec_ask_up: Some(p.ask_up),
+                    rec_ask_down: Some(p.ask_down),
+                    rec_bid_up: Some(p.bid_up),
+                    rec_bid_down: Some(p.bid_down),
+                    contract_ask_up: ContractPrice::new(p.ask_up),
+                    contract_ask_down: ContractPrice::new(p.ask_down),
+                    contract_bid_up: ContractPrice::new(p.bid_up),
+                    contract_bid_down: ContractPrice::new(p.bid_down),
+                };
             }
         }
     }
@@ -765,7 +765,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
     let mut subscribed_tokens: HashSet<String> = HashSet::new();
 
-    let (pm_ws, pm_new_tokens_tx, pm_resolutions) = PolymarketWs::new(
+    let (pm_ws, pm_new_tokens_tx, pm_resolutions, pm_needs_refresh) = PolymarketWs::new(
         Vec::new(),
         Arc::clone(&token_asset_map),
         Arc::clone(&shared_prices),
