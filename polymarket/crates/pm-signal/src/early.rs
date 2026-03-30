@@ -63,20 +63,32 @@ impl Strategy for EarlyDirectional {
             return None;
         }
 
-        // Confidence: how early we are (earlier → more time to compound) ×
-        // how much margin we have below the max price.
-        let time_fraction = if self.max_entry_time_secs == 0 {
+        // Confidence combines three factors:
+        // 1. Time: earlier in window → higher confidence
+        // 2. Price margin: cheaper entry → higher confidence
+        // 3. Volatility: larger spot move → higher confidence (81.8% WR vs 57.3%)
+        let time_fraction = if effective_max_time == 0 {
             1.0
         } else {
             #[expect(
                 clippy::cast_precision_loss,
                 reason = "time values are at most a few hours in seconds; precision loss is negligible"
             )]
-            let ratio = (state.time_elapsed_secs as f64) / (self.max_entry_time_secs as f64);
+            let ratio = (state.time_elapsed_secs as f64) / (effective_max_time as f64);
             1.0 - ratio
         };
         let price_margin = (self.max_entry_price - ask.as_f64()) / self.max_entry_price;
-        let confidence = ((time_fraction + price_margin) * 0.5).clamp(0.0, 1.0);
+
+        // Volatility factor: magnitude relative to threshold.
+        // At 1x threshold → 0.5 boost. At 2x+ threshold → 1.0 boost.
+        let vol_factor = if self.min_spot_magnitude > 0.0 {
+            (state.spot_magnitude / self.min_spot_magnitude - 1.0)
+                .clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+
+        let confidence = ((time_fraction + price_margin + vol_factor) / 3.0).clamp(0.0, 1.0);
 
         Some(EntryDecision {
             side: state.spot_direction,
@@ -140,8 +152,9 @@ mod tests {
     #[test]
     fn does_not_fire_when_too_late() {
         let strategy = EarlyDirectional::new(300, 0.005, 0.65);
-        // elapsed=400 > 300
-        let state = make_state(Side::Up, 0.01, 400, Some(0.55));
+        // With Hour1 (3600s) timeframe, effective_max = 300 * 3600/900 = 1200.
+        // elapsed=1300 > 1200
+        let state = make_state(Side::Up, 0.01, 1300, Some(0.55));
         assert!(strategy.evaluate(&state).is_none());
     }
 

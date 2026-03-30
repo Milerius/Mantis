@@ -141,9 +141,9 @@ mod tests {
 
     #[test]
     fn fires_mid_window_with_sustained_momentum() {
-        // Window: 300–900s elapsed, magnitude >= 0.005, ask <= 0.65
+        // With Hour1 (3600s), effective window: 1200–3600s elapsed.
         let strategy = MomentumConfirmation::new(300, 900, 0.005, 0.65);
-        let state = make_state(600, 0.01, Some(0.55));
+        let state = make_state(1500, 0.01, Some(0.55));
         let d = strategy.evaluate(&state);
         assert!(d.is_some(), "expected momentum to fire mid-window");
         let d = d.expect("checked above");
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn does_not_fire_too_early() {
         let strategy = MomentumConfirmation::new(300, 900, 0.005, 0.65);
-        // elapsed=200 < min_entry_time=300
+        // With Hour1, eff_min = 1200. elapsed=200 < 1200
         let state = make_state(200, 0.01, Some(0.55));
         assert!(strategy.evaluate(&state).is_none());
     }
@@ -162,8 +162,8 @@ mod tests {
     #[test]
     fn does_not_fire_too_late() {
         let strategy = MomentumConfirmation::new(300, 900, 0.005, 0.65);
-        // elapsed=1000 > max_entry_time=900
-        let state = make_state(1000, 0.01, Some(0.55));
+        // With Hour1, eff_max = 3600. elapsed=4000 > 3600
+        let state = make_state(4000, 0.01, Some(0.55));
         assert!(strategy.evaluate(&state).is_none());
     }
 
