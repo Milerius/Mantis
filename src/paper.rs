@@ -20,8 +20,8 @@ use anyhow::{Context as _, Result};
 use pm_bookkeeper::{SnapshotRecorder, WindowRecorder};
 use pm_executor::{PaperConfig, PaperExecutor};
 use pm_market::{
-    L2OrderbookManager, LatestPrices, MarketManager, OrderbookTracker, PolymarketWs,
-    SharedL2Manager, SharedLatestPrices, SharedTokenAssetMap,
+    L2OrderbookManager, LatestPrices, MarketManager, OrderbookTracker, PmEvent, PolymarketWs,
+    SharedTokenAssetMap,
 };
 use pm_market::scanner::scan_active_markets;
 use pm_oracle::{BinanceWs, EmaTracker, OkxWs, OracleRouter, PriceBuffer};
@@ -107,7 +107,7 @@ struct LiveWindow {
 async fn fetch_rest_orderbook(
     client: &Client,
     token_id: &str,
-    tracker: &Arc<Mutex<OrderbookTracker>>,
+    tracker: &mut OrderbookTracker,
     now_ms: u64,
 ) {
     let url = format!("https://clob.polymarket.com/book?token_id={token_id}");
@@ -122,10 +122,7 @@ async fn fetch_rest_orderbook(
                             .and_then(|s| s.parse().ok())
                             .unwrap_or(0.0);
                         if price > 0.01 && price < 0.99 {
-                            match tracker.lock() {
-                                Ok(mut t) => { t.update(token_id, "SELL", price, now_ms); }
-                                Err(e) => { warn!(error = %e, "tracker mutex poisoned — skipping ask update"); }
-                            }
+                            tracker.update(token_id, "SELL", price, now_ms);
                         }
                     }
                 if let Some(bids) = book.get("bids").and_then(|a| a.as_array())
@@ -136,10 +133,7 @@ async fn fetch_rest_orderbook(
                             .and_then(|s| s.parse().ok())
                             .unwrap_or(0.0);
                         if price > 0.01 && price < 0.99 {
-                            match tracker.lock() {
-                                Ok(mut t) => { t.update(token_id, "BUY", price, now_ms); }
-                                Err(e) => { warn!(error = %e, "tracker mutex poisoned — skipping bid update"); }
-                            }
+                            tracker.update(token_id, "BUY", price, now_ms);
                         }
                     }
             }
@@ -191,8 +185,8 @@ fn fallback_prices(spot_direction: Side, slippage: f64) -> OrderbookPrices {
 /// back to model defaults.
 ///
 /// Called once per (asset, timeframe) per tick — before building [`MarketState`].
-/// Acquires the `shared_tracker` lock once, reads the snapshot, then releases
-/// it immediately. Falls back to [`fallback_prices`] when no live data exists or
+/// Reads from the local tracker and prices cache (no mutex locks).
+/// Falls back to [`fallback_prices`] when no live data exists or
 /// when prices appear to be from a resolved (settled) market.
 fn resolve_orderbook_prices(
     tick: &Tick,
@@ -200,8 +194,8 @@ fn resolve_orderbook_prices(
     spot_direction: Side,
     slippage: f64,
     condition_id_opt: Option<&str>,
-    shared_tracker: &Arc<Mutex<OrderbookTracker>>,
-    shared_prices: &SharedLatestPrices,
+    local_tracker: &OrderbookTracker,
+    local_prices: &LatestPrices,
     market_mgr: &MarketManager,
 ) -> OrderbookPrices {
     // PRIMARY: try the LatestPrices cache (indexed by Asset, Timeframe).
@@ -214,54 +208,41 @@ fn resolve_orderbook_prices(
         .unwrap_or_default()
         .as_millis() as u64;
 
-    match shared_prices.lock() {
-        Ok(cache) => {
-            if let Some(p) = cache.get(tick.asset, timeframe) {
-                // Staleness guard: if the cached price is older than the threshold,
-                // skip it and fall through to the secondary source.
-                if now_ms.saturating_sub(p.timestamp_ms) > MAX_PRICE_AGE_MS {
-                    warn!(
-                        asset = %tick.asset,
-                        timeframe = ?timeframe,
-                        age_ms = now_ms.saturating_sub(p.timestamp_ms),
-                        "cached price is stale — falling back to secondary source"
-                    );
-                } else {
-                    let prices_are_sane =
-                        p.ask_up > 0.01 && p.ask_up < 0.99 && p.ask_down > 0.01 && p.ask_down < 0.99;
-                    if prices_are_sane && p.both_sides_seen() {
-                        return OrderbookPrices {
-                            rec_ask_up: Some(p.ask_up),
-                            rec_ask_down: Some(p.ask_down),
-                            rec_bid_up: Some(p.bid_up),
-                            rec_bid_down: Some(p.bid_down),
-                            contract_ask_up: ContractPrice::new(p.ask_up),
-                            contract_ask_down: ContractPrice::new(p.ask_down),
-                            contract_bid_up: ContractPrice::new(p.bid_up),
-                            contract_bid_down: ContractPrice::new(p.bid_down),
-                            orderbook_imbalance: None,
-                        };
-                    }
-                }
+    if let Some(p) = local_prices.get(tick.asset, timeframe) {
+        // Staleness guard: if the cached price is older than the threshold,
+        // skip it and fall through to the secondary source.
+        if now_ms.saturating_sub(p.timestamp_ms) > MAX_PRICE_AGE_MS {
+            warn!(
+                asset = %tick.asset,
+                timeframe = ?timeframe,
+                age_ms = now_ms.saturating_sub(p.timestamp_ms),
+                "cached price is stale — falling back to secondary source"
+            );
+        } else {
+            let prices_are_sane =
+                p.ask_up > 0.01 && p.ask_up < 0.99 && p.ask_down > 0.01 && p.ask_down < 0.99;
+            if prices_are_sane && p.both_sides_seen() {
+                return OrderbookPrices {
+                    rec_ask_up: Some(p.ask_up),
+                    rec_ask_down: Some(p.ask_down),
+                    rec_bid_up: Some(p.bid_up),
+                    rec_bid_down: Some(p.bid_down),
+                    contract_ask_up: ContractPrice::new(p.ask_up),
+                    contract_ask_down: ContractPrice::new(p.ask_down),
+                    contract_bid_up: ContractPrice::new(p.bid_up),
+                    contract_bid_down: ContractPrice::new(p.bid_down),
+                    orderbook_imbalance: None,
+                };
             }
-        }
-        Err(e) => {
-            warn!(error = %e, "shared_prices mutex poisoned — skipping update");
         }
     }
 
     // SECONDARY: fall back to condition_id-based OrderbookTracker.
     let ob_snap = condition_id_opt.and_then(|cid| {
-        match shared_tracker.lock() {
-            Ok(tracker) => {
-                if let Some(snap) = tracker.get(cid)
-                    && (snap.ask_up.is_some() || snap.ask_down.is_some()) {
-                        return Some(*snap);
-                }
-            }
-            Err(e) => {
-                warn!(error = %e, "shared_tracker mutex poisoned — skipping update");
-            }
+        if let Some(snap) = local_tracker.get(cid)
+            && (snap.ask_up.is_some() || snap.ask_down.is_some())
+        {
+            return Some(*snap);
         }
         market_mgr.orderbook(cid).copied()
     });
@@ -352,12 +333,11 @@ fn build_market_state(
 ///
 /// Returns `None` if no L2 data is available for the token.
 fn compute_l2_imbalance(
-    l2_manager: &SharedL2Manager,
+    l2_manager: &L2OrderbookManager,
     up_token_id: Option<&str>,
 ) -> Option<f64> {
     let token_id = up_token_id?;
-    let mgr = l2_manager.lock().ok()?;
-    let book = mgr.get_book(token_id)?;
+    let book = l2_manager.get_book(token_id)?;
     Some(book.imbalance(5))
 }
 
@@ -499,15 +479,15 @@ fn process_tick(
     live_windows: &mut Vec<Option<LiveWindow>>,
     executor: &mut PaperExecutor,
     risk: &mut RiskManager,
-    shared_tracker: &Arc<Mutex<OrderbookTracker>>,
-    shared_prices: &SharedLatestPrices,
+    local_tracker: &OrderbookTracker,
+    local_prices: &LatestPrices,
     market_mgr: &MarketManager,
     recorder: &mut SnapshotRecorder,
     window_recorder: &mut WindowRecorder,
     engine: &pm_signal::StrategyEngine,
     ema_tracker: &mut EmaTracker,
     trend_filter: &TrendFilter,
-    shared_l2: &SharedL2Manager,
+    local_l2: &L2OrderbookManager,
     entry_timer: Option<&EntryTimer>,
 ) {
     // Update the EMA tracker with the latest price for this asset.
@@ -592,14 +572,14 @@ fn process_tick(
             spot_direction,
             slippage,
             condition_id_opt.as_deref(),
-            shared_tracker,
-            shared_prices,
+            local_tracker,
+            local_prices,
             market_mgr,
         );
 
         // Compute L2 orderbook imbalance from the Up token's full-depth book.
         prices.orderbook_imbalance =
-            compute_l2_imbalance(shared_l2, up_token_id_opt);
+            compute_l2_imbalance(local_l2, up_token_id_opt);
 
         let state = build_market_state(tick, timeframe, &window, &prices);
 
@@ -933,17 +913,16 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     let num_slots = enabled_assets.len() * enabled_timeframes.len();
     let mut live_windows: Vec<Option<LiveWindow>> = (0..num_slots).map(|_| None).collect();
 
-    // ── Shared orderbook tracker for PM WebSocket ─────────────────────────────
-    let shared_tracker: Arc<Mutex<OrderbookTracker>> =
-        Arc::new(Mutex::new(OrderbookTracker::new()));
+    // ── Local orderbook state (owned by the main loop — no Arc<Mutex>) ────────
+    let mut local_tracker = OrderbookTracker::new();
+    let mut local_prices = LatestPrices::new();
+    let mut local_l2 = L2OrderbookManager::new();
 
     // Shared token → (Asset, Timeframe, is_up) map, populated after each scan.
+    // Kept as Arc<Mutex> because it is written by the scanner and read by the
+    // main loop's event handler (different directions, low frequency).
     let token_asset_map: SharedTokenAssetMap =
         Arc::new(Mutex::new(HashMap::new()));
-
-    // Shared latest prices cache, indexed by (Asset, Timeframe).
-    let shared_prices: SharedLatestPrices =
-        Arc::new(Mutex::new(LatestPrices::new()));
 
     let mut market_mgr = MarketManager::new(Duration::from_secs(30));
     let http_client = Client::new();
@@ -951,19 +930,20 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
     let mut subscribed_tokens: HashSet<String> = HashSet::new();
 
-    // Shared L2 orderbook manager for computing imbalance signals.
-    let shared_l2: SharedL2Manager = Arc::new(Mutex::new(L2OrderbookManager::new()));
+    // ── Event channel: WS task → main loop ───────────────────────────────────
+    let (pm_event_tx, mut pm_event_rx) = tokio::sync::mpsc::unbounded_channel::<PmEvent>();
 
-    let (pm_ws, pm_new_tokens_tx, pm_resolutions, pm_needs_refresh) = PolymarketWs::new(
+    let (pm_ws, pm_new_tokens_tx, pm_needs_refresh) = PolymarketWs::new_with_events(
         Vec::new(),
         Arc::clone(&token_asset_map),
-        Arc::clone(&shared_prices),
-        Arc::clone(&shared_l2),
+        pm_event_tx,
     );
-    let pm_tracker = Arc::clone(&shared_tracker);
     let pm_shutdown = shutdown.clone();
     tokio::spawn(async move {
-        pm_ws.run(pm_tracker, pm_shutdown).await;
+        // The tracker Arc<Mutex> is only needed for the run() API signature;
+        // the WS task sends events through the channel instead of locking it.
+        let dummy_tracker = Arc::new(Mutex::new(OrderbookTracker::new()));
+        pm_ws.run(dummy_tracker, pm_shutdown).await;
     });
 
     // ── Snapshot recorder (plain JSONL, flush every 10 writes) ────────────────
@@ -1012,6 +992,86 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                 break;
             }
 
+            // ── Receive events from the PM WebSocket task ────────────────
+            Some(pm_event) = pm_event_rx.recv() => {
+                match pm_event {
+                    PmEvent::BestBidAsk { token_id, best_bid, best_ask, timestamp_ms } => {
+                        // Update local OrderbookTracker (condition_id-based).
+                        local_tracker.update(&token_id, "SELL", best_ask, timestamp_ms);
+                        local_tracker.update(&token_id, "BUY", best_bid, timestamp_ms);
+
+                        // Update local LatestPrices cache (Asset, Timeframe-based).
+                        // Skip resolved-market prices.
+                        if best_ask > 0.01 && best_ask < 0.99 && best_bid > 0.01 && best_bid < 0.99 {
+                            let lookup = match token_asset_map.lock() {
+                                Ok(map) => map.get(&token_id).copied(),
+                                Err(e) => {
+                                    warn!(error = %e, "token_asset_map mutex poisoned");
+                                    None
+                                }
+                            };
+                            if let Some((asset, timeframe, is_up)) = lookup {
+                                local_prices.update_side(asset, timeframe, is_up, best_bid, best_ask, timestamp_ms);
+                            }
+                        }
+                    }
+                    PmEvent::PriceChange { token_id, changes, timestamp_ms } => {
+                        local_l2.process_price_change(&token_id, &changes, timestamp_ms);
+                    }
+                    PmEvent::MarketResolved { condition_id, winning_token_id, timestamp_ms } => {
+                        info!(
+                            condition_id = %condition_id,
+                            winning_token = %winning_token_id,
+                            "PM event: market_resolved"
+                        );
+
+                        let matched = market_mgr.active_markets().find(|m| {
+                            m.condition_id == condition_id
+                        });
+
+                        let Some(mkt) = matched else {
+                            warn!(
+                                condition_id = %condition_id,
+                                "market_resolved for unknown condition — ignoring"
+                            );
+                            continue;
+                        };
+
+                        let outcome = if winning_token_id == mkt.token_id_up {
+                            Side::Up
+                        } else {
+                            Side::Down
+                        };
+
+                        let asset_idx = enabled_assets.iter().position(|a| *a == mkt.asset);
+                        let tf_idx = enabled_timeframes.iter().position(|t| *t == mkt.timeframe);
+
+                        if let (Some(ai), Some(ti)) = (asset_idx, tf_idx) {
+                            let slot = ai * enabled_timeframes.len() + ti;
+                            if let Some(lw) = live_windows[slot].as_mut() {
+                                let window_id = lw.window.id;
+                                let window_pnl = executor.resolve_window(
+                                    window_id,
+                                    outcome,
+                                    timestamp_ms,
+                                );
+                                risk.on_window_resolved(window_id, window_pnl);
+                                lw.position_opened = true;
+
+                                info!(
+                                    condition_id = %condition_id,
+                                    asset = %mkt.asset,
+                                    timeframe = ?mkt.timeframe,
+                                    %outcome,
+                                    pnl = window_pnl.as_f64(),
+                                    "market resolved early — positions closed"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
             () = tokio::time::sleep_until(next_scan_at) => {
                 match scan_active_markets(&http_client, &enabled_assets).await {
                     Ok(markets) => {
@@ -1027,19 +1087,12 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                             }
                         }
 
-                        match shared_tracker.lock() {
-                            Ok(mut tracker) => {
-                                for m in &markets {
-                                    tracker.register_market(
-                                        &m.condition_id,
-                                        &m.token_id_up,
-                                        &m.token_id_down,
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                warn!(error = %e, "shared_tracker mutex poisoned — skipping market registration");
-                            }
+                        for m in &markets {
+                            local_tracker.register_market(
+                                &m.condition_id,
+                                &m.token_id_up,
+                                &m.token_id_down,
+                            );
                         }
 
                         // Populate token → (Asset, Timeframe, is_up) map so the
@@ -1077,13 +1130,13 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                             fetch_rest_orderbook(
                                 &http_client,
                                 &m.token_id_up,
-                                &shared_tracker,
+                                &mut local_tracker,
                                 now_ms,
                             ).await;
                             fetch_rest_orderbook(
                                 &http_client,
                                 &m.token_id_down,
-                                &shared_tracker,
+                                &mut local_tracker,
                                 now_ms,
                             ).await;
 
@@ -1167,15 +1220,15 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     &mut live_windows,
                     &mut executor,
                     &mut risk,
-                    &shared_tracker,
-                    &shared_prices,
+                    &local_tracker,
+                    &local_prices,
                     &market_mgr,
                     &mut recorder,
                     &mut window_recorder,
                     &engine,
                     &mut ema_tracker,
                     &trend_filter,
-                    &shared_l2,
+                    &local_l2,
                     entry_timer_opt.as_ref(),
                 );
 
@@ -1194,78 +1247,20 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     next_cleanup_at = tokio::time::Instant::now() + Duration::from_secs(60);
                 }
 
-                // ── Drain market_resolved events ────────────────────────────
-                match pm_resolutions.lock() {
-                    Err(e) => {
-                        warn!(error = %e, "pm_resolutions mutex poisoned — skipping drain");
-                    }
-                    Ok(mut resolutions) => { for res in resolutions.drain(..) {
-                        // Find the matching market to determine (asset, timeframe)
-                        // and whether the winning token is Up or Down.
-                        let matched = market_mgr.active_markets().find(|m| {
-                            m.condition_id == res.condition_id
-                        });
-
-                        let Some(mkt) = matched else {
-                            warn!(
-                                condition_id = %res.condition_id,
-                                "market_resolved for unknown condition — ignoring"
-                            );
-                            continue;
-                        };
-
-                        let outcome = if res.winning_token_id == mkt.token_id_up {
-                            Side::Up
-                        } else {
-                            Side::Down
-                        };
-
-                        // Find the live window slot for this (asset, timeframe).
-                        let asset_idx = enabled_assets.iter().position(|a| *a == mkt.asset);
-                        let tf_idx = enabled_timeframes.iter().position(|t| *t == mkt.timeframe);
-
-                        if let (Some(ai), Some(ti)) = (asset_idx, tf_idx) {
-                            let slot = ai * enabled_timeframes.len() + ti;
-                            if let Some(lw) = live_windows[slot].as_mut() {
-                                let window_id = lw.window.id;
-                                let window_pnl = executor.resolve_window(
-                                    window_id,
-                                    outcome,
-                                    res.timestamp_ms,
-                                );
-                                risk.on_window_resolved(window_id, window_pnl);
-                                lw.position_opened = true;
-
-                                info!(
-                                    condition_id = %res.condition_id,
-                                    asset = %mkt.asset,
-                                    timeframe = ?mkt.timeframe,
-                                    %outcome,
-                                    pnl = window_pnl.as_f64(),
-                                    "market resolved early — positions closed"
-                                );
-                            }
-                        }
-                    }
-                    } // Ok arm
-                } // match
+                // Market resolution events are now handled via the pm_event_rx
+                // channel branch above — no mutex drain needed.
             }
         }
     }
 
-    // ── 7. Drain any remaining resolutions ──────────────────────────────────
-    match pm_resolutions.lock() {
-        Ok(mut resolutions) => {
-            for res in resolutions.drain(..) {
-                info!(
-                    condition_id = %res.condition_id,
-                    winning_token = %res.winning_token_id,
-                    "draining final market_resolved event on shutdown"
-                );
-            }
-        }
-        Err(e) => {
-            warn!(error = %e, "pm_resolutions mutex poisoned — skipping final drain");
+    // ── 7. Drain any remaining PM events ──────────────────────────────────────
+    while let Ok(event) = pm_event_rx.try_recv() {
+        if let PmEvent::MarketResolved { condition_id, winning_token_id, .. } = event {
+            info!(
+                condition_id = %condition_id,
+                winning_token = %winning_token_id,
+                "draining final market_resolved event on shutdown"
+            );
         }
     }
 

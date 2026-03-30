@@ -30,6 +30,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use crate::events::PmEvent;
 use crate::l2_orderbook::{self, SharedL2Manager};
 use crate::orderbook::{LatestPrices, OrderbookTracker, WS_CLOB_URL};
 
@@ -206,6 +207,9 @@ pub struct PolymarketWs {
     needs_rest_refresh: Arc<AtomicBool>,
     /// Shared L2 orderbook manager for full-depth reconstruction.
     l2_manager: SharedL2Manager,
+    /// Optional event channel sender. When present, events are sent through
+    /// this channel instead of locking mutexes for tracker/prices/L2.
+    pm_event_tx: Option<tokio::sync::mpsc::UnboundedSender<PmEvent>>,
 }
 
 /// Sender half returned to the caller for pushing new token IDs.
@@ -238,9 +242,44 @@ impl PolymarketWs {
                 latest_prices,
                 needs_rest_refresh: Arc::clone(&needs_refresh),
                 l2_manager,
+                pm_event_tx: None,
             },
             tx,
             resolved,
+            needs_refresh,
+        )
+    }
+
+    /// Create a new client with an event channel sender.
+    ///
+    /// When the event sender is present, the WebSocket task sends typed
+    /// [`PmEvent`]s through the channel instead of locking mutexes for
+    /// tracker, latest prices, and L2 orderbook updates. The main loop
+    /// receives these events and updates its own local (non-shared) state.
+    ///
+    /// The `token_asset_map` is still shared because it is populated by the
+    /// scanner (different direction, low frequency).
+    #[must_use]
+    pub fn new_with_events(
+        token_ids: Vec<String>,
+        token_asset_map: SharedTokenAssetMap,
+        pm_event_tx: tokio::sync::mpsc::UnboundedSender<PmEvent>,
+    ) -> (Self, NewTokensSender, Arc<AtomicBool>) {
+        let (tx, rx) = mpsc::channel(64);
+        let resolved = Arc::new(Mutex::new(Vec::new()));
+        let needs_refresh = Arc::new(AtomicBool::new(false));
+        (
+            Self {
+                token_ids,
+                new_tokens_rx: rx,
+                resolved_markets: Arc::clone(&resolved),
+                token_asset_map,
+                latest_prices: Arc::new(Mutex::new(LatestPrices::new())),
+                needs_rest_refresh: Arc::clone(&needs_refresh),
+                l2_manager: Arc::new(Mutex::new(l2_orderbook::L2OrderbookManager::new())),
+                pm_event_tx: Some(pm_event_tx),
+            },
+            tx,
             needs_refresh,
         )
     }
@@ -339,26 +378,46 @@ impl PolymarketWs {
                                             continue;
                                         }
                                         if let Some(event) = parse_best_bid_ask(text_str) {
-                                            handle_best_bid_ask(&tracker, &event);
-                                            handle_latest_prices(
-                                                &self.token_asset_map,
-                                                &self.latest_prices,
-                                                &event,
-                                            );
+                                            if let Some(ref tx) = self.pm_event_tx {
+                                                // Channel path: send typed event, no mutex lock.
+                                                if let Some(pm_event) = best_bid_ask_to_event(&event) {
+                                                    let _ = tx.send(pm_event);
+                                                }
+                                            } else {
+                                                // Legacy path: lock mutexes.
+                                                handle_best_bid_ask(&tracker, &event);
+                                                handle_latest_prices(
+                                                    &self.token_asset_map,
+                                                    &self.latest_prices,
+                                                    &event,
+                                                );
+                                            }
                                         } else if let Some(pc_event) = l2_orderbook::parse_price_change(text_str) {
-                                            handle_price_change(&self.l2_manager, &pc_event);
+                                            if let Some(ref tx) = self.pm_event_tx {
+                                                let _ = tx.send(price_change_to_event(&pc_event));
+                                            } else {
+                                                handle_price_change(&self.l2_manager, &pc_event);
+                                            }
                                         } else if let Some(resolution) = parse_market_resolved(text_str) {
                                             info!(
                                                 condition_id = %resolution.condition_id,
                                                 winning_token = %resolution.winning_token_id,
                                                 "PM WS: market_resolved event"
                                             );
-                                            match self.resolved_markets.lock() {
-                                                Ok(mut resolutions) => {
-                                                    resolutions.push(resolution);
-                                                }
-                                                Err(e) => {
-                                                    warn!(error = %e, "resolved_markets mutex poisoned — skipping update");
+                                            if let Some(ref tx) = self.pm_event_tx {
+                                                let _ = tx.send(PmEvent::MarketResolved {
+                                                    condition_id: resolution.condition_id,
+                                                    winning_token_id: resolution.winning_token_id,
+                                                    timestamp_ms: resolution.timestamp_ms,
+                                                });
+                                            } else {
+                                                match self.resolved_markets.lock() {
+                                                    Ok(mut resolutions) => {
+                                                        resolutions.push(resolution);
+                                                    }
+                                                    Err(e) => {
+                                                        warn!(error = %e, "resolved_markets mutex poisoned — skipping update");
+                                                    }
                                                 }
                                             }
                                         }
@@ -601,6 +660,65 @@ fn handle_price_change(
         Err(e) => {
             warn!(error = %e, "l2_manager mutex poisoned — skipping price_change");
         }
+    }
+}
+
+// ─── Event conversion helpers ─────────────────────────────────────────────────
+
+/// Convert a parsed `best_bid_ask` event into a [`PmEvent::BestBidAsk`].
+///
+/// Returns `None` if bid or ask cannot be parsed as `f64`.
+fn best_bid_ask_to_event(event: &BestBidAskEvent) -> Option<PmEvent> {
+    let best_bid = event.best_bid.parse::<f64>().ok()?;
+    let best_ask = event.best_ask.parse::<f64>().ok()?;
+    let timestamp_ms: u64 = event
+        .timestamp
+        .parse::<f64>()
+        .map_or_else(
+            |_| {
+                #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64")]
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
+                ms
+            },
+            |s| {
+                #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "timestamp_ms fits in u64")]
+                let ms = (s * 1_000.0) as u64;
+                ms
+            },
+        );
+    Some(PmEvent::BestBidAsk {
+        token_id: event.asset_id.clone(),
+        best_bid,
+        best_ask,
+        timestamp_ms,
+    })
+}
+
+/// Convert a parsed `price_change` event into a [`PmEvent::PriceChange`].
+fn price_change_to_event(event: &l2_orderbook::PriceChangeEvent) -> PmEvent {
+    let timestamp_ms: u64 = event
+        .timestamp
+        .parse::<f64>()
+        .map_or_else(
+            |_| {
+                #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64")]
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
+                ms
+            },
+            |s| {
+                #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "timestamp_ms fits in u64")]
+                let ms = (s * 1_000.0) as u64;
+                ms
+            },
+        );
+    PmEvent::PriceChange {
+        token_id: event.asset_id.clone(),
+        changes: event.changes.clone(),
+        timestamp_ms,
     }
 }
 
