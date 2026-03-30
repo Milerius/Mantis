@@ -100,6 +100,16 @@ pub fn default_strategies() -> Vec<StrategyConfig> {
     ]
 }
 
+fn default_max_positions_per_window() -> usize {
+    1
+}
+fn default_scan_interval_secs() -> u64 {
+    30
+}
+fn default_max_price_age_ms() -> u64 {
+    15_000
+}
+
 // ─── Mode ────────────────────────────────────────────────────────────────────
 
 /// Operating mode of the bot.
@@ -188,6 +198,15 @@ pub struct BotSection {
     /// old config files continue to work without modification.
     #[serde(default = "default_strategies")]
     pub strategies: Vec<StrategyConfig>,
+    /// Maximum positions per window (default: 1).
+    #[serde(default = "default_max_positions_per_window")]
+    pub max_positions_per_window: usize,
+    /// Market scan interval in seconds (default: 30).
+    #[serde(default = "default_scan_interval_secs")]
+    pub scan_interval_secs: u64,
+    /// Maximum age of cached prices in milliseconds before fallback (default: 15000).
+    #[serde(default = "default_max_price_age_ms")]
+    pub max_price_age_ms: u64,
 }
 
 // ─── BotConfig ───────────────────────────────────────────────────────────────
