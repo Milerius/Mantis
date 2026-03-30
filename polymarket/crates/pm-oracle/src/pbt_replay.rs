@@ -1,8 +1,8 @@
-//! Replay PolyBackTest cached data as an observation stream for backtesting.
+//! Replay `PolyBackTest` cached data as an observation stream for backtesting.
 //!
 //! [`PbtReplay`] loads cached market + snapshot files and produces a
 //! time-sorted stream of [`PbtObservation`]s. Each observation pairs a spot
-//! price tick with real contract prices from the PolyBackTest snapshot data.
+//! price tick with real contract prices from the `PolyBackTest` snapshot data.
 
 use std::{
     io,
@@ -20,7 +20,7 @@ use crate::polybacktest::{PbtMarket, PbtSnapshot};
 
 /// A paired observation: spot tick + contract prices at the same moment.
 ///
-/// Produced by [`PbtReplay`] from cached PolyBackTest data.
+/// Produced by [`PbtReplay`] from cached `PolyBackTest` data.
 #[derive(Debug, Clone)]
 pub struct PbtObservation {
     /// Spot price tick constructed from the snapshot's `btc_price` field.
@@ -37,7 +37,7 @@ pub struct PbtObservation {
     pub window_close_ms: u64,
     /// Resolution outcome, if the market has resolved.
     pub winner: Option<Side>,
-    /// The PolyBackTest market ID this observation belongs to.
+    /// The `PolyBackTest` market ID this observation belongs to.
     pub market_id: String,
 }
 
@@ -57,6 +57,7 @@ fn coin_to_asset(coin: &str) -> Option<Asset> {
         "btc" => Some(Asset::Btc),
         "eth" => Some(Asset::Eth),
         "sol" => Some(Asset::Sol),
+        "xrp" => Some(Asset::Xrp),
         _ => None,
     }
 }
@@ -73,8 +74,8 @@ fn market_type_to_timeframe(mt: &str) -> Option<Timeframe> {
 }
 
 /// Parse the winner field to a [`Side`].
-fn parse_winner(winner: &Option<String>) -> Option<Side> {
-    match winner.as_deref() {
+fn parse_winner(winner: Option<&str>) -> Option<Side> {
+    match winner {
         Some("Up") => Some(Side::Up),
         Some("Down") => Some(Side::Down),
         _ => None,
@@ -88,13 +89,11 @@ fn build_observations(
     asset: Asset,
     _timeframe: Timeframe,
 ) -> Vec<PbtObservation> {
-    let window_open_ms = match parse_iso_to_ms(&market.start_time) {
-        Some(ms) => ms,
-        None => return Vec::new(),
+    let Some(window_open_ms) = parse_iso_to_ms(&market.start_time) else {
+        return Vec::new();
     };
-    let window_close_ms = match parse_iso_to_ms(&market.end_time) {
-        Some(ms) => ms,
-        None => return Vec::new(),
+    let Some(window_close_ms) = parse_iso_to_ms(&market.end_time) else {
+        return Vec::new();
     };
     // Use btc_price_start if available. For non-BTC coins (ETH, SOL, XRP),
     // this field is often None — fall back to the first snapshot's spot price.
@@ -108,7 +107,7 @@ fn build_observations(
             }
         }
     };
-    let winner = parse_winner(&market.winner);
+    let winner = parse_winner(market.winner.as_deref());
 
     let mut obs = Vec::with_capacity(snapshots.len());
     for snap in snapshots {
@@ -151,14 +150,14 @@ fn build_observations(
 ///
 /// Returns `Ok(Vec::new())` (with a warning) rather than propagating errors so that
 /// a single corrupt file does not abort an entire parallel load.
-fn load_single_file(path: &PathBuf, asset: Asset, timeframe: Timeframe) -> io::Result<Vec<PbtObservation>> {
+fn load_single_file(path: &Path, asset: Asset, timeframe: Timeframe) -> io::Result<Vec<PbtObservation>> {
     let (market, snapshots) = read_pbt_cache(path)?;
     Ok(build_observations(&market, &snapshots, asset, timeframe))
 }
 
 // ─── PbtReplay ──────────────────────────────────────────────────────────────
 
-/// Replays cached PolyBackTest data as a time-sorted observation stream.
+/// Replays cached `PolyBackTest` data as a time-sorted observation stream.
 ///
 /// Load with [`PbtReplay::load`], then iterate with the standard [`Iterator`]
 /// interface.
@@ -195,7 +194,7 @@ impl PbtReplay {
 
         // Collect matching paths up front so we can hand them to rayon.
         let paths: Vec<PathBuf> = std::fs::read_dir(cache_dir)?
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .filter(|e| {
                 let name = e.file_name();
                 let s = name.to_string_lossy();
@@ -327,7 +326,7 @@ impl Iterator for PbtReplay {
 
 /// Build [`PriceObservation`]s from PBT data for calibrating a [`ContractPriceModel`].
 ///
-/// For each PBT observation, computes magnitude and time_elapsed, then records
+/// For each PBT observation, computes magnitude and `time_elapsed`, then records
 /// the contract price as a [`PriceObservation`] that can be fed into
 /// [`crate::contract_model::calibrate`].
 ///
@@ -365,6 +364,7 @@ pub fn pbt_to_price_observations(
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test helpers use expect for conciseness")]
 mod tests {
     use super::*;
     use crate::pbt_downloader::write_pbt_snapshots;
@@ -522,9 +522,9 @@ mod tests {
 
     #[test]
     fn parse_winner_variants() {
-        assert_eq!(parse_winner(&Some("Up".into())), Some(Side::Up));
-        assert_eq!(parse_winner(&Some("Down".into())), Some(Side::Down));
-        assert_eq!(parse_winner(&None), None);
-        assert_eq!(parse_winner(&Some("Other".into())), None);
+        assert_eq!(parse_winner(Some("Up")), Some(Side::Up));
+        assert_eq!(parse_winner(Some("Down")), Some(Side::Down));
+        assert_eq!(parse_winner(None), None);
+        assert_eq!(parse_winner(Some("Other")), None);
     }
 }

@@ -72,6 +72,21 @@ impl Asset {
             Self::Xrp => "XRP-USDT-SWAP",
         }
     }
+
+    /// Lowercase ASCII name for this asset (e.g. `"btc"`).
+    ///
+    /// Returns a `'static` str — never allocates. Use instead of
+    /// `asset.to_string().to_lowercase()` in hot paths.
+    #[inline]
+    #[must_use]
+    pub const fn as_lower_str(self) -> &'static str {
+        match self {
+            Self::Btc => "btc",
+            Self::Eth => "eth",
+            Self::Sol => "sol",
+            Self::Xrp => "xrp",
+        }
+    }
 }
 
 impl core::fmt::Display for Asset {
@@ -168,6 +183,21 @@ impl Timeframe {
             Self::Min15 => 15 * 60,
             Self::Hour1 => 60 * 60,
             Self::Hour4 => 4 * 60 * 60,
+        }
+    }
+
+    /// Short label for this timeframe (e.g. `"5m"`, `"1h"`).
+    ///
+    /// Returns a `'static` str — never allocates. Use instead of
+    /// `format!("{timeframe}")` in hot paths.
+    #[inline]
+    #[must_use]
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::Min5 => "5m",
+            Self::Min15 => "15m",
+            Self::Hour1 => "1h",
+            Self::Hour4 => "4h",
         }
     }
 }
@@ -304,11 +334,41 @@ mod tests {
     }
 
     #[test]
+    fn asset_as_lower_str() {
+        assert_eq!(Asset::Btc.as_lower_str(), "btc");
+        assert_eq!(Asset::Eth.as_lower_str(), "eth");
+        assert_eq!(Asset::Sol.as_lower_str(), "sol");
+        assert_eq!(Asset::Xrp.as_lower_str(), "xrp");
+    }
+
+    #[test]
+    fn asset_lower_str_matches_display_lowercase() {
+        for asset in Asset::ALL {
+            assert_eq!(asset.as_lower_str(), asset.to_string().to_lowercase());
+        }
+    }
+
+    #[test]
     fn timeframe_display() {
         assert_eq!(Timeframe::Min5.to_string(), "5m");
         assert_eq!(Timeframe::Min15.to_string(), "15m");
         assert_eq!(Timeframe::Hour1.to_string(), "1h");
         assert_eq!(Timeframe::Hour4.to_string(), "4h");
+    }
+
+    #[test]
+    fn timeframe_as_label() {
+        assert_eq!(Timeframe::Min5.as_label(), "5m");
+        assert_eq!(Timeframe::Min15.as_label(), "15m");
+        assert_eq!(Timeframe::Hour1.as_label(), "1h");
+        assert_eq!(Timeframe::Hour4.as_label(), "4h");
+    }
+
+    #[test]
+    fn timeframe_label_matches_display() {
+        for tf in Timeframe::ALL {
+            assert_eq!(tf.as_label(), tf.to_string());
+        }
     }
 
     #[test]

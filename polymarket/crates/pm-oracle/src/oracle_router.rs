@@ -51,6 +51,7 @@ impl Default for OracleRouter {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test helpers use expect for conciseness")]
 mod tests {
     use pm_types::{ExchangeSource, Price};
 

@@ -2,7 +2,7 @@
 //!
 //! Each prediction window is buffered in memory and flushed to a compressed
 //! file when the window closes (or is resolved). The resulting file has the
-//! **exact same format** as the PolyBackTest cache files consumed by
+//! **exact same format** as the `PolyBackTest` cache files consumed by
 //! [`PbtReplay::load`], making recorded live data directly replayable.
 //!
 //! File layout: `{data_dir}/live/{coin}_{timeframe}_{window_id}.jsonl.gz`
@@ -29,6 +29,14 @@ use tracing::{debug, info, warn};
 /// Market metadata written as the first line of the gzip JSONL file.
 ///
 /// Field names and types match `pm_oracle::polybacktest::PbtMarket` exactly.
+///
+/// # Naming convention
+///
+/// Internal Rust fields use `spot_price_*` to make it clear these are the
+/// spot price of the *underlying asset* (BTC, ETH, SOL, XRP, …) rather than
+/// literally a BTC price.  The serde `rename` attributes preserve the
+/// `btc_price_*` wire-format names used by the `PolyBackTest` API so that files
+/// written here remain directly replayable by `PbtReplay::load`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowMarketMeta {
     /// Unique identifier for this window (may be a synthetic ID).
@@ -41,10 +49,16 @@ pub struct WindowMarketMeta {
     pub start_time: String,
     /// ISO-8601 end time.
     pub end_time: String,
-    /// Spot price at window open.
-    pub btc_price_start: Option<f64>,
-    /// Spot price at window close (filled on close).
-    pub btc_price_end: Option<f64>,
+    /// Spot price of the underlying asset at window open.
+    ///
+    /// Serialised as `"btc_price_start"` for PBT wire-format compatibility.
+    #[serde(rename = "btc_price_start")]
+    pub spot_price_start: Option<f64>,
+    /// Spot price of the underlying asset at window close (filled on close).
+    ///
+    /// Serialised as `"btc_price_end"` for PBT wire-format compatibility.
+    #[serde(rename = "btc_price_end")]
+    pub spot_price_end: Option<f64>,
     /// Resolution outcome: `"Up"`, `"Down"`, or `null`.
     pub winner: Option<String>,
     /// CLOB token ID for the Up outcome (optional).
@@ -54,12 +68,20 @@ pub struct WindowMarketMeta {
 }
 
 /// A snapshot written on each tick, matching `PbtSnapshot` schema.
+///
+/// # Naming convention
+///
+/// The internal field is named `spot_price` to be asset-agnostic; the serde
+/// `rename` keeps the `btc_price` wire-format name for PBT compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowSnapshotLine {
     /// ISO-8601 timestamp.
     pub time: String,
-    /// Spot price at this moment.
-    pub btc_price: Option<f64>,
+    /// Spot price of the underlying asset at this moment.
+    ///
+    /// Serialised as `"btc_price"` for PBT wire-format compatibility.
+    #[serde(rename = "btc_price")]
+    pub spot_price: Option<f64>,
     /// Best ask for Up contract.
     pub price_up: Option<f64>,
     /// Best ask for Down contract.
@@ -110,7 +132,7 @@ impl WindowRecorder {
         })
     }
 
-    /// Build the canonical window key used as both the HashMap key and the
+    /// Build the canonical window key used as both the `HashMap` key and the
     /// file name stem.
     #[must_use]
     pub fn window_key(coin: &str, timeframe: &str, window_id: &str) -> String {
@@ -121,6 +143,7 @@ impl WindowRecorder {
     ///
     /// If a window with the same key already exists it is silently replaced
     /// (the old buffered data is lost — this handles ungraceful restarts).
+    #[expect(clippy::too_many_arguments, reason = "window metadata requires all these fields")]
     pub fn open_window(
         &mut self,
         coin: &str,
@@ -138,8 +161,8 @@ impl WindowRecorder {
             market_type: timeframe.to_owned(),
             start_time: start_time_iso.to_owned(),
             end_time: end_time_iso.to_owned(),
-            btc_price_start: Some(open_price),
-            btc_price_end: None,
+            spot_price_start: Some(open_price),
+            spot_price_end: None,
             winner: None,
             clob_token_up: None,
             clob_token_down: None,
@@ -168,6 +191,7 @@ impl WindowRecorder {
     ///
     /// Returns [`io::Error`] only if JSON serialization fails (should not
     /// happen in practice).
+    #[expect(clippy::too_many_arguments, reason = "snapshot data naturally requires all these fields")]
     pub fn record_snapshot(
         &mut self,
         window_key: &str,
@@ -182,7 +206,7 @@ impl WindowRecorder {
 
         let snap = WindowSnapshotLine {
             time: time_iso.to_owned(),
-            btc_price: Some(spot_price),
+            spot_price: Some(spot_price),
             price_up,
             price_down,
         };
@@ -213,7 +237,7 @@ impl WindowRecorder {
         };
 
         buf.meta.winner = Some(winner.to_owned());
-        buf.meta.btc_price_end = Some(end_price);
+        buf.meta.spot_price_end = Some(end_price);
 
         let file_path = self.live_dir.join(format!("{window_key}.jsonl.gz"));
         let file = File::create(&file_path)?;
@@ -327,14 +351,14 @@ mod tests {
         assert_eq!(meta.market_id, "w001");
         assert_eq!(meta.market_type, "5m");
         assert_eq!(meta.winner, Some("Up".to_owned()));
-        assert!((meta.btc_price_start.expect("start") - 95000.0).abs() < 1e-6);
-        assert!((meta.btc_price_end.expect("end") - 95100.0).abs() < 1e-6);
+        assert!((meta.spot_price_start.expect("start") - 95000.0).abs() < 1e-6);
+        assert!((meta.spot_price_end.expect("end") - 95100.0).abs() < 1e-6);
 
         // Parse snapshot.
         let snap: WindowSnapshotLine =
             serde_json::from_str(&lines[1]).expect("parse snap");
         assert_eq!(snap.time, "2026-01-01T00:01:00Z");
-        assert!((snap.btc_price.expect("price") - 95050.0).abs() < 1e-6);
+        assert!((snap.spot_price.expect("price") - 95050.0).abs() < 1e-6);
         assert!((snap.price_up.expect("up") - 0.52).abs() < 1e-6);
 
         std::fs::remove_dir_all(&dir).ok();

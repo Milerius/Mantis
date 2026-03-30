@@ -60,6 +60,10 @@ impl Decisions {
     /// never happen with `MAX_STRATEGIES == 4` and four concrete strategies).
     #[inline]
     fn push(&mut self, d: EntryDecision) {
+        debug_assert!(
+            self.count < MAX_STRATEGIES,
+            "Decisions buffer full — increase MAX_STRATEGIES (current: {MAX_STRATEGIES})"
+        );
         if self.count < MAX_STRATEGIES {
             self.items[self.count] = Some(d);
             self.count += 1;

@@ -1,6 +1,6 @@
-//! PolyBackTest data downloader and cache manager.
+//! `PolyBackTest` data downloader and cache manager.
 //!
-//! Downloads historical market snapshots from the PolyBackTest API and caches
+//! Downloads historical market snapshots from the `PolyBackTest` API and caches
 //! them locally as compressed JSONL files. Each market's snapshots are stored in
 //! `{cache_dir}/{coin}_{market_type}_{market_id}.jsonl.gz`.
 //!
@@ -9,7 +9,7 @@
 
 use std::{
     fs,
-    io::{self, BufRead as _, BufReader, Read as _, Write as _},
+    io::{self, BufRead as _, BufReader, Write as _},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -59,14 +59,14 @@ pub fn write_pbt_snapshots(
 
     // First line: market metadata.
     let market_json = serde_json::to_string(market)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(io::Error::other)?;
     gz.write_all(market_json.as_bytes())?;
     gz.write_all(b"\n")?;
 
     // Subsequent lines: snapshots.
     for snap in snapshots {
         let line = serde_json::to_string(snap)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
         gz.write_all(line.as_bytes())?;
         gz.write_all(b"\n")?;
     }
@@ -132,6 +132,11 @@ const MAX_RETRIES: u32 = 3;
 ///
 /// Returns [`DownloadError`] on API or I/O failures. Individual market failures
 /// are logged as warnings and skipped.
+///
+/// # Panics
+///
+/// Panics if the internal semaphore is closed (should not happen in normal use).
+#[expect(clippy::too_many_lines, reason = "download loop is inherently sequential; splitting would obscure retry/progress logic")]
 pub async fn download_pbt_data(
     client: &PbtClient,
     coin: &str,
@@ -186,6 +191,7 @@ pub async fn download_pbt_data(
     let mut handles = Vec::with_capacity(total_work);
 
     for market in work {
+        #[expect(clippy::expect_used, reason = "semaphore is only closed on shutdown; unreachable in normal use")]
         let permit = semaphore.clone().acquire_owned().await.expect("semaphore closed");
 
         let market_id = market.market_id.clone();
@@ -209,7 +215,7 @@ pub async fn download_pbt_data(
                         match write_pbt_snapshots(&path, &market, &snapshots) {
                             Ok(()) => {
                                 let n = downloaded_ctr.fetch_add(1, Ordering::Relaxed) + 1;
-                                if n % 50 == 0 {
+                                if n.is_multiple_of(50) {
                                     info!(
                                         downloaded = n,
                                         market_id = %market_id,
@@ -281,6 +287,7 @@ pub async fn download_pbt_data(
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test helpers use expect for conciseness")]
 mod tests {
     use super::*;
 

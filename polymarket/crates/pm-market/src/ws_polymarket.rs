@@ -129,13 +129,20 @@ pub(crate) fn parse_market_resolved(raw: &str) -> Option<MarketResolution> {
     let timestamp_ms: u64 = env
         .timestamp
         .parse::<f64>()
-        .map(|s| (s * 1_000.0) as u64)
-        .unwrap_or_else(|_| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0)
-        });
+        .map_or_else(
+            |_| {
+                #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64 for centuries")]
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
+                ms
+            },
+            |s| {
+                #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "timestamp_ms fits in u64")]
+                let ms = (s * 1_000.0) as u64;
+                ms
+            },
+        );
     Some(MarketResolution {
         condition_id: env.market,
         winning_token_id: env.asset_id,
@@ -212,6 +219,7 @@ impl PolymarketWs {
     /// Errors from individual connection attempts are logged as warnings and
     /// the loop retries. The function only returns `Ok(())` once `shutdown`
     /// is cancelled.
+    #[expect(clippy::too_many_lines, reason = "WebSocket run loop is inherently sequential; splitting would obscure control flow")]
     pub async fn run(
         mut self,
         tracker: Arc<Mutex<OrderbookTracker>>,
@@ -360,43 +368,41 @@ fn handle_best_bid_ask(
     let timestamp_ms: u64 = event
         .timestamp
         .parse::<f64>()
-        .map(|s| (s * 1_000.0) as u64)
-        .unwrap_or_else(|_| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0)
-        });
+        .map_or_else(
+            |_| {
+                #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64 for centuries")]
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
+                ms
+            },
+            |s| {
+                #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "timestamp_ms fits in u64")]
+                let ms = (s * 1_000.0) as u64;
+                ms
+            },
+        );
 
-    let best_bid: f64 = match event.best_bid.parse() {
-        Ok(v) => v,
-        Err(_) => {
-            debug!(
-                asset_id = %event.asset_id,
-                raw = %event.best_bid,
-                "PM WS: could not parse best_bid"
-            );
-            return;
-        }
+    let Ok(best_bid) = event.best_bid.parse::<f64>() else {
+        debug!(
+            asset_id = %event.asset_id,
+            raw = %event.best_bid,
+            "PM WS: could not parse best_bid"
+        );
+        return;
     };
-    let best_ask: f64 = match event.best_ask.parse() {
-        Ok(v) => v,
-        Err(_) => {
-            debug!(
-                asset_id = %event.asset_id,
-                raw = %event.best_ask,
-                "PM WS: could not parse best_ask"
-            );
-            return;
-        }
+    let Ok(best_ask) = event.best_ask.parse::<f64>() else {
+        debug!(
+            asset_id = %event.asset_id,
+            raw = %event.best_ask,
+            "PM WS: could not parse best_ask"
+        );
+        return;
     };
 
-    let mut guard = match tracker.lock() {
-        Ok(g) => g,
-        Err(e) => {
-            warn!("PM WS: tracker mutex poisoned: {e}");
-            return;
-        }
+    let Ok(mut guard) = tracker.lock() else {
+        warn!("PM WS: tracker mutex poisoned");
+        return;
     };
 
     guard.update(&event.asset_id, "SELL", best_ask, timestamp_ms);

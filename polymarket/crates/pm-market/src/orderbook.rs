@@ -59,7 +59,6 @@ pub struct PriceLevel {
     /// Price as a string (Polymarket uses string-encoded decimals).
     pub price: String,
     /// Size at this price level.
-    #[allow(dead_code)]
     pub size: String,
 }
 
@@ -89,11 +88,11 @@ pub struct OrderbookMessage {
 /// - by `condition_id` for retrieval by downstream consumers
 /// - by `token_id` for routing incoming WebSocket updates
 pub struct OrderbookTracker {
-    /// Snapshot keyed by condition_id.
+    /// Snapshot keyed by `condition_id`.
     books: HashMap<String, OrderbookSnapshot>,
-    /// Maps token_id_up → condition_id.
+    /// Maps `token_id_up` → `condition_id`.
     token_up_to_condition: HashMap<String, String>,
-    /// Maps token_id_down → condition_id.
+    /// Maps `token_id_down` → `condition_id`.
     token_down_to_condition: HashMap<String, String>,
 }
 

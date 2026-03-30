@@ -363,6 +363,7 @@ fn parse_trade_object(
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test helpers use expect for conciseness")]
 mod tests {
     use super::*;
 

@@ -176,6 +176,7 @@ impl Default for PriceBuffer {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test helpers use expect for conciseness")]
 mod tests {
     use super::*;
 

@@ -53,11 +53,13 @@ impl Strategy for MomentumConfirmation {
     fn evaluate(&self, state: &MarketState) -> Option<EntryDecision> {
         // Scale time boundaries proportionally to timeframe duration.
         // Configured values are for a 15m (900s) window.
+        #[expect(clippy::cast_precision_loss,
+                 reason = "duration_secs() is at most a few hours in seconds; precision loss is negligible")]
         let scale = state.timeframe.duration_secs() as f64 / 900.0;
-        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss,
+        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss,
                  reason = "scale × time is always a small positive number")]
         let eff_min = (self.min_entry_time_secs as f64 * scale) as u64;
-        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss,
+        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss,
                  reason = "scale × time is always a small positive number")]
         let eff_max = (self.max_entry_time_secs as f64 * scale) as u64;
 

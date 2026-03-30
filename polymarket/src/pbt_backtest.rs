@@ -1,7 +1,7 @@
-//! `pbt-backtest` subcommand: calibrate and backtest using real PolyBackTest prices.
+//! `pbt-backtest` subcommand: calibrate and backtest using real `PolyBackTest` prices.
 //!
 //! Unlike the standard `backtest` command that uses model-estimated contract prices,
-//! this command uses real historical snapshot prices from the PolyBackTest API.
+//! this command uses real historical snapshot prices from the `PolyBackTest` API.
 //!
 //! The approach:
 //! 1. Load cached PBT snapshots via [`PbtReplay`].
@@ -30,6 +30,7 @@ use tracing::info;
 /// # Errors
 ///
 /// Returns an error if cached data is missing or the backtest fails.
+#[expect(clippy::too_many_lines, reason = "backtest driver — splitting would fragment the logical flow")]
 pub fn run_pbt_backtest(cfg: &BotConfig) -> Result<()> {
     let cache_dir = Path::new(&cfg.data.cache_dir).join("polybacktest");
     let log_dir = Path::new(&cfg.data.log_dir);

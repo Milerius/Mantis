@@ -57,6 +57,10 @@ impl RiskManager {
     ///
     /// `window_id` and `asset` are required to construct the resulting
     /// [`SizedOrder`] (they are not encoded in [`EntryDecision`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Rejection`] if any risk rule is violated.
     pub fn evaluate(
         &self,
         decision: &EntryDecision,

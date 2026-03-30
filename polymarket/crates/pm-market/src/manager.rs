@@ -23,7 +23,7 @@ use crate::scanner::MarketInfo;
 pub struct MarketManager {
     /// How often the scanner should be called to refresh market discovery.
     pub scanner_interval: Duration,
-    /// All known active markets, keyed by condition_id.
+    /// All known active markets, keyed by `condition_id`.
     markets: HashMap<String, MarketInfo>,
     /// Live orderbook snapshots.
     orderbooks: OrderbookTracker,

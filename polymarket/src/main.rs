@@ -42,9 +42,9 @@ enum Commands {
     Sweep,
     /// Run download + calibrate + backtest in one step.
     Run,
-    /// Download PolyBackTest historical snapshot data.
+    /// Download `PolyBackTest` historical snapshot data.
     PbtDownload,
-    /// Run backtest using real PolyBackTest contract prices.
+    /// Run backtest using real `PolyBackTest` contract prices.
     PbtBacktest,
     /// Run paper trading with live WebSocket feeds.
     Paper,

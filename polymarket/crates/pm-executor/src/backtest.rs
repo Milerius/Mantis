@@ -183,10 +183,8 @@ fn resolve_positions(
         }
 
         let ap = open_positions.swap_remove(i);
-        // FIX 4: decrement O(1) position count for the slot.
-        if position_counts[ap.slot] > 0 {
-            position_counts[ap.slot] -= 1;
-        }
+        // FIX 4: decrement O(1) position count for the slot (saturating prevents underflow).
+        position_counts[ap.slot] = position_counts[ap.slot].saturating_sub(1);
         let pos = ap.pos;
         let entry = pos.avg_entry.as_f64();
 
@@ -545,8 +543,8 @@ pub fn run_backtest<P: ContractPriceProvider>(
                     slot,
                     strategy_id: decision.strategy_id,
                 });
-                // FIX 4: increment O(1) slot counter.
-                position_counts[slot] += 1;
+                // FIX 4: increment O(1) slot counter (saturating prevents overflow).
+                position_counts[slot] = position_counts[slot].saturating_add(1);
             }
         }
     }
@@ -645,8 +643,11 @@ mod tests {
         //
         // Window layout (Min5 = 300_000 ms):
         //   Window 1: [0, 300_000). Open at price=100.0.
-        //   Tick at t=150_000: price=100.6 → magnitude=0.006 ≥ 0.005, elapsed=150s ≤ 300s.
-        //   Tick at t=300_000: crosses into Window 2 → resolves Window 1 as Up (100.6 > 100.0).
+        //   EarlyDirectional scales max_entry_time to the timeframe:
+        //     effective_max = 300 * duration_secs / 900 = 300 * 300 / 900 = 100s.
+        //   Tick at t=50_000 (50s elapsed): price=100.6 → magnitude=0.006 ≥ 0.005,
+        //     elapsed=50s ≤ 100s → strategy fires.
+        //   Tick at t=300_000: crosses into Window 2 → resolves Window 1 as Up.
         let strategy = EarlyDirectional::new(300, 0.005, 0.60);
         let engine = StrategyEngine::new(vec![Box::new(strategy)]);
         let provider = fixed_provider(0.55, 0.48);
@@ -654,7 +655,7 @@ mod tests {
 
         let ticks = vec![
             make_tick(Asset::Btc, 100.0, 0),
-            make_tick(Asset::Btc, 100.6, 150_000),
+            make_tick(Asset::Btc, 100.6, 50_000),
             make_tick(Asset::Btc, 100.6, 300_000),
         ];
 
@@ -693,7 +694,7 @@ mod tests {
 
         let ticks = vec![
             make_tick(Asset::Btc, 100.0, 0),
-            make_tick(Asset::Btc, 100.6, 150_000),
+            make_tick(Asset::Btc, 100.6, 50_000),
             make_tick(Asset::Btc, 100.6, 300_000),
         ];
 

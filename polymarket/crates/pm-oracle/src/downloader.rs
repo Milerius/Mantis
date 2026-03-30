@@ -234,6 +234,7 @@ fn parse_f64_str(val: &serde_json::Value) -> Result<f64, DownloadError> {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test helpers use expect for conciseness")]
 mod tests {
     use super::*;
 

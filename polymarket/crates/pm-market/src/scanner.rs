@@ -93,20 +93,29 @@ pub struct GammaEvent {
 /// Attempt to identify the asset and timeframe from a market slug or event title.
 ///
 /// Returns `None` if the text does not match a known Up/Down pattern.
+///
+/// Asset detection prefers the structured slug prefix (`btc-updown-*`,
+/// `eth-updown-*`, …) which is unambiguous, then falls back to title keywords.
+/// This avoids false matches where short coin names (e.g. "sol", "eth") appear
+/// as incidental substrings in unrelated event titles.
 fn parse_asset_timeframe(title: &str, slug: &str) -> Option<(Asset, Timeframe)> {
-    let combined = format!("{title} {slug}").to_lowercase();
+    let slug_lower = slug.to_lowercase();
+    let title_lower = title.to_lowercase();
 
-    let asset = if combined.contains("bitcoin") || combined.contains("btc") {
+    // Primary: check slug prefix — the Gamma API uses `{coin}-updown-*`.
+    let asset = if slug_lower.starts_with("btc-") || title_lower.contains("bitcoin") {
         Asset::Btc
-    } else if combined.contains("ethereum") || combined.contains("eth") {
+    } else if slug_lower.starts_with("eth-") || title_lower.contains("ethereum") {
         Asset::Eth
-    } else if combined.contains("solana") || combined.contains("sol") {
+    } else if slug_lower.starts_with("sol-") || title_lower.contains("solana") {
         Asset::Sol
-    } else if combined.contains("xrp") || combined.contains("ripple") {
+    } else if slug_lower.starts_with("xrp-") || title_lower.contains("xrp") || title_lower.contains("ripple") {
         Asset::Xrp
     } else {
         return None;
     };
+
+    let combined = format!("{title_lower} {slug_lower}");
 
     // Must be an Up/Down market.
     if !combined.contains("up") && !combined.contains("down") && !combined.contains("updown") {
@@ -197,7 +206,7 @@ pub async fn scan_active_markets(
 
     // Query each timeframe separately — the `tag_slug=up-or-down` endpoint
     // without a timeframe tag returns stale markets from months ago.
-    for tf_tag in &["5M", "15M"] {
+    for tf_tag in &["5M", "15M", "1H", "4H"] {
         let url = format!(
             "{GAMMA_API_BASE}/events?limit=100&active=true&closed=false&tag_slug=up-or-down&tag_slug={tf_tag}"
         );
@@ -242,17 +251,15 @@ pub fn parse_gamma_response(json: &str, assets: &[Asset]) -> Result<Vec<MarketIn
             // to tolerate slight resolution delays).  An empty end_date is treated as
             // unknown and passed through so we never silently drop markets the API
             // returns without a date.
-            if !market.end_date.is_empty() {
-                if let Ok(end_dt) = market.end_date.parse::<chrono::DateTime<Utc>>() {
-                    let grace = chrono::Duration::minutes(5);
-                    if end_dt + grace < Utc::now() {
-                        debug!(
-                            condition_id = %market.condition_id,
-                            end_date = %market.end_date,
-                            "skipping market — window already ended"
-                        );
-                        continue;
-                    }
+            if let Ok(end_dt) = market.end_date.parse::<chrono::DateTime<Utc>>() {
+                let grace = chrono::Duration::minutes(5);
+                if end_dt + grace < Utc::now() {
+                    debug!(
+                        condition_id = %market.condition_id,
+                        end_date = %market.end_date,
+                        "skipping market — window already ended"
+                    );
+                    continue;
                 }
             }
 

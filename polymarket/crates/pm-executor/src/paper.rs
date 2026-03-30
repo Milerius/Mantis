@@ -107,12 +107,9 @@ impl PaperExecutor {
         let raw_entry = decision.limit_price.as_f64() + slippage;
         let entry_clamped = raw_entry.clamp(0.01, 0.99);
 
-        let avg_entry = match ContractPrice::new(entry_clamped) {
-            Some(p) => p,
-            None => {
-                debug!(%window_id, %asset, "invalid entry price after slippage — skipping");
-                return None;
-            }
+        let Some(avg_entry) = ContractPrice::new(entry_clamped) else {
+            debug!(%window_id, %asset, "invalid entry price after slippage — skipping");
+            return None;
         };
 
         let order_id = OrderId::new(self.next_order_id);
@@ -157,7 +154,13 @@ impl PaperExecutor {
     ///
     /// Win: `payout = size_usdc / entry_price`, `pnl = payout - size_usdc`.
     /// Loss: `payout = 0`, `pnl = -size_usdc`.
-    pub fn resolve_window(&mut self, window_id: WindowId, outcome: Side, timestamp_ms: u64) {
+    ///
+    /// Returns the total realised P&L across all positions closed in this window.
+    /// Callers (e.g. the paper trading loop) should pass this value to the risk
+    /// manager via `RiskManager::on_window_resolved` so it can track cumulative
+    /// daily loss correctly.
+    pub fn resolve_window(&mut self, window_id: WindowId, outcome: Side, timestamp_ms: u64) -> Pnl {
+        let mut total_pnl: f64 = 0.0;
         let mut i = 0;
         while i < self.open_positions.len() {
             if self.open_positions[i].pos.window_id != window_id {
@@ -182,6 +185,7 @@ impl PaperExecutor {
             };
 
             self.balance += pos.size_usdc + pnl_val;
+            total_pnl += pnl_val;
 
             let exit_price = ContractPrice::new(exit_price_val.clamp(0.0, 1.0))
                 .unwrap_or_else(|| ContractPrice::new(0.0).unwrap_or_else(|| {
@@ -214,6 +218,8 @@ impl PaperExecutor {
                 strategy_id: ap.strategy_id,
             });
         }
+
+        Pnl::new(total_pnl).unwrap_or(Pnl::ZERO)
     }
 
     /// Current USDC balance.

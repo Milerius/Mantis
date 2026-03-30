@@ -1,6 +1,6 @@
-//! PolyBackTest API client for downloading historical market snapshots.
+//! `PolyBackTest` API client for downloading historical market snapshots.
 //!
-//! The PolyBackTest API (<https://api.polybacktest.com>) provides 8 snapshots/second
+//! The `PolyBackTest` API (<https://api.polybacktest.com>) provides 8 snapshots/second
 //! of historical orderbook data for Polymarket crypto Up/Down markets. This module
 //! wraps the two main endpoints:
 //!
@@ -17,7 +17,7 @@ use crate::downloader::DownloadError;
 
 // ─── API response types ─────────────────────────────────────────────────────
 
-/// A market from the PolyBackTest API.
+/// A market from the `PolyBackTest` API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PbtMarket {
     /// Unique market identifier.
@@ -31,8 +31,19 @@ pub struct PbtMarket {
     /// ISO-8601 end time of the prediction window.
     pub end_time: String,
     /// Spot price of the underlying at window open.
+    ///
+    /// # Naming convention
+    ///
+    /// The `PolyBackTest` API always names these fields `btc_price_start` /
+    /// `btc_price_end` regardless of which coin the market is for (ETH, SOL,
+    /// XRP, …).  We preserve the wire-format name here so that serde
+    /// round-trips correctly.  Callers should treat the value as the *spot
+    /// price of the underlying asset at window open*, not literally a BTC
+    /// price.
     pub btc_price_start: Option<f64>,
     /// Spot price of the underlying at window close.
+    ///
+    /// See the naming note on [`btc_price_start`](Self::btc_price_start).
     pub btc_price_end: Option<f64>,
     /// Outcome: `"Up"`, `"Down"`, or `null` if unresolved.
     pub winner: Option<String>,
@@ -62,7 +73,7 @@ pub struct PbtOrderbookSide {
     pub bids: Vec<PbtOrderbookLevel>,
 }
 
-/// A snapshot from the PolyBackTest API.
+/// A snapshot from the `PolyBackTest` API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PbtSnapshot {
     /// Snapshot ID (unique).
@@ -131,10 +142,10 @@ struct SnapshotsResponse {
 
 // ─── PbtClient ──────────────────────────────────────────────────────────────
 
-/// Base URL for the PolyBackTest API.
+/// Base URL for the `PolyBackTest` API.
 const BASE_URL: &str = "https://api.polybacktest.com";
 
-/// Client for the PolyBackTest API.
+/// Client for the `PolyBackTest` API.
 ///
 /// Wraps a [`reqwest::Client`] and appends the Bearer token to every request.
 pub struct PbtClient {
@@ -239,6 +250,7 @@ impl PbtClient {
                 .await?;
             let count = page.len();
             all.extend(page);
+            #[expect(clippy::cast_possible_truncation, reason = "page sizes are small API values; truncation is impossible in practice")]
             if (count as u32) < page_size {
                 break;
             }
@@ -270,7 +282,8 @@ impl PbtClient {
             "{BASE_URL}/v2/markets/{market_id}/snapshots?coin={coin}&limit={limit}&include_orderbook=true"
         );
         if let Some(st) = start_time {
-            url.push_str(&format!("&start_time={st}"));
+            url.push_str("&start_time=");
+            url.push_str(st);
         }
 
         let resp = self
@@ -334,6 +347,7 @@ impl PbtClient {
                 cursor = Some(last.time.clone());
             }
             all.extend(page);
+            #[expect(clippy::cast_possible_truncation, reason = "page sizes are small API values; truncation is impossible in practice")]
             if (count as u32) < page_size {
                 break;
             }
@@ -345,6 +359,7 @@ impl PbtClient {
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test helpers use expect for conciseness")]
 mod tests {
     use super::*;
 

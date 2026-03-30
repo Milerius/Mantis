@@ -99,6 +99,7 @@ impl Iterator for HistoricalReplay {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test helpers use expect for conciseness")]
 mod tests {
     use super::*;
     use crate::storage::{Candle, write_candles};

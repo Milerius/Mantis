@@ -76,6 +76,7 @@ pub enum StrategyConfig {
 /// configurable strategies were introduced.
 ///
 /// Applied automatically when `strategies` is absent from the TOML.
+#[must_use]
 pub fn default_strategies() -> Vec<StrategyConfig> {
     vec![
         StrategyConfig::EarlyDirectional {

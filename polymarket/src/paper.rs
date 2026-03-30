@@ -24,13 +24,94 @@ use pm_oracle::{BinanceWs, OkxWs, OracleRouter, PriceBuffer};
 use pm_risk::{RiskConfig, RiskManager};
 use pm_signal::build_engine_from_config;
 use pm_types::{
-    Asset, ContractPrice, MarketState, OpenPosition, Pnl, Side, Timeframe, Tick, Window, WindowId,
+    Asset, ContractPrice, MarketState, OpenPosition, Side, Timeframe, Tick, Window, WindowId,
     config::BotConfig,
 };
 use reqwest::Client;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/// Fallback ask price for the Up contract when no live orderbook is available.
+const FALLBACK_ASK_UP: f64 = 0.55;
+
+/// Fallback ask price for the Down contract when no live orderbook is available.
+const FALLBACK_ASK_DOWN: f64 = 0.48;
+
+// ─── Module-level statics (atomic logging guards) ────────────────────────────
+
+/// Guards a one-shot "first tick received" log line across loop iterations.
+static FIRST_TICK_LOGGED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Monotonic counter of ticks processed; used for periodic throughput logging.
+static TICK_COUNT: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Fetch the best ask and bid prices for a single CLOB token from the REST
+/// orderbook endpoint.
+///
+/// Returns `(ask, bid)` where each is `Some(price)` if the relevant side is
+/// non-empty and the price is in the valid range `(0.01, 0.99)`, or `None`
+/// otherwise.
+async fn fetch_rest_orderbook(
+    client: &Client,
+    token_id: &str,
+    tracker: &std::sync::Arc<std::sync::Mutex<pm_market::OrderbookTracker>>,
+    now_ms: u64,
+) {
+    let url = format!(
+        "https://clob.polymarket.com/book?token_id={token_id}"
+    );
+    match client.get(&url).send().await {
+        Ok(resp) => match resp.json::<serde_json::Value>().await {
+            Ok(book) => {
+                if let Some(asks) = book.get("asks").and_then(|a| a.as_array())
+                    && let Some(best) = asks.first() {
+                        let price: f64 = best
+                            .get("price")
+                            .and_then(|p| p.as_str())
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0.0);
+                        if price > 0.01 && price < 0.99
+                            && let Ok(mut t) = tracker.lock() {
+                                t.update(token_id, "SELL", price, now_ms);
+                            }
+                    }
+                if let Some(bids) = book.get("bids").and_then(|a| a.as_array())
+                    && let Some(best) = bids.first() {
+                        let price: f64 = best
+                            .get("price")
+                            .and_then(|p| p.as_str())
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0.0);
+                        if price > 0.01 && price < 0.99
+                            && let Ok(mut t) = tracker.lock() {
+                                t.update(token_id, "BUY", price, now_ms);
+                            }
+                    }
+            }
+            Err(e) => {
+                warn!(
+                    token_id = %token_id,
+                    error = %e,
+                    "failed to parse REST orderbook"
+                );
+            }
+        },
+        Err(e) => {
+            warn!(
+                token_id = %token_id,
+                error = %e,
+                "REST orderbook fetch failed"
+            );
+        }
+    }
+}
 
 // ─── Window tracking ─────────────────────────────────────────────────────────
 
@@ -45,7 +126,7 @@ struct LiveWindow {
 
 /// Run the paper trading loop.
 ///
-/// Connects to Binance and OKX WebSockets, polls the Gamma API for active
+/// Connects to Binance and OKX `WebSockets`, polls the Gamma API for active
 /// markets, evaluates strategies on every tick, and simulates fills via the
 /// [`PaperExecutor`]. Runs until SIGINT is received.
 ///
@@ -53,6 +134,7 @@ struct LiveWindow {
 ///
 /// Returns an error if the initial scanner poll fails or if a critical I/O
 /// error occurs during startup.
+#[expect(clippy::too_many_lines, reason = "main trading loop — splitting would harm readability")]
 pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     // ── 1. Collect enabled assets and timeframes ──────────────────────────────
     let enabled_assets: Vec<Asset> = cfg
@@ -171,9 +253,9 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     // ── 5. Graceful shutdown signal ───────────────────────────────────────────
     let ctrlc_shutdown = shutdown.clone();
     tokio::spawn(async move {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to listen for ctrl-c");
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            warn!(error = %e, "ctrl-c listener error");
+        }
         info!("SIGINT received — shutting down");
         ctrlc_shutdown.cancel();
     });
@@ -188,7 +270,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                 break;
             }
 
-            _ = tokio::time::sleep_until(next_scan_at) => {
+            () = tokio::time::sleep_until(next_scan_at) => {
                 match scan_active_markets(&http_client, &enabled_assets).await {
                     Ok(markets) => {
                         info!(count = markets.len(), "market scan completed");
@@ -218,147 +300,25 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                         // Fetch REST orderbook snapshots for all discovered markets so the
                         // tracker has initial state immediately — even on quiet markets where
                         // the PM WebSocket won't fire until the next book change.
+                        #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64 for centuries")]
                         let now_ms = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_millis() as u64;
 
                         for m in &markets {
-                            // ── Up token ─────────────────────────────────────────────────
-                            let up_url = format!(
-                                "https://clob.polymarket.com/book?token_id={}",
-                                m.token_id_up
-                            );
-                            match http_client.get(&up_url).send().await {
-                                Ok(resp) => match resp.json::<serde_json::Value>().await {
-                                    Ok(book) => {
-                                        if let Some(asks) =
-                                            book.get("asks").and_then(|a| a.as_array())
-                                        {
-                                            if let Some(best) = asks.first() {
-                                                let price: f64 = best
-                                                    .get("price")
-                                                    .and_then(|p| p.as_str())
-                                                    .and_then(|s| s.parse().ok())
-                                                    .unwrap_or(0.0);
-                                                if price > 0.01 && price < 0.99 {
-                                                    if let Ok(mut tracker) = shared_tracker.lock() {
-                                                        tracker.update(
-                                                            &m.token_id_up,
-                                                            "SELL",
-                                                            price,
-                                                            now_ms,
-                                                        );
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        if let Some(bids) =
-                                            book.get("bids").and_then(|a| a.as_array())
-                                        {
-                                            if let Some(best) = bids.first() {
-                                                let price: f64 = best
-                                                    .get("price")
-                                                    .and_then(|p| p.as_str())
-                                                    .and_then(|s| s.parse().ok())
-                                                    .unwrap_or(0.0);
-                                                if price > 0.01 && price < 0.99 {
-                                                    if let Ok(mut tracker) = shared_tracker.lock() {
-                                                        tracker.update(
-                                                            &m.token_id_up,
-                                                            "BUY",
-                                                            price,
-                                                            now_ms,
-                                                        );
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        warn!(
-                                            token_id = %m.token_id_up,
-                                            error = %e,
-                                            "failed to parse REST orderbook for Up token"
-                                        );
-                                    }
-                                },
-                                Err(e) => {
-                                    warn!(
-                                        token_id = %m.token_id_up,
-                                        error = %e,
-                                        "REST orderbook fetch failed for Up token"
-                                    );
-                                }
-                            }
-
-                            // ── Down token ───────────────────────────────────────────────
-                            let down_url = format!(
-                                "https://clob.polymarket.com/book?token_id={}",
-                                m.token_id_down
-                            );
-                            match http_client.get(&down_url).send().await {
-                                Ok(resp) => match resp.json::<serde_json::Value>().await {
-                                    Ok(book) => {
-                                        if let Some(asks) =
-                                            book.get("asks").and_then(|a| a.as_array())
-                                        {
-                                            if let Some(best) = asks.first() {
-                                                let price: f64 = best
-                                                    .get("price")
-                                                    .and_then(|p| p.as_str())
-                                                    .and_then(|s| s.parse().ok())
-                                                    .unwrap_or(0.0);
-                                                if price > 0.01 && price < 0.99 {
-                                                    if let Ok(mut tracker) = shared_tracker.lock() {
-                                                        tracker.update(
-                                                            &m.token_id_down,
-                                                            "SELL",
-                                                            price,
-                                                            now_ms,
-                                                        );
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        if let Some(bids) =
-                                            book.get("bids").and_then(|a| a.as_array())
-                                        {
-                                            if let Some(best) = bids.first() {
-                                                let price: f64 = best
-                                                    .get("price")
-                                                    .and_then(|p| p.as_str())
-                                                    .and_then(|s| s.parse().ok())
-                                                    .unwrap_or(0.0);
-                                                if price > 0.01 && price < 0.99 {
-                                                    if let Ok(mut tracker) = shared_tracker.lock() {
-                                                        tracker.update(
-                                                            &m.token_id_down,
-                                                            "BUY",
-                                                            price,
-                                                            now_ms,
-                                                        );
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        warn!(
-                                            token_id = %m.token_id_down,
-                                            error = %e,
-                                            "failed to parse REST orderbook for Down token"
-                                        );
-                                    }
-                                },
-                                Err(e) => {
-                                    warn!(
-                                        token_id = %m.token_id_down,
-                                        error = %e,
-                                        "REST orderbook fetch failed for Down token"
-                                    );
-                                }
-                            }
+                            fetch_rest_orderbook(
+                                &http_client,
+                                &m.token_id_up,
+                                &shared_tracker,
+                                now_ms,
+                            ).await;
+                            fetch_rest_orderbook(
+                                &http_client,
+                                &m.token_id_down,
+                                &shared_tracker,
+                                now_ms,
+                            ).await;
 
                             info!(
                                 condition_id = %m.condition_id,
@@ -398,8 +358,6 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     }
                 };
 
-                static FIRST_TICK_LOGGED: std::sync::atomic::AtomicBool =
-                    std::sync::atomic::AtomicBool::new(false);
                 if !FIRST_TICK_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
                     info!(
                         asset = %tick.asset,
@@ -419,8 +377,6 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
                 price_buffer.push(tick.asset, tick.timestamp_ms, tick.price);
 
-                static TICK_COUNT: std::sync::atomic::AtomicU64 =
-                    std::sync::atomic::AtomicU64::new(0);
                 let n = TICK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if n.is_multiple_of(100) && n > 0 {
                     info!(
@@ -445,12 +401,13 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                         if let Some(old_lw) = live_windows[slot].take() {
                             let outcome = old_lw.window.direction(tick.price);
 
-                            // Notify risk manager about the resolved window.
-                            // Use zero PnL here — executor tracks actual P&L;
-                            // risk manager only needs the event to clear positions.
-                            risk.on_window_resolved(old_lw.window.id, Pnl::ZERO);
+                            // Resolve the window in the executor first so we
+                            // get the actual realised P&L for this window.
+                            let window_pnl = executor.resolve_window(old_lw.window.id, outcome, tick.timestamp_ms);
 
-                            executor.resolve_window(old_lw.window.id, outcome, tick.timestamp_ms);
+                            // Notify risk manager with the real P&L so it can
+                            // track cumulative daily loss correctly.
+                            risk.on_window_resolved(old_lw.window.id, window_pnl);
 
                             // Close the PBT-compatible window recording.
                             let old_key = WindowRecorder::window_key(
@@ -494,9 +451,11 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                         let coin_lower = tick.asset.to_string().to_lowercase();
                         let tf_label = format!("{timeframe}");
                         let win_id_str = new_window.id.to_string();
+                        #[expect(clippy::cast_possible_wrap, reason = "timestamps are well within i64 range for millennia")]
                         let start_iso = chrono::DateTime::from_timestamp_millis(window_open_ms as i64)
                             .map(|dt| dt.to_rfc3339())
                             .unwrap_or_default();
+                        #[expect(clippy::cast_possible_wrap, reason = "timestamps are well within i64 range for millennia")]
                         let end_iso = chrono::DateTime::from_timestamp_millis(window_close_ms as i64)
                             .map(|dt| dt.to_rfc3339())
                             .unwrap_or_default();
@@ -567,13 +526,11 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                         .map(|m| m.condition_id.clone());
 
                     let ob_snap = condition_id_opt.as_deref().and_then(|cid| {
-                        if let Ok(tracker) = shared_tracker.lock() {
-                            if let Some(snap) = tracker.get(cid) {
-                                if snap.ask_up.is_some() || snap.ask_down.is_some() {
-                                    return Some(*snap);
-                                }
+                        if let Ok(tracker) = shared_tracker.lock()
+                            && let Some(snap) = tracker.get(cid)
+                            && (snap.ask_up.is_some() || snap.ask_down.is_some()) {
+                                return Some(*snap);
                             }
-                        }
                         market_mgr.orderbook(cid).copied()
                     });
 
@@ -584,10 +541,10 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                          contract_ask_up, contract_ask_down, contract_bid_up, contract_bid_down) =
                         match ob_snap {
                             Some(snap) if snap.ask_up.is_some() && snap.ask_down.is_some() => {
-                                let a_up = snap.ask_up.map_or(0.55, |p| p.as_f64());
-                                let a_down = snap.ask_down.map_or(0.48, |p| p.as_f64());
-                                let b_up = snap.bid_up.map_or(a_up - 0.02, |p| p.as_f64());
-                                let b_down = snap.bid_down.map_or(a_down - 0.02, |p| p.as_f64());
+                                let a_up = snap.ask_up.map_or(FALLBACK_ASK_UP, ContractPrice::as_f64);
+                                let a_down = snap.ask_down.map_or(FALLBACK_ASK_DOWN, ContractPrice::as_f64);
+                                let b_up = snap.bid_up.map_or(a_up - 0.02, ContractPrice::as_f64);
+                                let b_down = snap.bid_down.map_or(a_down - 0.02, ContractPrice::as_f64);
 
                                 // Sanity-check: prices from a resolved market sit at
                                 // ~$0.00 or ~$1.00 (fully settled).  Reject anything
@@ -619,7 +576,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                                         ask_down = a_down,
                                         "PM WS prices look like a resolved market — falling back to model defaults"
                                     );
-                                    let base = if spot_direction == Side::Up { 0.55 } else { 0.48 };
+                                    let base = if spot_direction == Side::Up { FALLBACK_ASK_UP } else { FALLBACK_ASK_DOWN };
                                     let opp = 1.0 - base + slippage;
                                     (
                                         None, None, None, None,
@@ -631,7 +588,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                                 }
                             }
                             _ => {
-                                let base = if spot_direction == Side::Up { 0.55 } else { 0.48 };
+                                let base = if spot_direction == Side::Up { FALLBACK_ASK_UP } else { FALLBACK_ASK_DOWN };
                                 let opp = 1.0 - base + slippage;
                                 (
                                     None, None, None, None,
@@ -681,6 +638,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                             &format!("{timeframe}"),
                             &window.id.to_string(),
                         );
+                        #[expect(clippy::cast_possible_wrap, reason = "timestamps are well within i64 range for millennia")]
                         let snap_iso = chrono::DateTime::from_timestamp_millis(tick.timestamp_ms as i64)
                             .map(|dt| dt.to_rfc3339())
                             .unwrap_or_default();

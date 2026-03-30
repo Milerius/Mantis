@@ -127,6 +127,7 @@ pub fn read_candles(path: &Path) -> io::Result<Vec<Candle>> {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test helpers use expect for conciseness")]
 mod tests {
     use super::*;
 

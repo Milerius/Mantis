@@ -1,4 +1,4 @@
-//! `pbt-download` subcommand: download PolyBackTest historical snapshots.
+//! `pbt-download` subcommand: download `PolyBackTest` historical snapshots.
 
 use std::path::Path;
 
@@ -8,7 +8,7 @@ use pm_oracle::pbt_downloader::download_pbt_data;
 use pm_types::config::BotConfig;
 use tracing::info;
 
-/// Read the PolyBackTest API key from `config/secrets.toml`.
+/// Read the `PolyBackTest` API key from `config/secrets.toml`.
 ///
 /// Expected format:
 /// ```toml
@@ -39,7 +39,7 @@ fn read_pbt_api_key() -> Result<String> {
 /// Run the `pbt-download` subcommand.
 ///
 /// Downloads BTC and ETH 15m markets (the primary backtesting targets) from the
-/// PolyBackTest API.
+/// `PolyBackTest` API.
 ///
 /// # Errors
 ///
