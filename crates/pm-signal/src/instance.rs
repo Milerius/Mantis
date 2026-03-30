@@ -96,6 +96,40 @@ impl ConcreteStrategyInstance {
     }
 }
 
+// ─── Public accessors for LiveStrategyInstance wrapper ──────────────────────
+
+impl ConcreteStrategyInstance {
+    /// Access the inner strategy evaluator (for LiveStrategyInstance wrapper).
+    pub fn evaluate_signal(&self, state: &MarketState) -> Option<pm_types::EntryDecision> {
+        self.strategy.evaluate(state)
+    }
+
+    /// Get the max position size config.
+    pub fn max_position_usdc(&self) -> f64 {
+        self.max_position_usdc
+    }
+
+    /// Get the max exposure config.
+    pub fn max_exposure_usdc(&self) -> f64 {
+        self.max_exposure_usdc
+    }
+
+    /// Get the kelly fraction config.
+    pub fn kelly_fraction(&self) -> f64 {
+        self.kelly_fraction
+    }
+
+    /// Get the max daily loss config.
+    pub fn max_daily_loss(&self) -> f64 {
+        self.max_daily_loss
+    }
+
+    /// Get the slippage in decimal form.
+    pub fn slippage(&self) -> f64 {
+        self.slippage
+    }
+}
+
 impl StrategyInstance for ConcreteStrategyInstance {
     fn label(&self) -> &str {
         &self.label
@@ -133,12 +167,22 @@ impl StrategyInstance for ConcreteStrategyInstance {
             return None;
         }
 
-        // 6. Apply slippage and fill
+        // 6. Apply slippage and taker fee
         let raw_entry = decision.limit_price.as_f64() + self.slippage;
         let entry_clamped = raw_entry.clamp(0.01, 0.99);
-        let avg_entry = ContractPrice::new(entry_clamped)?;
 
-        // Deduct balance
+        // Polymarket crypto taker fee (from docs):
+        //   fee = C × p × feeRate × (p × (1-p))^exponent
+        //   For crypto: feeRate=0.072, exponent=1
+        //   Effective rate = feeRate × (p × (1-p)) = 0.072 × p × (1-p)
+        //   Peak: 1.80% at p=0.50
+        let fee_rate = 0.072_f64;
+        let effective_fee_rate = fee_rate * entry_clamped * (1.0 - entry_clamped);
+        let fee_per_share = entry_clamped * effective_fee_rate;
+        let entry_with_fee = (entry_clamped + fee_per_share).clamp(0.01, 0.99);
+        let avg_entry = ContractPrice::new(entry_with_fee)?;
+
+        // Deduct balance (size covers entry + fee)
         self.balance -= size;
 
         let pos = OpenPosition {
