@@ -1,0 +1,28 @@
+[package]
+name = "mantis-platform"
+description = "Platform abstractions, constant-time types, SIMD intrinsics, and cycle counters for the Mantis SDK"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+std = []
+asm = []
+nightly = []
+prefetch = []
+perf-counters = ["dep:perf-event2"]
+
+[dependencies]
+cfg-if = { workspace = true }
+
+[target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+perf-event2 = { workspace = true, optional = true }
+
+[lints]
+workspace = true

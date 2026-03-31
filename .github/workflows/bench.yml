@@ -1,0 +1,103 @@
+name: Benchmarks
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    name: Benchmark (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
+      - name: Detect CPU model (cache key + diagnostics)
+        id: cpu
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            model=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)
+          else
+            model=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown")
+          fi
+          echo "model=$model"
+          echo "hash=$(echo "$model" | shasum -a 256 | cut -c1-8)" >> "$GITHUB_OUTPUT"
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          prefix-key: "bench-${{ steps.cpu.outputs.hash }}"
+      - name: Allow perf_event_open (Linux)
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.perf_event_paranoid=1
+      - name: Run SPSC benchmarks
+        run: cargo +nightly bench --bench spsc --all-features
+        env:
+          RUSTFLAGS: "-C target-cpu=native"
+      - name: Convert report for CI tracking
+        run: |
+          jq '[.results[] | {name: .workload, unit: "ns/op", value: .ns_per_op}]' \
+            target/bench-report-spsc.json > bench-output.json
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@a7bc2366eda11037936ea57d811a43b3418d3073 # v1.21.0
+        with:
+          name: SPSC Ring Benchmarks (${{ matrix.os }})
+          tool: customSmallerIsBetter
+          output-file-path: bench-output.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: false
+          alert-threshold: "105%"
+          comment-on-alert: true
+          fail-on-alert: true
+          alert-comment-cc-users: "@mantis-maintainers"
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: benchmark-results-${{ matrix.os }}
+          path: |
+            target/bench-report-spsc.json
+            bench-output.json
+
+  report:
+    name: Post benchmark report
+    needs: benchmark
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Download Linux results
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4
+        with:
+          name: benchmark-results-ubuntu-latest
+          path: results/linux
+        continue-on-error: true
+      - name: Download macOS results
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4
+        with:
+          name: benchmark-results-macos-latest
+          path: results/macos
+        continue-on-error: true
+      - name: Generate markdown report
+        run: |
+          linux_json="results/linux/target/bench-report-spsc.json"
+          macos_json="results/macos/target/bench-report-spsc.json"
+          bash .github/scripts/bench-report.sh "$linux_json" "$macos_json" > report.md
+      - name: Post PR comment
+        uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2.9.1
+        with:
+          header: benchmark-report
+          path: report.md

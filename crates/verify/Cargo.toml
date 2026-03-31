@@ -1,0 +1,17 @@
+[package]
+name = "mantis-verify"
+description = "Formal verification and property testing for the Mantis SDK"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+mantis-core = { workspace = true }
+mantis-types = { workspace = true }
+mantis-queue = { workspace = true, features = ["alloc"] }
+bolero = { workspace = true }
+
+[lints]
+workspace = true

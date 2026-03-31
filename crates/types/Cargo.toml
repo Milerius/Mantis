@@ -1,0 +1,15 @@
+[package]
+name = "mantis-types"
+description = "Core type definitions for the Mantis low-latency financial SDK"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+std = []
+
+[lints]
+workspace = true

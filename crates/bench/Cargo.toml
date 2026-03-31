@@ -1,0 +1,36 @@
+[package]
+name = "mantis-bench"
+description = "Benchmark harness and perf-counter utilities for the Mantis SDK"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+asm = ["mantis-platform/asm"]
+perf-counters = ["mantis-platform/perf-counters"]
+bench-contenders = ["dep:rtrb", "dep:crossbeam-queue"]
+bench-contenders-cpp = ["dep:cc"]
+
+[dependencies]
+mantis-core = { workspace = true }
+mantis-types = { workspace = true }
+mantis-queue = { workspace = true, features = ["alloc"] }
+mantis-platform = { workspace = true, features = ["std"] }
+criterion = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rtrb = { version = "0.3", optional = true }
+crossbeam-queue = { version = "0.3", optional = true }
+
+[build-dependencies]
+cc = { version = "1", optional = true }
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "spsc"
+harness = false
