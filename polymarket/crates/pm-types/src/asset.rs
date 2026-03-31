@@ -135,6 +135,30 @@ impl core::fmt::Display for Side {
     }
 }
 
+// ─── TrendDirection ─────────────────────────────────────────────────────────
+
+/// Direction of the prevailing higher-timeframe trend derived from EMA crossover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub enum TrendDirection {
+    /// Fast EMA is above slow EMA — bullish trend.
+    Up,
+    /// Fast EMA is below slow EMA — bearish trend.
+    Down,
+    /// Fast and slow EMAs are within the flat threshold — no clear trend.
+    Flat,
+}
+
+impl core::fmt::Display for TrendDirection {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Up => write!(f, "Up"),
+            Self::Down => write!(f, "Down"),
+            Self::Flat => write!(f, "Flat"),
+        }
+    }
+}
+
 // ─── Timeframe ───────────────────────────────────────────────────────────────
 
 /// Candle timeframe / prediction window length.

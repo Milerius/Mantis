@@ -33,6 +33,7 @@ pm-executor = { path = "crates/pm-executor", version = "0.1.0" }
 pm-bookkeeper = { path = "crates/pm-bookkeeper", version = "0.1.0" }
 pm-market = { path = "crates/pm-market", version = "0.1.0" }
 pm-risk = { path = "crates/pm-risk", version = "0.1.0" }
+pm-live = { path = "crates/pm-live", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
@@ -68,6 +69,7 @@ pm-executor = { workspace = true }
 pm-bookkeeper = { workspace = true }
 pm-market = { workspace = true }
 pm-risk = { workspace = true }
+pm-live = { workspace = true }
 clap = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }
@@ -79,6 +81,12 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 reqwest = { workspace = true }
+
+[dev-dependencies]
+pm-types = { path = "crates/pm-types", features = ["std"] }
+pm-signal = { path = "crates/pm-signal", features = ["std"] }
+pm-risk = { path = "crates/pm-risk" }
+pm-executor = { path = "crates/pm-executor" }
 
 [lints]
 workspace = true

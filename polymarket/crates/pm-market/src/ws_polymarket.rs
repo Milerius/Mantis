@@ -18,7 +18,8 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::{SinkExt, StreamExt};
 use pm_types::{Asset, Timeframe};
@@ -29,6 +30,8 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use crate::events::PmEvent;
+use crate::l2_orderbook::{self, SharedL2Manager};
 use crate::orderbook::{LatestPrices, OrderbookTracker, WS_CLOB_URL};
 
 // ─── Market resolution ──────────────────────────────────────────────────────
@@ -199,6 +202,14 @@ pub struct PolymarketWs {
     token_asset_map: SharedTokenAssetMap,
     /// Shared latest prices cache.
     latest_prices: SharedLatestPrices,
+    /// Flag set on WS reconnect to signal the scanner to do an immediate
+    /// REST orderbook re-fetch. Cleared by the scanner after fetching.
+    needs_rest_refresh: Arc<AtomicBool>,
+    /// Shared L2 orderbook manager for full-depth reconstruction.
+    l2_manager: SharedL2Manager,
+    /// Optional event channel sender. When present, events are sent through
+    /// this channel instead of locking mutexes for tracker/prices/L2.
+    pm_event_tx: Option<tokio::sync::mpsc::UnboundedSender<PmEvent>>,
 }
 
 /// Sender half returned to the caller for pushing new token IDs.
@@ -208,16 +219,20 @@ impl PolymarketWs {
     /// Create a new client with an initial set of token IDs.
     ///
     /// Returns the client, a [`NewTokensSender`] for pushing additional token
-    /// IDs, and a [`SharedResolutions`] handle that accumulates
-    /// `market_resolved` events for the paper loop to drain.
+    /// IDs, a [`SharedResolutions`] handle that accumulates `market_resolved`
+    /// events for the paper loop to drain, and an [`Arc<AtomicBool>`] flag that
+    /// is set to `true` on WS reconnect so the scanner can trigger an immediate
+    /// REST orderbook re-fetch.
     #[must_use]
     pub fn new(
         token_ids: Vec<String>,
         token_asset_map: SharedTokenAssetMap,
         latest_prices: SharedLatestPrices,
-    ) -> (Self, NewTokensSender, SharedResolutions) {
+        l2_manager: SharedL2Manager,
+    ) -> (Self, NewTokensSender, SharedResolutions, Arc<AtomicBool>) {
         let (tx, rx) = mpsc::channel(64);
         let resolved = Arc::new(Mutex::new(Vec::new()));
+        let needs_refresh = Arc::new(AtomicBool::new(false));
         (
             Self {
                 token_ids,
@@ -225,9 +240,47 @@ impl PolymarketWs {
                 resolved_markets: Arc::clone(&resolved),
                 token_asset_map,
                 latest_prices,
+                needs_rest_refresh: Arc::clone(&needs_refresh),
+                l2_manager,
+                pm_event_tx: None,
             },
             tx,
             resolved,
+            needs_refresh,
+        )
+    }
+
+    /// Create a new client with an event channel sender.
+    ///
+    /// When the event sender is present, the WebSocket task sends typed
+    /// [`PmEvent`]s through the channel instead of locking mutexes for
+    /// tracker, latest prices, and L2 orderbook updates. The main loop
+    /// receives these events and updates its own local (non-shared) state.
+    ///
+    /// The `token_asset_map` is still shared because it is populated by the
+    /// scanner (different direction, low frequency).
+    #[must_use]
+    pub fn new_with_events(
+        token_ids: Vec<String>,
+        token_asset_map: SharedTokenAssetMap,
+        pm_event_tx: tokio::sync::mpsc::UnboundedSender<PmEvent>,
+    ) -> (Self, NewTokensSender, Arc<AtomicBool>) {
+        let (tx, rx) = mpsc::channel(64);
+        let resolved = Arc::new(Mutex::new(Vec::new()));
+        let needs_refresh = Arc::new(AtomicBool::new(false));
+        (
+            Self {
+                token_ids,
+                new_tokens_rx: rx,
+                resolved_markets: Arc::clone(&resolved),
+                token_asset_map,
+                latest_prices: Arc::new(Mutex::new(LatestPrices::new())),
+                needs_rest_refresh: Arc::clone(&needs_refresh),
+                l2_manager: Arc::new(Mutex::new(l2_orderbook::L2OrderbookManager::new())),
+                pm_event_tx: Some(pm_event_tx),
+            },
+            tx,
+            needs_refresh,
         )
     }
 
@@ -248,6 +301,7 @@ impl PolymarketWs {
         shutdown: CancellationToken,
     ) {
         let mut subscribed: Vec<String> = self.token_ids.clone();
+        let mut backoff_secs: u64 = 1;
 
         loop {
             if shutdown.is_cancelled() {
@@ -257,6 +311,7 @@ impl PolymarketWs {
             match connect_async(WS_CLOB_URL).await {
                 Ok((ws_stream, _)) => {
                     info!("PM WS connected: {WS_CLOB_URL}");
+                    backoff_secs = 1; // reset on successful connect
                     let (mut write, mut read) = ws_stream.split();
 
                     // Send initial subscribe message.
@@ -323,20 +378,54 @@ impl PolymarketWs {
                                             continue;
                                         }
                                         if let Some(event) = parse_best_bid_ask(text_str) {
-                                            handle_best_bid_ask(&tracker, &event);
-                                            handle_latest_prices(
-                                                &self.token_asset_map,
-                                                &self.latest_prices,
-                                                &event,
-                                            );
+                                            if let Some(ref tx) = self.pm_event_tx {
+                                                // Channel path: send typed event, no mutex lock.
+                                                if let Some(pm_event) = best_bid_ask_to_event(&event) {
+                                                    let _ = tx.send(pm_event);
+                                                }
+                                            } else {
+                                                // Legacy path: lock mutexes.
+                                                handle_best_bid_ask(&tracker, &event);
+                                                handle_latest_prices(
+                                                    &self.token_asset_map,
+                                                    &self.latest_prices,
+                                                    &event,
+                                                );
+                                            }
+                                        } else if let Some(book_event) = l2_orderbook::parse_book_event(text_str) {
+                                            // L2 incremental orderbook update.
+                                            if let Some(ref tx) = self.pm_event_tx {
+                                                let _ = tx.send(book_event_to_pm_event(&book_event));
+                                            } else {
+                                                handle_book_event(&self.l2_manager, &book_event);
+                                            }
+                                        } else if let Some(pc_event) = l2_orderbook::parse_price_change(text_str) {
+                                            if let Some(ref tx) = self.pm_event_tx {
+                                                let _ = tx.send(price_change_to_event(&pc_event));
+                                            } else {
+                                                handle_price_change(&self.l2_manager, &pc_event);
+                                            }
                                         } else if let Some(resolution) = parse_market_resolved(text_str) {
                                             info!(
                                                 condition_id = %resolution.condition_id,
                                                 winning_token = %resolution.winning_token_id,
                                                 "PM WS: market_resolved event"
                                             );
-                                            if let Ok(mut resolutions) = self.resolved_markets.lock() {
-                                                resolutions.push(resolution);
+                                            if let Some(ref tx) = self.pm_event_tx {
+                                                let _ = tx.send(PmEvent::MarketResolved {
+                                                    condition_id: resolution.condition_id,
+                                                    winning_token_id: resolution.winning_token_id,
+                                                    timestamp_ms: resolution.timestamp_ms,
+                                                });
+                                            } else {
+                                                match self.resolved_markets.lock() {
+                                                    Ok(mut resolutions) => {
+                                                        resolutions.push(resolution);
+                                                    }
+                                                    Err(e) => {
+                                                        warn!(error = %e, "resolved_markets mutex poisoned — skipping update");
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -367,14 +456,40 @@ impl PolymarketWs {
                     };
 
                     if disconnected && !shutdown.is_cancelled() {
-                        warn!("PM WS: disconnected — reconnecting in 2s");
-                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        // Signal that REST re-fetch is needed after reconnect.
+                        self.needs_rest_refresh.store(true, Ordering::Relaxed);
+
+                        let nanos = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map_or(500, |d| d.subsec_nanos() % 1000);
+                        #[expect(clippy::cast_precision_loss, reason = "backoff_secs <= 30")]
+                        let jitter = (backoff_secs as f64) * 0.25 * (f64::from(nanos) / 1000.0 - 0.5);
+                        #[expect(clippy::cast_precision_loss, reason = "backoff_secs <= 30")]
+                        let sleep_secs = backoff_secs as f64 + jitter;
+                        warn!(
+                            backoff_secs = format!("{sleep_secs:.1}"),
+                            "PM WS: disconnected — reconnecting"
+                        );
+                        tokio::time::sleep(Duration::from_secs_f64(sleep_secs)).await;
+                        backoff_secs = (backoff_secs * 2).min(30);
                     }
                 }
                 Err(e) => {
                     warn!("PM WS connect error: {e}");
                     if !shutdown.is_cancelled() {
-                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        let nanos = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map_or(500, |d| d.subsec_nanos() % 1000);
+                        #[expect(clippy::cast_precision_loss, reason = "backoff_secs <= 30")]
+                        let jitter = (backoff_secs as f64) * 0.25 * (f64::from(nanos) / 1000.0 - 0.5);
+                        #[expect(clippy::cast_precision_loss, reason = "backoff_secs <= 30")]
+                        let sleep_secs = backoff_secs as f64 + jitter;
+                        warn!(
+                            backoff_secs = format!("{sleep_secs:.1}"),
+                            "PM WS: reconnecting"
+                        );
+                        tokio::time::sleep(Duration::from_secs_f64(sleep_secs)).await;
+                        backoff_secs = (backoff_secs * 2).min(30);
                     }
                 }
             }
@@ -487,24 +602,184 @@ fn handle_latest_prices(
             },
         );
 
-    let lookup = if let Ok(map) = token_asset_map.lock() {
-        map.get(&event.asset_id).copied()
-    } else {
-        None
+    let lookup = match token_asset_map.lock() {
+        Ok(map) => map.get(&event.asset_id).copied(),
+        Err(e) => {
+            warn!(error = %e, "token_asset_map mutex poisoned — skipping update");
+            None
+        }
     };
 
     if let Some((asset, timeframe, is_up)) = lookup {
-        if let Ok(mut prices) = latest_prices.lock() {
-            prices.update_side(asset, timeframe, is_up, best_bid, best_ask, timestamp_ms);
+        match latest_prices.lock() {
+            Ok(mut prices) => {
+                prices.update_side(asset, timeframe, is_up, best_bid, best_ask, timestamp_ms);
+                debug!(
+                    asset = %asset,
+                    timeframe = %timeframe,
+                    is_up = is_up,
+                    bid = best_bid,
+                    ask = best_ask,
+                    "LatestPrices updated from WS"
+                );
+            }
+            Err(e) => {
+                warn!(error = %e, "latest_prices mutex poisoned — skipping update");
+            }
+        }
+    }
+}
+
+// ─── L2 price_change handler ─────────────────────────────────────────────────
+
+/// Apply a `price_change` event to the shared L2 orderbook manager.
+fn handle_price_change(
+    l2_manager: &SharedL2Manager,
+    event: &l2_orderbook::PriceChangeEvent,
+) {
+    let timestamp_ms: u64 = event
+        .timestamp
+        .parse::<f64>()
+        .map_or_else(
+            |_| {
+                #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64 for centuries")]
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
+                ms
+            },
+            |s| {
+                #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "timestamp_ms fits in u64")]
+                let ms = (s * 1_000.0) as u64;
+                ms
+            },
+        );
+
+    match l2_manager.lock() {
+        Ok(mut mgr) => {
+            mgr.process_price_change(&event.asset_id, &event.changes, timestamp_ms);
             debug!(
-                asset = %asset,
-                timeframe = %timeframe,
-                is_up = is_up,
-                bid = best_bid,
-                ask = best_ask,
-                "LatestPrices updated from WS"
+                asset_id = %event.asset_id,
+                num_changes = event.changes.len(),
+                "PM WS: L2 price_change applied"
             );
         }
+        Err(e) => {
+            warn!(error = %e, "l2_manager mutex poisoned — skipping price_change");
+        }
+    }
+}
+
+// ─── L2 book event handler ──────────────────────────────────────────────────
+
+/// Apply a `book` event (L2 incremental update) to the shared L2 orderbook manager.
+fn handle_book_event(
+    l2_manager: &SharedL2Manager,
+    event: &l2_orderbook::BookEvent,
+) {
+    let timestamp_ms: u64 = event
+        .timestamp
+        .parse::<f64>()
+        .map_or_else(
+            |_| {
+                #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64 for centuries")]
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
+                ms
+            },
+            |s| {
+                #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "timestamp_ms fits in u64")]
+                let ms = (s * 1_000.0) as u64;
+                ms
+            },
+        );
+
+    match l2_manager.lock() {
+        Ok(mut mgr) => {
+            mgr.process_book_event(&event.asset_id, event, timestamp_ms);
+        }
+        Err(e) => {
+            warn!(error = %e, "l2_manager mutex poisoned — skipping book event");
+        }
+    }
+}
+
+/// Convert a `book` event into a [`PmEvent::Book`].
+fn book_event_to_pm_event(event: &l2_orderbook::BookEvent) -> PmEvent {
+    let timestamp_ms: u64 = event
+        .timestamp
+        .parse::<f64>()
+        .map_or(0, |s| {
+            #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let ms = (s * 1_000.0) as u64;
+            ms
+        });
+
+    PmEvent::Book {
+        token_id: event.asset_id.clone(),
+        bids: event.bids.clone(),
+        asks: event.asks.clone(),
+        timestamp_ms,
+    }
+}
+
+// ─── Event conversion helpers ─────────────────────────────────────────────────
+
+/// Convert a parsed `best_bid_ask` event into a [`PmEvent::BestBidAsk`].
+///
+/// Returns `None` if bid or ask cannot be parsed as `f64`.
+fn best_bid_ask_to_event(event: &BestBidAskEvent) -> Option<PmEvent> {
+    let best_bid = event.best_bid.parse::<f64>().ok()?;
+    let best_ask = event.best_ask.parse::<f64>().ok()?;
+    let timestamp_ms: u64 = event
+        .timestamp
+        .parse::<f64>()
+        .map_or_else(
+            |_| {
+                #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64")]
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
+                ms
+            },
+            |s| {
+                #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "timestamp_ms fits in u64")]
+                let ms = (s * 1_000.0) as u64;
+                ms
+            },
+        );
+    Some(PmEvent::BestBidAsk {
+        token_id: event.asset_id.clone(),
+        best_bid,
+        best_ask,
+        timestamp_ms,
+    })
+}
+
+/// Convert a parsed `price_change` event into a [`PmEvent::PriceChange`].
+fn price_change_to_event(event: &l2_orderbook::PriceChangeEvent) -> PmEvent {
+    let timestamp_ms: u64 = event
+        .timestamp
+        .parse::<f64>()
+        .map_or_else(
+            |_| {
+                #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64")]
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
+                ms
+            },
+            |s| {
+                #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "timestamp_ms fits in u64")]
+                let ms = (s * 1_000.0) as u64;
+                ms
+            },
+        );
+    PmEvent::PriceChange {
+        token_id: event.asset_id.clone(),
+        changes: event.changes.clone(),
+        timestamp_ms,
     }
 }
 

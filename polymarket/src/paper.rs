@@ -1,14 +1,13 @@
-//! Paper trading subcommand: live WebSocket feeds + strategy evaluation + simulated fills.
+//! Paper trading subcommand: live WebSocket feeds + independent strategy instances.
 //!
 //! Wires together:
-//! - [`BinanceWs`] / [`OkxWs`] — spot price tick streams
-//! - [`OracleRouter`] — deduplicates ticks from multiple exchanges
-//! - [`PriceBuffer`] — tracks per-asset open prices for window accounting
-//! - [`MarketManager`] — discovers active Polymarket windows via Gamma API
-//! - [`StrategyEngine`] — evaluates all strategies against live market state
-//! - [`PaperExecutor`] — simulates fills with slippage
-//! - [`RiskManager`] — enforces exposure/kill-switch rules before opening positions
-//! - [`SnapshotRecorder`] — records combined spot + orderbook snapshots to plain JSONL
+//! - [`BinanceWs`] / [`OkxWs`] -- spot price tick streams
+//! - [`OracleRouter`] -- deduplicates ticks from multiple exchanges
+//! - [`PriceBuffer`] -- tracks per-asset open prices for window accounting
+//! - [`MarketManager`] -- discovers active Polymarket windows via Gamma API
+//! - `Vec<Box<dyn StrategyInstance>>` -- independent strategy instances, each with
+//!   its own balance, positions, risk parameters, and P&L tracking
+//! - [`SnapshotRecorder`] -- records combined spot + orderbook snapshots to plain JSONL
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -18,17 +17,16 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use pm_bookkeeper::{SnapshotRecorder, WindowRecorder};
-use pm_executor::{PaperConfig, PaperExecutor};
 use pm_market::{
-    LatestPrices, MarketManager, OrderbookTracker, PolymarketWs, SharedLatestPrices,
+    L2OrderbookManager, LatestPrices, MarketManager, OrderbookTracker, PmEvent, PolymarketWs,
     SharedTokenAssetMap,
 };
 use pm_market::scanner::scan_active_markets;
-use pm_oracle::{BinanceWs, OkxWs, OracleRouter, PriceBuffer};
-use pm_risk::{RiskConfig, RiskManager};
-use pm_signal::build_engine_from_config;
+use pm_oracle::{BinanceWs, EmaTracker, OkxWs, OracleRouter, PriceBuffer};
+use pm_live::{LiveStrategyInstance, OrderManager, SharedTokenMap, TokenPair, UserWsEvent, run_user_ws, user_ws_channel};
+use pm_signal::build_instances_from_config;
 use pm_types::{
-    Asset, ContractPrice, MarketState, OpenPosition, Side, Timeframe, Tick, Window, WindowId,
+    Asset, ContractPrice, MarketState, Side, StrategyInstance, Timeframe, Tick, Window, WindowId,
     config::BotConfig,
 };
 use reqwest::Client;
@@ -43,6 +41,10 @@ const FALLBACK_ASK_UP: f64 = 0.55;
 
 /// Fallback ask price for the Down contract when no live orderbook is available.
 const FALLBACK_ASK_DOWN: f64 = 0.48;
+
+/// Maximum age (in milliseconds) for cached prices before falling back.
+/// If the PM WebSocket disconnects, prices older than this are considered stale.
+const MAX_PRICE_AGE_MS: u64 = 15_000;
 
 // ─── Module-level statics (atomic logging guards) ────────────────────────────
 
@@ -74,6 +76,8 @@ struct OrderbookPrices {
     contract_ask_down: Option<ContractPrice>,
     contract_bid_up: Option<ContractPrice>,
     contract_bid_down: Option<ContractPrice>,
+    /// L2 orderbook imbalance at top 5 levels, if available.
+    orderbook_imbalance: Option<f64>,
 }
 
 // ─── Window tracking ─────────────────────────────────────────────────────────
@@ -81,9 +85,9 @@ struct OrderbookPrices {
 /// Per-(asset, timeframe) window state updated on each tick.
 struct LiveWindow {
     window: Window,
-    /// Whether a position has already been opened in this window.
-    position_opened: bool,
 }
+
+// (SessionStats removed — per-instance stats tracked by each StrategyInstance.)
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -96,7 +100,7 @@ struct LiveWindow {
 async fn fetch_rest_orderbook(
     client: &Client,
     token_id: &str,
-    tracker: &Arc<Mutex<OrderbookTracker>>,
+    tracker: &mut OrderbookTracker,
     now_ms: u64,
 ) {
     let url = format!("https://clob.polymarket.com/book?token_id={token_id}");
@@ -110,10 +114,9 @@ async fn fetch_rest_orderbook(
                             .and_then(|p| p.as_str())
                             .and_then(|s| s.parse().ok())
                             .unwrap_or(0.0);
-                        if price > 0.01 && price < 0.99
-                            && let Ok(mut t) = tracker.lock() {
-                                t.update(token_id, "SELL", price, now_ms);
-                            }
+                        if price > 0.01 && price < 0.99 {
+                            tracker.update(token_id, "SELL", price, now_ms);
+                        }
                     }
                 if let Some(bids) = book.get("bids").and_then(|a| a.as_array())
                     && let Some(best) = bids.first() {
@@ -122,10 +125,9 @@ async fn fetch_rest_orderbook(
                             .and_then(|p| p.as_str())
                             .and_then(|s| s.parse().ok())
                             .unwrap_or(0.0);
-                        if price > 0.01 && price < 0.99
-                            && let Ok(mut t) = tracker.lock() {
-                                t.update(token_id, "BUY", price, now_ms);
-                            }
+                        if price > 0.01 && price < 0.99 {
+                            tracker.update(token_id, "BUY", price, now_ms);
+                        }
                     }
             }
             Err(e) => {
@@ -168,6 +170,7 @@ fn fallback_prices(spot_direction: Side, slippage: f64) -> OrderbookPrices {
         contract_ask_down: ContractPrice::new(opp.clamp(0.01, 0.99)),
         contract_bid_up: ContractPrice::new((base - 0.02).clamp(0.01, 0.99)),
         contract_bid_down: ContractPrice::new((opp - 0.02).clamp(0.01, 0.99)),
+        orderbook_imbalance: None,
     }
 }
 
@@ -175,8 +178,8 @@ fn fallback_prices(spot_direction: Side, slippage: f64) -> OrderbookPrices {
 /// back to model defaults.
 ///
 /// Called once per (asset, timeframe) per tick — before building [`MarketState`].
-/// Acquires the `shared_tracker` lock once, reads the snapshot, then releases
-/// it immediately. Falls back to [`fallback_prices`] when no live data exists or
+/// Reads from the local tracker and prices cache (no mutex locks).
+/// Falls back to [`fallback_prices`] when no live data exists or
 /// when prices appear to be from a resolved (settled) market.
 fn resolve_orderbook_prices(
     tick: &Tick,
@@ -184,17 +187,34 @@ fn resolve_orderbook_prices(
     spot_direction: Side,
     slippage: f64,
     condition_id_opt: Option<&str>,
-    shared_tracker: &Arc<Mutex<OrderbookTracker>>,
-    shared_prices: &SharedLatestPrices,
+    local_tracker: &OrderbookTracker,
+    local_prices: &LatestPrices,
     market_mgr: &MarketManager,
 ) -> OrderbookPrices {
     // PRIMARY: try the LatestPrices cache (indexed by Asset, Timeframe).
-    // This is populated by PM WS events AND REST snapshots — never stale.
-    if let Ok(cache) = shared_prices.lock() {
-        if let Some(p) = cache.get(tick.asset, timeframe) {
+    // This is populated by PM WS events AND REST snapshots.
+    // Only use the cache if BOTH sides have been populated by real events
+    // to avoid trading against placeholder 0.50/0.48 prices.
+    #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64 for centuries")]
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    if let Some(p) = local_prices.get(tick.asset, timeframe) {
+        // Staleness guard: if the cached price is older than the threshold,
+        // skip it and fall through to the secondary source.
+        if now_ms.saturating_sub(p.timestamp_ms) > MAX_PRICE_AGE_MS {
+            warn!(
+                asset = %tick.asset,
+                timeframe = ?timeframe,
+                age_ms = now_ms.saturating_sub(p.timestamp_ms),
+                "cached price is stale — falling back to secondary source"
+            );
+        } else {
             let prices_are_sane =
-                p.ask_up > 0.01 && p.ask_up < 0.99 && p.ask_down > 0.01 && p.ask_down < 0.99;
-            if prices_are_sane {
+                p.ask_up > 0.10 && p.ask_up < 0.90 && p.ask_down > 0.10 && p.ask_down < 0.90;
+            if prices_are_sane && p.both_sides_seen() {
                 return OrderbookPrices {
                     rec_ask_up: Some(p.ask_up),
                     rec_ask_down: Some(p.ask_down),
@@ -204,6 +224,7 @@ fn resolve_orderbook_prices(
                     contract_ask_down: ContractPrice::new(p.ask_down),
                     contract_bid_up: ContractPrice::new(p.bid_up),
                     contract_bid_down: ContractPrice::new(p.bid_down),
+                    orderbook_imbalance: None,
                 };
             }
         }
@@ -211,11 +232,11 @@ fn resolve_orderbook_prices(
 
     // SECONDARY: fall back to condition_id-based OrderbookTracker.
     let ob_snap = condition_id_opt.and_then(|cid| {
-        if let Ok(tracker) = shared_tracker.lock()
-            && let Some(snap) = tracker.get(cid)
-            && (snap.ask_up.is_some() || snap.ask_down.is_some()) {
-                return Some(*snap);
-            }
+        if let Some(snap) = local_tracker.get(cid)
+            && (snap.ask_up.is_some() || snap.ask_down.is_some())
+        {
+            return Some(*snap);
+        }
         market_mgr.orderbook(cid).copied()
     });
 
@@ -231,7 +252,7 @@ fn resolve_orderbook_prices(
             // for both legs — those are useless for live trading and would
             // badly mis-price the model.
             let prices_are_sane =
-                a_up > 0.01 && a_up < 0.99 && a_down > 0.01 && a_down < 0.99;
+                a_up > 0.10 && a_up < 0.90 && a_down > 0.10 && a_down < 0.90;
 
             if prices_are_sane {
                 debug!(
@@ -250,9 +271,10 @@ fn resolve_orderbook_prices(
                     contract_ask_down: ContractPrice::new(a_down),
                     contract_bid_up: ContractPrice::new(b_up),
                     contract_bid_down: ContractPrice::new(b_down),
+                    orderbook_imbalance: None,
                 }
             } else {
-                warn!(
+                debug!(
                     asset = %tick.asset,
                     timeframe = ?timeframe,
                     ask_up = a_up,
@@ -296,7 +318,20 @@ fn build_market_state(
         contract_ask_down: prices.contract_ask_down,
         contract_bid_up: prices.contract_bid_up,
         contract_bid_down: prices.contract_bid_down,
+        orderbook_imbalance: prices.orderbook_imbalance,
     }
+}
+
+/// Compute L2 orderbook imbalance for the Up token of a market.
+///
+/// Returns `None` if no L2 data is available for the token.
+fn compute_l2_imbalance(
+    l2_manager: &L2OrderbookManager,
+    up_token_id: Option<&str>,
+) -> Option<f64> {
+    let token_id = up_token_id?;
+    let book = l2_manager.get_book(token_id)?;
+    Some(book.imbalance(5))
 }
 
 /// Format a [`WindowId`] into a stack-allocated buffer without heap allocation.
@@ -314,13 +349,13 @@ fn window_id_str<'b>(id: WindowId, buf: &'b mut String) -> &'b str {
 /// Handle a window transition: resolve the old window and open a new one.
 ///
 /// Called when a tick's timestamp has crossed the close boundary of the current
-/// live window for a given (asset, timeframe) slot. Records the outcome via both
-/// the [`WindowRecorder`] and the [`PaperExecutor`], then initialises a fresh
-/// [`LiveWindow`] for the new period.
+/// live window for a given (asset, timeframe) slot. Iterates all strategy
+/// instances to resolve positions, then opens a fresh [`LiveWindow`].
 ///
 /// # Failures
 ///
 /// All recorder failures are logged via `warn!` and do not abort the loop.
+#[expect(clippy::too_many_arguments, reason = "window transition touches many subsystems")]
 fn handle_window_transition(
     slot: usize,
     tick: &Tick,
@@ -328,24 +363,34 @@ fn handle_window_transition(
     window_open_ms: u64,
     window_close_ms: u64,
     live_windows: &mut Vec<Option<LiveWindow>>,
-    executor: &mut PaperExecutor,
-    risk: &mut RiskManager,
+    instances: &mut [Box<dyn StrategyInstance>],
     window_recorder: &mut WindowRecorder,
 ) {
     if let Some(old_lw) = live_windows[slot].take() {
         let outcome = old_lw.window.direction(tick.price);
 
-        // Resolve the window in the executor first so we get the actual
-        // realised P&L for this window.
-        let window_pnl =
-            executor.resolve_window(old_lw.window.id, outcome, tick.timestamp_ms);
-
-        // Notify risk manager with the real P&L so it can track cumulative
-        // daily loss correctly.
-        risk.on_window_resolved(old_lw.window.id, window_pnl);
+        // Resolve the window across ALL strategy instances.
+        for instance in instances.iter_mut() {
+            let trades =
+                instance.on_window_close(old_lw.window.id, outcome, tick.timestamp_ms);
+            for trade in &trades {
+                let result = if trade.pnl.as_f64() >= 0.0 { "WIN" } else { "LOSS" };
+                info!(
+                    instance = %instance.label(),
+                    asset = %trade.asset,
+                    timeframe = ?timeframe,
+                    window_id = %old_lw.window.id,
+                    outcome = %outcome,
+                    result = result,
+                    pnl = format!("${:+.2}", trade.pnl.as_f64()),
+                    balance = format!("${:.2}", instance.balance()),
+                    record = %instance.stats().record_str(),
+                    "trade closed"
+                );
+            }
+        }
 
         // Close the PBT-compatible window recording.
-        // `as_lower_str` / `as_label` return &'static str — zero allocation.
         let mut win_buf = String::with_capacity(24);
         let win_id = window_id_str(old_lw.window.id, &mut win_buf);
         let old_key = WindowRecorder::window_key(
@@ -380,11 +425,9 @@ fn handle_window_transition(
     };
     live_windows[slot] = Some(LiveWindow {
         window: new_window,
-        position_opened: false,
     });
 
     // Open a PBT-compatible window recording.
-    // ISO timestamp conversion only happens on window open/close, not every tick.
     #[expect(clippy::cast_possible_wrap, reason = "timestamps are well within i64 range for millennia")]
     let start_iso = chrono::DateTime::from_timestamp_millis(window_open_ms as i64)
         .map(|dt| dt.to_rfc3339())
@@ -418,15 +461,14 @@ fn handle_window_transition(
 /// Called on every tick that passes through the oracle router. For each enabled
 /// timeframe this function:
 /// 1. Transitions the live window if the current tick has crossed a window boundary.
-/// 2. Skips slots where a position has already been opened.
-/// 3. Resolves orderbook prices (live PM WS or model fallback).
-/// 4. Records a combined spot + orderbook snapshot.
-/// 5. Evaluates all strategies and, if any signal fires, attempts a paper fill.
+/// 2. Resolves orderbook prices (live PM WS or model fallback).
+/// 3. Records a combined spot + orderbook snapshot.
+/// 4. Builds a [`MarketState`] and passes it to all strategy instances.
 ///
-/// `now_utc` must be computed **once per tick** before calling this function —
+/// `now_utc` must be computed **once per tick** before calling this function --
 /// it is passed in to avoid redundant `Utc::now()` syscalls inside the
 /// timeframe loop.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn process_tick(
     tick: &Tick,
     enabled_timeframes: &[Timeframe],
@@ -434,15 +476,18 @@ fn process_tick(
     slippage: f64,
     now_utc: chrono::DateTime<chrono::Utc>,
     live_windows: &mut Vec<Option<LiveWindow>>,
-    executor: &mut PaperExecutor,
-    risk: &mut RiskManager,
-    shared_tracker: &Arc<Mutex<OrderbookTracker>>,
-    shared_prices: &SharedLatestPrices,
+    instances: &mut [Box<dyn StrategyInstance>],
+    local_tracker: &OrderbookTracker,
+    local_prices: &LatestPrices,
     market_mgr: &MarketManager,
     recorder: &mut SnapshotRecorder,
     window_recorder: &mut WindowRecorder,
-    engine: &pm_signal::StrategyEngine,
+    ema_tracker: &mut EmaTracker,
+    local_l2: &L2OrderbookManager,
 ) {
+    // Update the EMA tracker with the latest price for this asset.
+    ema_tracker.update(tick.asset, tick.price.as_f64());
+
     for (tf_idx, &timeframe) in enabled_timeframes.iter().enumerate() {
         let slot = asset_slot * enabled_timeframes.len() + tf_idx;
         let duration_ms = timeframe.duration_secs() * 1_000;
@@ -461,73 +506,56 @@ fn process_tick(
                 window_open_ms,
                 window_close_ms,
                 live_windows,
-                executor,
-                risk,
+                instances,
                 window_recorder,
             );
         }
 
-        let Some(lw) = live_windows[slot].as_mut() else {
+        let Some(lw) = live_windows[slot].as_ref() else {
             continue;
         };
 
-        if lw.position_opened {
-            continue;
-        }
-
         let window = lw.window;
-        let magnitude = window.magnitude(tick.price);
-        let time_elapsed_secs =
-            (tick.timestamp_ms.saturating_sub(window.open_time_ms)) / 1_000;
         let spot_direction = window.direction(tick.price);
 
-        if time_elapsed_secs % 30 == 0 && time_elapsed_secs > 0 {
-            debug!(
-                asset = %tick.asset,
-                timeframe = ?timeframe,
-                mag = format!("{:.4}%", magnitude * 100.0),
-                elapsed = time_elapsed_secs,
-                dir = %spot_direction,
-                spot = tick.price.as_f64(),
-                open = window.open_price.as_f64(),
-                "tick sample"
-            );
-        }
-
-        // Match only a market whose window has NOT yet ended so we never bind
-        // to a recently-resolved market that still appears in the scanner list
-        // with stale orderbook prices.  `now_utc` is computed once per tick
-        // outside this loop to avoid repeated syscalls.
-        let condition_id_opt = market_mgr
+        // Match only a market whose window has NOT yet ended.
+        let matched_ids = market_mgr
             .active_markets()
             .find(|m| {
                 if m.asset != tick.asset || m.timeframe != timeframe {
                     return false;
                 }
-                // Accept only markets whose end_date is still in the future.
                 if m.end_date.is_empty() {
-                    return true; // unknown date — pass through
+                    return true;
                 }
                 m.end_date
                     .parse::<chrono::DateTime<chrono::Utc>>()
                     .map_or(true, |end_dt| end_dt > now_utc)
             })
-            .map(|m| m.condition_id.clone());
+            .map(|m| (m.condition_id.clone(), m.token_id_up.clone(), m.liquidity, m.spread));
+        let condition_id_opt = matched_ids.as_ref().map(|(cid, _, _, _)| cid.clone());
+        let up_token_id_opt = matched_ids.as_ref().map(|(_, tid, _, _)| tid.as_str());
+        let market_liquidity = matched_ids.as_ref().map(|(_, _, l, _)| *l).unwrap_or(0.0);
+        let market_spread = matched_ids.as_ref().map(|(_, _, _, s)| *s).unwrap_or(0.0);
 
-        let prices = resolve_orderbook_prices(
+        let mut prices = resolve_orderbook_prices(
             tick,
             timeframe,
             spot_direction,
             slippage,
             condition_id_opt.as_deref(),
-            shared_tracker,
-            shared_prices,
+            local_tracker,
+            local_prices,
             market_mgr,
         );
 
+        // Compute L2 orderbook imbalance from the Up token's full-depth book.
+        prices.orderbook_imbalance =
+            compute_l2_imbalance(local_l2, up_token_id_opt);
+
         let state = build_market_state(tick, timeframe, &window, &prices);
 
-        // Record combined snapshot after building MarketState.
+        // Record combined snapshot.
         if let Err(e) = recorder.record(
             tick.timestamp_ms,
             &tick.asset.to_string(),
@@ -566,65 +594,23 @@ fn process_tick(
             }
         }
 
-        let decisions = engine.evaluate_all(&state);
-
-        for decision in &decisions {
-            info!(
-                asset = %tick.asset,
-                timeframe = ?timeframe,
-                side = %decision.side,
-                strategy = %decision.strategy_id,
-                confidence = decision.confidence,
-                limit_price = decision.limit_price.as_f64(),
-                "strategy signal fired"
-            );
-
-            // Run decision through risk manager before opening.
-            let sized_order = match risk.evaluate(
-                decision,
-                window.id,
-                tick.asset,
-                executor.balance(),
-            ) {
-                Ok(order) => order,
-                Err(rejection) => {
-                    warn!(
-                        asset = %tick.asset,
-                        side = %decision.side,
-                        rejection = ?rejection,
-                        "risk manager rejected entry"
-                    );
-                    continue;
-                }
-            };
-
-            if let Some(fill) = executor.try_open_position(
-                decision,
-                window.id,
-                tick.asset,
-                tick.timestamp_ms,
-            ) {
-                // Notify risk manager so it tracks exposure.
-                risk.on_position_opened(OpenPosition {
-                    window_id: window.id,
-                    asset: tick.asset,
-                    side: decision.side,
-                    avg_entry: fill.fill_price,
-                    size_usdc: sized_order.size_usdc,
-                    opened_at_ms: tick.timestamp_ms,
-                });
-
-                lw.position_opened = true;
+        // Each instance evaluates independently.
+        for instance in instances.iter_mut() {
+            if let Some(fill) = instance.on_tick(&state) {
                 info!(
-                    asset = %tick.asset,
-                    side = %decision.side,
-                    fill_price = fill.fill_price.as_f64(),
-                    size_usdc = fill.size_usdc,
-                    balance = executor.balance(),
+                    instance = %fill.label,
+                    asset = %fill.asset,
+                    timeframe = ?fill.timeframe,
+                    side = %fill.side,
+                    strategy = %fill.strategy_id,
+                    fill_price = format!("{:.4}", fill.fill_price),
+                    size_usdc = format!("${:.2}", fill.size_usdc),
+                    confidence = format!("{:.2}", fill.confidence),
+                    balance = format!("${:.2}", fill.balance_after),
+                    liquidity = format!("${:.0}", market_liquidity),
+                    spread = format!("{:.3}", market_spread),
                     "paper fill executed"
                 );
-                // Only one position per window.
-                break;
             }
         }
     }
@@ -635,8 +621,8 @@ fn process_tick(
 /// Run the paper trading loop.
 ///
 /// Connects to Binance and OKX `WebSockets`, polls the Gamma API for active
-/// markets, evaluates strategies on every tick, and simulates fills via the
-/// [`PaperExecutor`]. Runs until SIGINT is received.
+/// markets, evaluates strategies on every tick using independent
+/// [`StrategyInstance`]s. Runs until SIGINT is received.
 ///
 /// # Errors
 ///
@@ -698,58 +684,118 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     });
 
     // ── 4. Initialise components ──────────────────────────────────────────────
-    let paper_config = PaperConfig {
-        initial_balance: cfg.backtest.initial_balance,
-        slippage_bps: cfg.backtest.slippage_bps,
-        max_position_usdc: cfg.bot.max_position_usdc,
-        max_positions_per_window: 1,
-    };
-    let mut executor = PaperExecutor::new(paper_config);
 
-    let risk_config = RiskConfig {
-        max_position_usdc: cfg.bot.max_position_usdc,
-        max_total_exposure_usdc: cfg.bot.max_total_exposure_usdc,
-        max_daily_loss_usdc: cfg.bot.max_daily_loss_usdc,
-        kelly_fraction: cfg.bot.kelly_fraction,
-    };
-    let mut risk = RiskManager::new(risk_config);
+    // ── Live-mode detection and CLOB client init ─────────────────────────────
+    let has_live = cfg.bot.strategies.iter().any(|s| s.mode() == "live");
 
-    let engine = build_engine_from_config(&cfg.bot.strategies);
+    let clob_ctx = if has_live {
+        let ctx = pm_live::init_clob_client().await
+            .context("failed to init CLOB client")?;
+        match ctx {
+            Some(c) => Some(Arc::new(c)),
+            None => anyhow::bail!("POLYMARKET_PRIVATE_KEY required for live strategies"),
+        }
+    } else {
+        None
+    };
+
+    if has_live {
+        let live_count = cfg.bot.strategies.iter().filter(|s| s.mode() == "live").count();
+        warn!(
+            live_strategies = live_count,
+            "LIVE TRADING ENABLED — real orders will be placed on Polymarket CLOB"
+        );
+    }
+
+    let live_token_map: SharedTokenMap = Arc::new(Mutex::new(HashMap::new()));
+
+    // ── GTC order tracking infrastructure ────────────────────────────────────
+    let has_gtc = cfg.bot.strategies.iter().any(|s| s.mode() == "live" && s.order_mode() == "gtc");
+    let (user_ws_tx, mut user_ws_rx) = user_ws_channel();
+    let (gtc_order_tx, mut gtc_order_rx) = tokio::sync::mpsc::unbounded_channel::<pm_live::PendingOrder>();
+    let mut order_manager: Option<OrderManager> = clob_ctx.as_ref().map(|clob| OrderManager::new(clob.clone()));
+
+    // Build independent strategy instances from config, wrapping live ones.
+    let paper_instances = build_instances_from_config(&cfg.bot.strategies);
+    let mut instances: Vec<Box<dyn StrategyInstance>> = Vec::new();
+    for (paper, strategy_cfg) in paper_instances.into_iter().zip(cfg.bot.strategies.iter()) {
+        if strategy_cfg.mode() == "live" {
+            #[expect(clippy::expect_used, reason = "CLOB context guaranteed present when has_live is true")]
+            let clob = clob_ctx.clone().expect("CLOB required for live");
+            let tx = if strategy_cfg.order_mode() == "gtc" {
+                Some(gtc_order_tx.clone())
+            } else {
+                None
+            };
+            instances.push(Box::new(LiveStrategyInstance::new(
+                paper,
+                clob,
+                live_token_map.clone(),
+                strategy_cfg.order_mode().to_string(),
+                strategy_cfg.gtc_timeout_secs(),
+                tx,
+            )));
+        } else {
+            instances.push(Box::new(paper));
+        }
+    }
+
+    info!(count = instances.len(), "strategy instances created");
+    for inst in &instances {
+        info!(
+            instance = %inst.label(),
+            balance = format!("${:.2}", inst.balance()),
+            "instance initialized"
+        );
+    }
 
     let mut oracle_router = OracleRouter::new();
     let mut price_buffer = PriceBuffer::new();
+
+    // ── EMA tracker (for logging / future trend filter integration) ─────────
+    let tf_cfg = &cfg.bot.trend_filter;
+    let mut ema_tracker = EmaTracker::new(tf_cfg.fast_period, tf_cfg.slow_period);
+
+    // ── Periodic summary timer ──────────────────────────────────────────────
+    let session_start = std::time::Instant::now();
+    let mut last_summary_at = std::time::Instant::now();
 
     // Per-(asset, timeframe) window table.
     let num_slots = enabled_assets.len() * enabled_timeframes.len();
     let mut live_windows: Vec<Option<LiveWindow>> = (0..num_slots).map(|_| None).collect();
 
-    // ── Shared orderbook tracker for PM WebSocket ─────────────────────────────
-    let shared_tracker: Arc<Mutex<OrderbookTracker>> =
-        Arc::new(Mutex::new(OrderbookTracker::new()));
+    // ── Local orderbook state (owned by the main loop — no Arc<Mutex>) ────────
+    let mut local_tracker = OrderbookTracker::new();
+    let mut local_prices = LatestPrices::new();
+    let mut local_l2 = L2OrderbookManager::new();
 
     // Shared token → (Asset, Timeframe, is_up) map, populated after each scan.
+    // Kept as Arc<Mutex> because it is written by the scanner and read by the
+    // main loop's event handler (different directions, low frequency).
     let token_asset_map: SharedTokenAssetMap =
         Arc::new(Mutex::new(HashMap::new()));
 
-    // Shared latest prices cache, indexed by (Asset, Timeframe).
-    let shared_prices: SharedLatestPrices =
-        Arc::new(Mutex::new(LatestPrices::new()));
-
-    let mut market_mgr = MarketManager::new(Duration::from_secs(30));
+    let mut market_mgr = MarketManager::new(Duration::from_secs(cfg.bot.scan_interval_secs));
     let http_client = Client::new();
     let mut next_scan_at = tokio::time::Instant::now();
+    let mut next_resolution_poll = tokio::time::Instant::now() + Duration::from_secs(10);
 
     let mut subscribed_tokens: HashSet<String> = HashSet::new();
 
-    let (pm_ws, pm_new_tokens_tx, pm_resolutions) = PolymarketWs::new(
+    // ── Event channel: WS task → main loop ───────────────────────────────────
+    let (pm_event_tx, mut pm_event_rx) = tokio::sync::mpsc::unbounded_channel::<PmEvent>();
+
+    let (pm_ws, pm_new_tokens_tx, pm_needs_refresh) = PolymarketWs::new_with_events(
         Vec::new(),
         Arc::clone(&token_asset_map),
-        Arc::clone(&shared_prices),
+        pm_event_tx,
     );
-    let pm_tracker = Arc::clone(&shared_tracker);
     let pm_shutdown = shutdown.clone();
     tokio::spawn(async move {
-        pm_ws.run(pm_tracker, pm_shutdown).await;
+        // The tracker Arc<Mutex> is only needed for the run() API signature;
+        // the WS task sends events through the channel instead of locking it.
+        let dummy_tracker = Arc::new(Mutex::new(OrderbookTracker::new()));
+        pm_ws.run(dummy_tracker, pm_shutdown).await;
     });
 
     // ── Snapshot recorder (plain JSONL, flush every 10 writes) ────────────────
@@ -769,6 +815,20 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
         .context("failed to create window recorder")?;
     info!("PBT-compatible window recorder started");
 
+    // ── Spawn User WS task for GTC fill monitoring ────────────────────────────
+    if has_gtc {
+        if let Some(ref clob) = clob_ctx {
+            let credentials = clob.client.credentials().clone();
+            let address = clob.client.address();
+            let user_ws_shutdown = shutdown.clone();
+            tokio::spawn(run_user_ws(credentials, address, user_ws_tx, user_ws_shutdown));
+            info!("User WS task spawned for GTC fill monitoring");
+        }
+    }
+
+    // ── GTC order manager timeout tick ──────────────────────────────────────
+    let mut next_gtc_tick = tokio::time::Instant::now() + Duration::from_secs(5);
+
     // ── 5. Graceful shutdown signal ───────────────────────────────────────────
     let ctrlc_shutdown = shutdown.clone();
     tokio::spawn(async move {
@@ -783,10 +843,233 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
     let slippage = f64::from(cfg.backtest.slippage_bps) * 0.0001;
 
     loop {
+        // If the PM WS reconnected, force an immediate scanner poll + REST
+        // re-fetch so LatestPrices doesn't stay stale for the scan interval.
+        if pm_needs_refresh.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            info!("PM WS reconnected — forcing immediate REST orderbook re-fetch");
+            next_scan_at = tokio::time::Instant::now();
+        }
+
         tokio::select! {
             () = shutdown.cancelled() => {
                 info!("shutdown signal received — exiting main loop");
                 break;
+            }
+
+            // ── Receive GTC orders from live instances via channel ──────
+            Some(pending) = gtc_order_rx.recv() => {
+                if let Some(ref mut mgr) = order_manager {
+                    mgr.track(pending);
+                }
+            }
+
+            // ── Process User WS events for GTC order fills ──────────────
+            Some(event) = user_ws_rx.recv() => {
+                if let Some(ref mut mgr) = order_manager {
+                    match event {
+                        UserWsEvent::OrderUpdate { order_id, size_matched, is_cancelled } => {
+                            if is_cancelled {
+                                mgr.on_cancel_event(&order_id);
+                            } else {
+                                mgr.on_fill_update(&order_id, size_matched);
+                            }
+                        }
+                        UserWsEvent::TradeConfirmed { .. } => {
+                            // Informational — fills tracked via OrderUpdate.
+                        }
+                    }
+                }
+            }
+
+            // ── Periodic GTC order manager maintenance ──────────────────
+            () = tokio::time::sleep_until(next_gtc_tick) => {
+                if let Some(ref mut mgr) = order_manager {
+                    #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64 for centuries")]
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_millis() as u64);
+
+                    mgr.check_timeouts(now_ms);
+
+                    let completed = mgr.drain_completed(now_ms);
+                    for fill in &completed {
+                        info!(
+                            order_id = %fill.order_id,
+                            instance = %fill.instance_label,
+                            asset = %fill.asset,
+                            side = %fill.side,
+                            avg_price = format!("{:.4}", fill.avg_price),
+                            size_usdc = format!("${:.2}", fill.size_usdc),
+                            shares = format!("{:.4}", fill.shares),
+                            "GTC FILL COMPLETED"
+                        );
+
+                        // Promote into the matching live instance for oracle resolution.
+                        // condition_id and window_end_ms are captured at order placement time.
+                        for instance in instances.iter_mut() {
+                            if instance.label() == fill.instance_label {
+                                instance.promote_gtc_fill(
+                                    &fill.order_id,
+                                    &fill.token_id,
+                                    &fill.condition_id,
+                                    fill.window_end_ms,
+                                    fill.asset,
+                                    fill.timeframe,
+                                    fill.side,
+                                    fill.avg_price,
+                                    fill.size_usdc,
+                                    fill.shares,
+                                    fill.slot,
+                                    fill.window_id,
+                                    fill.strategy_id,
+                                );
+                                break;
+                            }
+                        }
+                    }
+                }
+                next_gtc_tick = tokio::time::Instant::now() + Duration::from_secs(5);
+            }
+
+            // ── Receive events from the PM WebSocket task ────────────────
+            Some(pm_event) = pm_event_rx.recv() => {
+                match pm_event {
+                    PmEvent::BestBidAsk { token_id, best_bid, best_ask, timestamp_ms } => {
+                        // Update local OrderbookTracker (condition_id-based).
+                        local_tracker.update(&token_id, "SELL", best_ask, timestamp_ms);
+                        local_tracker.update(&token_id, "BUY", best_bid, timestamp_ms);
+
+                        // Update local LatestPrices cache (Asset, Timeframe-based).
+                        // Skip resolved-market prices.
+                        if best_ask > 0.01 && best_ask < 0.99 && best_bid > 0.01 && best_bid < 0.99 {
+                            let lookup = match token_asset_map.lock() {
+                                Ok(map) => map.get(&token_id).copied(),
+                                Err(e) => {
+                                    warn!(error = %e, "token_asset_map mutex poisoned");
+                                    None
+                                }
+                            };
+                            if let Some((asset, timeframe, is_up)) = lookup {
+                                local_prices.update_side(asset, timeframe, is_up, best_bid, best_ask, timestamp_ms);
+                            }
+                        }
+                    }
+                    PmEvent::Book { token_id, bids, asks, timestamp_ms } => {
+                        // Convert BookLevels to a BookEvent for the L2 manager.
+                        let book_event = pm_market::l2_orderbook::BookEvent {
+                            event_type: "book".to_string(),
+                            asset_id: token_id,
+                            bids,
+                            asks,
+                            timestamp: timestamp_ms.to_string(),
+                        };
+                        local_l2.process_book_event(&book_event.asset_id, &book_event, timestamp_ms);
+                    }
+                    PmEvent::PriceChange { token_id, changes, timestamp_ms } => {
+                        local_l2.process_price_change(&token_id, &changes, timestamp_ms);
+                    }
+                    PmEvent::MarketResolved { condition_id, winning_token_id, timestamp_ms } => {
+                        info!(
+                            condition_id = %condition_id,
+                            winning_token = %winning_token_id,
+                            "PM event: market_resolved"
+                        );
+
+                        // 1. Resolve LIVE positions using the on-chain oracle result.
+                        for instance in instances.iter_mut() {
+                            let trades = instance.on_market_resolved(
+                                &winning_token_id,
+                                timestamp_ms,
+                            );
+                            for trade in &trades {
+                                let result = if trade.pnl.as_f64() >= 0.0 { "WIN" } else { "LOSS" };
+                                info!(
+                                    instance = %instance.label(),
+                                    condition_id = %condition_id,
+                                    asset = %trade.asset,
+                                    side = %trade.side,
+                                    result = result,
+                                    pnl = format!("${:+.2}", trade.pnl.as_f64()),
+                                    balance = format!("${:.2}", instance.balance()),
+                                    "LIVE resolved via Polymarket oracle"
+                                );
+                            }
+                        }
+
+                        // 2. Also resolve paper positions via the old path.
+                        let matched = market_mgr.active_markets().find(|m| {
+                            m.condition_id == condition_id
+                        });
+
+                        let Some(mkt) = matched else {
+                            debug!(
+                                condition_id = %condition_id,
+                                "market_resolved for unknown condition — ignoring paper path"
+                            );
+                            continue;
+                        };
+
+                        let outcome = if winning_token_id == mkt.token_id_up {
+                            Side::Up
+                        } else {
+                            Side::Down
+                        };
+
+                        let asset_idx = enabled_assets.iter().position(|a| *a == mkt.asset);
+                        let tf_idx = enabled_timeframes.iter().position(|t| *t == mkt.timeframe);
+
+                        if let (Some(ai), Some(ti)) = (asset_idx, tf_idx) {
+                            let slot = ai * enabled_timeframes.len() + ti;
+                            if let Some(lw) = live_windows[slot].as_ref() {
+                                let window_id = lw.window.id;
+                                for instance in instances.iter_mut() {
+                                    let trades = instance.on_window_close(
+                                        window_id,
+                                        outcome,
+                                        timestamp_ms,
+                                    );
+                                    for trade in &trades {
+                                        let result = if trade.pnl.as_f64() >= 0.0 { "WIN" } else { "LOSS" };
+                                        info!(
+                                            instance = %instance.label(),
+                                            condition_id = %condition_id,
+                                            asset = %mkt.asset,
+                                            timeframe = ?mkt.timeframe,
+                                            %outcome,
+                                            result = result,
+                                            pnl = format!("${:+.2}", trade.pnl.as_f64()),
+                                            balance = format!("${:.2}", instance.balance()),
+                                            "market resolved early — position closed"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Poll CLOB API for live position resolution every 5 seconds.
+            () = tokio::time::sleep_until(next_resolution_poll) => {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
+                for instance in instances.iter_mut() {
+                    let trades = instance.poll_resolutions(now_ms);
+                    for trade in &trades {
+                        let result = if trade.pnl.as_f64() >= 0.0 { "WIN" } else { "LOSS" };
+                        info!(
+                            instance = %instance.label(),
+                            asset = %trade.asset,
+                            side = %trade.side,
+                            result = result,
+                            pnl = format!("${:+.2}", trade.pnl.as_f64()),
+                            balance = format!("${:.2}", instance.balance()),
+                            "LIVE RESOLVED (CLOB oracle)"
+                        );
+                    }
+                }
+                next_resolution_poll = tokio::time::Instant::now() + Duration::from_secs(5);
             }
 
             () = tokio::time::sleep_until(next_scan_at) => {
@@ -804,61 +1087,98 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                             }
                         }
 
-                        if let Ok(mut tracker) = shared_tracker.lock() {
-                            for m in &markets {
-                                tracker.register_market(
-                                    &m.condition_id,
-                                    &m.token_id_up,
-                                    &m.token_id_down,
-                                );
-                            }
+                        for m in &markets {
+                            local_tracker.register_market(
+                                &m.condition_id,
+                                &m.token_id_up,
+                                &m.token_id_down,
+                            );
                         }
 
                         // Populate token → (Asset, Timeframe, is_up) map so the
                         // PM WS handler can route events to LatestPrices.
-                        if let Ok(mut map) = token_asset_map.lock() {
+                        match token_asset_map.lock() {
+                            Ok(mut map) => {
+                                for m in &markets {
+                                    map.insert(
+                                        m.token_id_up.clone(),
+                                        (m.asset, m.timeframe, true),
+                                    );
+                                    map.insert(
+                                        m.token_id_down.clone(),
+                                        (m.asset, m.timeframe, false),
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "token_asset_map mutex poisoned — skipping update");
+                            }
+                        }
+
+                        // Populate live token map for LiveStrategyInstance.
+                        // Only insert the market whose window is currently active
+                        // (now is between window_open and end_date). This prevents
+                        // buying into a future window that hasn't started yet.
+                        if let Ok(mut map) = live_token_map.lock() {
+                            // Clear the entire map first — stale entries from
+                            // previous scans must not persist or the bot trades
+                            // on expired/future tokens.
+                            map.clear();
+                            let now = chrono::Utc::now();
                             for m in &markets {
-                                map.insert(
-                                    m.token_id_up.clone(),
-                                    (m.asset, m.timeframe, true),
-                                );
-                                map.insert(
-                                    m.token_id_down.clone(),
-                                    (m.asset, m.timeframe, false),
-                                );
+                                // Extract window open from slug timestamp.
+                                let window_open = m.slug.rsplit('-').next()
+                                    .and_then(|s| s.parse::<i64>().ok())
+                                    .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0));
+                                let window_end = m.end_date.parse::<chrono::DateTime<chrono::Utc>>().ok();
+
+                                let is_active = match (window_open, window_end) {
+                                    (Some(open), Some(end)) => now >= open && now < end,
+                                    _ => false, // skip if we can't determine window bounds
+                                };
+
+                                if is_active {
+                                    let end_ms = window_end
+                                        .map(|dt| dt.timestamp_millis() as u64)
+                                        .unwrap_or(0);
+                                    map.insert(
+                                        (m.asset, m.timeframe),
+                                        TokenPair {
+                                            up: m.token_id_up.clone(),
+                                            down: m.token_id_down.clone(),
+                                            condition_id: m.condition_id.clone(),
+                                            end_date_ms: end_ms,
+                                        },
+                                    );
+                                }
                             }
                         }
 
                         market_mgr.update_markets(markets.clone());
 
-                        // Fetch REST orderbook snapshots for all discovered markets so the
-                        // tracker has initial state immediately — even on quiet markets where
-                        // the PM WebSocket won't fire until the next book change.
-                        #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64 for centuries")]
-                        let now_ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as u64;
+                        // Fetch REST orderbook snapshots only for NEW tokens so the
+                        // tracker has initial state immediately.  Already-subscribed
+                        // markets receive live updates via the PM WebSocket, so
+                        // re-fetching them would be wasteful (~314 REST calls/scan).
+                        if !new_token_ids.is_empty() {
+                            #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64 for centuries")]
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as u64;
 
-                        for m in &markets {
-                            fetch_rest_orderbook(
-                                &http_client,
-                                &m.token_id_up,
-                                &shared_tracker,
-                                now_ms,
-                            ).await;
-                            fetch_rest_orderbook(
-                                &http_client,
-                                &m.token_id_down,
-                                &shared_tracker,
-                                now_ms,
-                            ).await;
+                            for token_id in &new_token_ids {
+                                fetch_rest_orderbook(
+                                    &http_client,
+                                    token_id,
+                                    &mut local_tracker,
+                                    now_ms,
+                                ).await;
+                            }
 
                             info!(
-                                condition_id = %m.condition_id,
-                                token_up = %m.token_id_up,
-                                token_down = %m.token_id_down,
-                                "REST orderbook snapshot fetched"
+                                count = new_token_ids.len(),
+                                "REST orderbook snapshots fetched for new tokens"
                             );
                         }
 
@@ -867,13 +1187,13 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                                 count = new_token_ids.len(),
                                 "subscribing PM WS to new token IDs"
                             );
-                            if let Err(e) = pm_new_tokens_tx.try_send(new_token_ids) {
+                            if let Err(e) = pm_new_tokens_tx.send(new_token_ids).await {
                                 warn!(error = %e, "failed to send new token IDs to PM WS task");
                             }
                         }
                     }
                     Err(e) => {
-                        warn!(error = %e, "market scan failed — retrying in 30s");
+                        warn!(error = %e, "market scan failed — retrying next interval");
                     }
                 }
                 next_scan_at = tokio::time::Instant::now() + market_mgr.scanner_interval;
@@ -932,25 +1252,51 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     slippage,
                     now_utc,
                     &mut live_windows,
-                    &mut executor,
-                    &mut risk,
-                    &shared_tracker,
-                    &shared_prices,
+                    &mut instances,
+                    &local_tracker,
+                    &local_prices,
                     &market_mgr,
                     &mut recorder,
                     &mut window_recorder,
-                    &engine,
+                    &mut ema_tracker,
+                    &local_l2,
                 );
+
+                // ── Periodic session summary (every 5 min) ─────────────────
+                if last_summary_at.elapsed() >= std::time::Duration::from_secs(300) {
+                    let uptime_min = session_start.elapsed().as_secs() / 60;
+                    let total_balance: f64 = instances.iter().map(|i| i.balance()).sum();
+                    info!(
+                        uptime_min = uptime_min,
+                        total_balance = format!("${:.2}", total_balance),
+                        instances = instances.len(),
+                        "SESSION SUMMARY"
+                    );
+                    for inst in &instances {
+                        let s = inst.stats();
+                        info!(
+                            instance = %inst.label(),
+                            balance = format!("${:.2}", inst.balance()),
+                            record = %s.record_str(),
+                            pnl = format!("${:+.2}", s.realized_pnl),
+                            "  instance summary"
+                        );
+                    }
+                    last_summary_at = std::time::Instant::now();
+                }
+
+                // Market resolution events are now handled via the pm_event_rx
+                // channel branch above — no mutex drain needed.
             }
         }
     }
 
-    // ── 7. Drain any remaining resolutions ──────────────────────────────────
-    if let Ok(mut resolutions) = pm_resolutions.lock() {
-        for res in resolutions.drain(..) {
+    // ── 7. Drain any remaining PM events ──────────────────────────────────────
+    while let Ok(event) = pm_event_rx.try_recv() {
+        if let PmEvent::MarketResolved { condition_id, winning_token_id, .. } = event {
             info!(
-                condition_id = %res.condition_id,
-                winning_token = %res.winning_token_id,
+                condition_id = %condition_id,
+                winning_token = %winning_token_id,
                 "draining final market_resolved event on shutdown"
             );
         }
@@ -961,11 +1307,22 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
         warn!(error = %e, "failed to flush recorder on shutdown");
     }
 
+    let total_balance: f64 = instances.iter().map(|i| i.balance()).sum();
     info!(
-        open_positions = executor.open_position_count(),
+        total_balance = format!("${:.2}", total_balance),
+        instances = instances.len(),
         "paper trading session ended"
     );
-    executor.print_summary();
+    for inst in &instances {
+        let s = inst.stats();
+        info!(
+            instance = %inst.label(),
+            balance = format!("${:.2}", inst.balance()),
+            record = %s.record_str(),
+            pnl = format!("${:+.2}", s.realized_pnl),
+            "final instance summary"
+        );
+    }
 
     Ok(())
 }

@@ -15,6 +15,7 @@ serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 toml = { workspace = true }
+proptest = "1"
 
 [lints]
 workspace = true

@@ -6,13 +6,16 @@
 
 extern crate alloc;
 
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use pm_bookkeeper::{TradeSummary, compute_summary};
-use pm_signal::StrategyEngine;
+use pm_oracle::EmaTracker;
+use pm_risk::{RiskConfig, RiskManager};
+use pm_signal::{StrategyEngine, TrendFilter};
 use pm_types::{
     Asset, ContractPrice, MarketState, OpenPosition, OrderReason, Pnl, Price, Side, StrategyId,
-    Tick, Timeframe, TradeRecord, Window, WindowId,
+    Tick, Timeframe, TradeRecord, TrendFilterConfig, Window, WindowId,
 };
 use tracing::debug;
 
@@ -294,11 +297,13 @@ fn settle_remaining(
 /// The output order follows the declaration order of [`StrategyId`] variants.
 fn per_strategy_breakdown(trades: &[TradeRecord]) -> Vec<(StrategyId, TradeSummary)> {
     // All known strategy IDs in a stable order.
-    const ALL_IDS: [StrategyId; 4] = [
+    const ALL_IDS: [StrategyId; 6] = [
         StrategyId::CompleteSetArb,
         StrategyId::EarlyDirectional,
         StrategyId::MomentumConfirmation,
         StrategyId::HedgeLock,
+        StrategyId::LateWindowSniper,
+        StrategyId::MeanReversion,
     ];
 
     let mut result = Vec::new();
@@ -362,6 +367,8 @@ pub fn run_backtest<P: ContractPriceProvider>(
     config: &BacktestConfig,
     enabled_assets: &[Asset],
     enabled_timeframes: &[Timeframe],
+    trend_filter_config: Option<&TrendFilterConfig>,
+    risk_config: Option<&RiskConfig>,
 ) -> BacktestResult {
     // Slot count: Asset::COUNT * Timeframe::COUNT
     const SLOTS: usize = Asset::COUNT * Timeframe::COUNT;
@@ -397,6 +404,28 @@ pub fn run_backtest<P: ContractPriceProvider>(
         })
         .collect();
 
+    // Optional EMA trend filter — only created when config is provided and enabled.
+    let mut ema_tracker: Option<EmaTracker> = trend_filter_config
+        .filter(|c| c.enabled)
+        .map(|c| EmaTracker::new(c.fast_period, c.slow_period));
+    let trend_filter: Option<TrendFilter> = trend_filter_config
+        .filter(|c| c.enabled)
+        .map(|c| TrendFilter {
+            require_trend_alignment: true,
+            min_trend_strength: c.min_trend_strength,
+        });
+
+    // Optional risk manager — only created when risk_config is provided.
+    let mut risk_manager: Option<RiskManager> = risk_config.map(|rc| {
+        RiskManager::new(RiskConfig {
+            max_position_usdc: rc.max_position_usdc,
+            max_total_exposure_usdc: rc.max_total_exposure_usdc,
+            max_daily_loss_usdc: rc.max_daily_loss_usdc,
+            kelly_fraction: rc.kelly_fraction,
+            max_same_side_positions: rc.max_same_side_positions,
+        })
+    });
+
     for tick in ticks {
         // FIX 5: O(1) asset check.
         if !asset_enabled[tick.asset.index()] {
@@ -405,6 +434,11 @@ pub fn run_backtest<P: ContractPriceProvider>(
 
         let asset_idx = tick.asset.index();
         last_prices[asset_idx] = Some(tick.price);
+
+        // Update EMA tracker with the latest tick price.
+        if let Some(ema) = &mut ema_tracker {
+            ema.update(tick.asset, tick.price.as_f64());
+        }
 
         for tfs in &tf_slots {
             // FIX 6: duration_ms and slot_offset are pre-computed.
@@ -421,6 +455,7 @@ pub fn run_backtest<P: ContractPriceProvider>(
                 // Resolve positions for the expiring window (if any).
                 if let Some(old_window) = windows[slot].take() {
                     let outcome = old_window.direction(tick.price);
+                    let trades_before = trades.len();
                     resolve_positions(
                         &mut open_positions,
                         &mut position_counts,
@@ -430,6 +465,15 @@ pub fn run_backtest<P: ContractPriceProvider>(
                         outcome,
                         tick.timestamp_ms,
                     );
+                    // Notify risk manager of the resolved window's P&L.
+                    if let Some(ref mut rm) = risk_manager {
+                        let window_pnl: f64 = trades[trades_before..]
+                            .iter()
+                            .map(|t| t.pnl.as_f64())
+                            .sum();
+                        let pnl = Pnl::new(window_pnl).unwrap_or(Pnl::ZERO);
+                        rm.on_window_resolved(old_window.id, pnl);
+                    }
                 }
 
                 // Open a new window.
@@ -493,20 +537,58 @@ pub fn run_backtest<P: ContractPriceProvider>(
                 // Bids approximated as ask - 0.02; clamped to [0, 1].
                 contract_bid_up: ContractPrice::new((ask_up.as_f64() - 0.02).clamp(0.0, 1.0)),
                 contract_bid_down: ContractPrice::new((ask_down.as_f64() - 0.02).clamp(0.0, 1.0)),
+                orderbook_imbalance: None,
             };
 
             // FIX 2: evaluate_all returns zero-alloc Decisions array.
             let decisions = engine.evaluate_all(&state);
 
             for decision in &decisions {
+                // Apply trend filter: skip decisions that oppose the prevailing trend.
+                if let (Some(ema), Some(tf)) = (&ema_tracker, &trend_filter) {
+                    if tf.should_skip(
+                        decision.side,
+                        ema.trend(tick.asset),
+                        ema.trend_strength(tick.asset),
+                    ) {
+                        debug!(
+                            asset = %tick.asset,
+                            timeframe = %tfs.tf,
+                            side = %decision.side,
+                            strategy = %decision.strategy_id,
+                            trend = ?ema.trend(tick.asset),
+                            strength = ema.trend_strength(tick.asset),
+                            "trade filtered by EMA trend filter"
+                        );
+                        continue;
+                    }
+                }
+
                 // FIX 4: Re-check O(1) slot capacity — earlier decisions in
                 // this loop may have already filled the quota.
                 if usize::from(position_counts[slot]) >= config.max_positions_per_window {
                     break;
                 }
 
-                // Size: min(max_position_usdc, balance * 5%).
-                let size = config.max_position_usdc.min(balance * 0.05);
+                // Determine position size: use risk manager (Kelly sizing) when
+                // available, otherwise fall back to the original heuristic.
+                let size = if let Some(ref rm) = risk_manager {
+                    match rm.evaluate(decision, window.id, tick.asset, balance) {
+                        Ok(sized_order) => sized_order.size_usdc,
+                        Err(rejection) => {
+                            debug!(
+                                asset = %tick.asset,
+                                side = %decision.side,
+                                rejection = ?rejection,
+                                "risk manager rejected trade in backtest"
+                            );
+                            continue;
+                        }
+                    }
+                } else {
+                    // Legacy heuristic: min(max_position_usdc, balance * 5%).
+                    config.max_position_usdc.min(balance * 0.05)
+                };
                 if size <= 0.0 {
                     continue;
                 }
@@ -527,6 +609,11 @@ pub fn run_backtest<P: ContractPriceProvider>(
                     size_usdc: size,
                     opened_at_ms: tick.timestamp_ms,
                 };
+
+                // Notify risk manager of the new position.
+                if let Some(ref mut rm) = risk_manager {
+                    rm.on_position_opened(pos);
+                }
 
                 debug!(
                     asset = %tick.asset,
@@ -561,6 +648,195 @@ pub fn run_backtest<P: ContractPriceProvider>(
         summary,
         per_strategy,
         final_balance: balance,
+    }
+}
+
+// ─── BacktestResultV2 ────────────────────────────────────────────────────────
+
+/// Backtest result with per-instance breakdown.
+#[derive(Debug)]
+pub struct BacktestResultV2 {
+    /// Per-instance results.
+    pub instances: Vec<InstanceResultV2>,
+}
+
+/// Result for a single strategy instance after a backtest run.
+#[derive(Debug)]
+pub struct InstanceResultV2 {
+    /// Instance label (e.g. "ED-tight").
+    pub label: String,
+    /// Accumulated session stats.
+    pub stats: pm_types::InstanceStats,
+    /// All closed trades from this instance.
+    pub trades: Vec<TradeRecord>,
+    /// Balance after all trades are settled.
+    pub final_balance: f64,
+}
+
+// ─── run_backtest_v2 ─────────────────────────────────────────────────────────
+
+/// Run a backtest using independent [`StrategyInstance`]s.
+///
+/// Each instance manages its own balance, positions, and risk parameters.
+/// `MarketState` is built once per (asset, timeframe, tick) and passed read-only
+/// to every instance.  Window tracking (slot array, transitions) works exactly
+/// like [`run_backtest`] — only the strategy-evaluation and position-management
+/// layers are replaced by the trait-based instances.
+///
+/// The old `run_backtest` is kept for backward compatibility.
+#[expect(
+    clippy::too_many_lines,
+    reason = "backtest loop is inherently linear; extracting sub-functions would obscure the data flow"
+)]
+#[must_use]
+pub fn run_backtest_v2<P: ContractPriceProvider>(
+    ticks: impl Iterator<Item = Tick>,
+    instances: &mut [Box<dyn pm_types::StrategyInstance>],
+    price_provider: &P,
+    enabled_assets: &[Asset],
+    enabled_timeframes: &[Timeframe],
+    trend_filter_config: Option<&pm_types::TrendFilterConfig>,
+) -> BacktestResultV2 {
+    use pm_signal::TrendFilter;
+
+    const SLOTS: usize = Asset::COUNT * Timeframe::COUNT;
+
+    let mut windows: [Option<Window>; SLOTS] = [None; SLOTS];
+    let mut next_window_id: u64 = 1;
+
+    let mut asset_enabled = [false; Asset::COUNT];
+    for &a in enabled_assets {
+        asset_enabled[a.index()] = true;
+    }
+
+    let tf_slots: Vec<TimeframeSlot> = enabled_timeframes
+        .iter()
+        .map(|&tf| TimeframeSlot {
+            tf,
+            duration_ms: tf.duration_secs() * 1_000,
+            slot_offset: tf.index(),
+        })
+        .collect();
+
+    // Optional EMA trend filter.
+    let mut ema_tracker: Option<EmaTracker> = trend_filter_config
+        .filter(|c| c.enabled)
+        .map(|c| EmaTracker::new(c.fast_period, c.slow_period));
+    let _trend_filter: Option<TrendFilter> = trend_filter_config
+        .filter(|c| c.enabled)
+        .map(|c| TrendFilter {
+            require_trend_alignment: true,
+            min_trend_strength: c.min_trend_strength,
+        });
+
+    // Per-instance trade buffers: collect trades returned by on_window_close.
+    let mut instance_trades: Vec<Vec<TradeRecord>> =
+        instances.iter().map(|_| Vec::new()).collect();
+
+    for tick in ticks {
+        if !asset_enabled[tick.asset.index()] {
+            continue;
+        }
+
+        // Update EMA tracker.
+        if let Some(ref mut ema) = ema_tracker {
+            ema.update(tick.asset, tick.price.as_f64());
+        }
+
+        for tfs in &tf_slots {
+            let slot = tick.asset.index() * Timeframe::COUNT + tfs.slot_offset;
+            let duration_ms = tfs.duration_ms;
+            let window_open_ms = tick.timestamp_ms - (tick.timestamp_ms % duration_ms);
+            let window_close_ms = window_open_ms + duration_ms;
+
+            let need_new = windows[slot].is_none_or(|w| tick.timestamp_ms >= w.close_time_ms);
+
+            if need_new {
+                // Resolve old window across ALL instances.
+                if let Some(old_window) = windows[slot].take() {
+                    let outcome = old_window.direction(tick.price);
+                    for (idx, instance) in instances.iter_mut().enumerate() {
+                        let trades =
+                            instance.on_window_close(old_window.id, outcome, tick.timestamp_ms);
+                        instance_trades[idx].extend(trades);
+                    }
+                }
+
+                let wid = WindowId::new(next_window_id);
+                next_window_id += 1;
+                windows[slot] = Some(Window {
+                    id: wid,
+                    asset: tick.asset,
+                    timeframe: tfs.tf,
+                    open_time_ms: window_open_ms,
+                    close_time_ms: window_close_ms,
+                    open_price: tick.price,
+                });
+
+                debug!(
+                    asset = %tick.asset,
+                    timeframe = %tfs.tf,
+                    window_id = %wid,
+                    "new window opened (v2)"
+                );
+            }
+
+            let Some(window) = windows[slot] else {
+                continue;
+            };
+
+            // Compute market context.
+            let magnitude = window.magnitude(tick.price);
+            let time_elapsed_secs =
+                (tick.timestamp_ms.saturating_sub(window.open_time_ms)) / 1_000;
+            let time_remaining_secs = window.time_remaining_secs(tick.timestamp_ms);
+
+            let Some((ask_up, ask_down)) =
+                price_provider.get_prices(tick.asset, tfs.tf, magnitude, time_elapsed_secs)
+            else {
+                continue;
+            };
+
+            let spot_direction = window.direction(tick.price);
+
+            let state = MarketState {
+                asset: tick.asset,
+                timeframe: tfs.tf,
+                window_id: window.id,
+                window_open_price: window.open_price,
+                current_spot: tick.price,
+                spot_magnitude: magnitude,
+                spot_direction,
+                time_elapsed_secs,
+                time_remaining_secs,
+                contract_ask_up: Some(ask_up),
+                contract_ask_down: Some(ask_down),
+                contract_bid_up: ContractPrice::new((ask_up.as_f64() - 0.02).clamp(0.0, 1.0)),
+                contract_bid_down: ContractPrice::new(
+                    (ask_down.as_f64() - 0.02).clamp(0.0, 1.0),
+                ),
+                orderbook_imbalance: None,
+            };
+
+            // Each instance evaluates independently.
+            for instance in instances.iter_mut() {
+                let _ = instance.on_tick(&state);
+            }
+        }
+    }
+
+    // Collect per-instance results.
+    BacktestResultV2 {
+        instances: instances
+            .iter()
+            .zip(instance_trades.into_iter())
+            .map(|(inst, trades)| InstanceResultV2 {
+                label: inst.label().to_string(),
+                stats: inst.stats().clone(),
+                trades,
+                final_balance: inst.balance(),
+            })
+            .collect(),
     }
 }
 
@@ -623,6 +899,8 @@ mod tests {
             &config,
             &[Asset::Btc],
             &[Timeframe::Min5],
+            None,
+            None,
         );
 
         assert!(result.trades.is_empty(), "expected no trades");
@@ -666,6 +944,8 @@ mod tests {
             &config,
             &[Asset::Btc],
             &[Timeframe::Min5],
+            None,
+            None,
         );
 
         assert!(!result.trades.is_empty(), "expected at least one trade");
@@ -705,6 +985,8 @@ mod tests {
             &config,
             &[Asset::Btc],
             &[Timeframe::Min5],
+            None,
+            None,
         );
 
         // Exactly one strategy produced trades.

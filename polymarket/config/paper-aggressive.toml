@@ -1,0 +1,127 @@
+[bot]
+mode = "paper"
+min_edge = 0.01
+max_position_usdc = 50.0
+max_total_exposure_usdc = 3000.0
+max_daily_loss_usdc = 500.0
+kelly_fraction = 0.25
+
+[[bot.assets]]
+asset = "btc"
+enabled = true
+timeframes = ["min5", "min15"]
+
+[[bot.assets]]
+asset = "eth"
+enabled = true
+timeframes = ["min5", "min15"]
+
+[[bot.assets]]
+asset = "sol"
+enabled = true
+timeframes = ["min5", "min15"]
+
+[[bot.assets]]
+asset = "xrp"
+enabled = true
+timeframes = ["min5", "min15"]
+
+# Strategy A: Tight EarlyDirectional (production config E)
+[[bot.strategies]]
+type = "early_directional"
+label = "ED-tight"
+balance = 500.0
+max_position_usdc = 50.0
+max_exposure_usdc = 400.0
+kelly_fraction = 0.25
+max_daily_loss = 200.0
+slippage_bps = 10
+max_entry_time_secs = 150
+min_spot_magnitude = 0.002
+max_entry_price = 0.53
+
+# Strategy B: Looser EarlyDirectional — catches weaker moves
+[[bot.strategies]]
+type = "early_directional"
+label = "ED-loose"
+balance = 500.0
+max_position_usdc = 50.0
+max_exposure_usdc = 400.0
+kelly_fraction = 0.25
+max_daily_loss = 200.0
+slippage_bps = 10
+max_entry_time_secs = 200
+min_spot_magnitude = 0.001
+max_entry_price = 0.58
+
+# Strategy C: Tight momentum
+[[bot.strategies]]
+type = "momentum_confirmation"
+label = "MC-tight"
+balance = 500.0
+max_position_usdc = 50.0
+max_exposure_usdc = 400.0
+kelly_fraction = 0.25
+max_daily_loss = 200.0
+slippage_bps = 10
+min_entry_time_secs = 180
+max_entry_time_secs = 480
+min_spot_magnitude = 0.003
+max_entry_price = 0.72
+
+# Strategy D: Looser momentum — catches smaller sustained moves
+[[bot.strategies]]
+type = "momentum_confirmation"
+label = "MC-loose"
+balance = 500.0
+max_position_usdc = 50.0
+max_exposure_usdc = 400.0
+kelly_fraction = 0.25
+max_daily_loss = 200.0
+slippage_bps = 10
+min_entry_time_secs = 120
+max_entry_time_secs = 600
+min_spot_magnitude = 0.001
+max_entry_price = 0.65
+
+# Strategy E: Late-window sniper — enter when direction is locked in near expiry
+[[bot.strategies]]
+type = "late_window_sniper"
+label = "LWS"
+balance = 500.0
+max_position_usdc = 50.0
+max_exposure_usdc = 400.0
+kelly_fraction = 0.25
+max_daily_loss = 200.0
+slippage_bps = 10
+max_remaining_secs = 60
+min_spot_magnitude = 0.002
+max_entry_price = 0.85
+
+# Strategy F: Mean reversion — fade overshoots, contrarian low-WR high-payoff
+[[bot.strategies]]
+type = "mean_reversion"
+label = "MR"
+balance = 500.0
+max_position_usdc = 30.0
+max_exposure_usdc = 200.0
+kelly_fraction = 0.15
+max_daily_loss = 200.0
+slippage_bps = 10
+min_elapsed_secs = 180
+min_spot_magnitude = 0.005
+max_opposite_price = 0.30
+
+# Trend filter OFF — maximum signal volume for data collection
+[bot.trend_filter]
+enabled = false
+
+[backtest]
+start_date = "2025-10-01"
+end_date = "2026-03-30"
+initial_balance = 3000.0
+slippage_bps = 10
+
+[data]
+cache_dir = "data"
+log_dir = "logs"

@@ -22,6 +22,11 @@ use crate::asset::{Asset, Timeframe};
 
 // ─── StrategyConfig ──────────────────────────────────────────────────────────
 
+/// Default value for the per-strategy `mode` field: `"paper"`.
+fn default_strategy_mode() -> String {
+    String::from("paper")
+}
+
 /// Per-strategy configuration loaded from `[[bot.strategies]]` TOML blocks.
 ///
 /// Each variant maps to a concrete strategy in `pm-signal`.  The `type` field
@@ -34,21 +39,59 @@ use crate::asset::{Asset, Timeframe};
 /// max_entry_time_secs = 180
 /// min_spot_magnitude   = 0.001
 /// max_entry_price      = 0.58
+/// mode = "paper"
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StrategyConfig {
     /// Parameters for [`pm_signal::EarlyDirectional`].
     EarlyDirectional {
+        /// Human-readable label to distinguish variants (e.g. "tight", "loose").
+        #[serde(default)]
+        label: String,
+        /// Execution mode: `"paper"` (default) or `"live"`.
+        #[serde(default = "default_strategy_mode")]
+        mode: String,
         /// Maximum seconds elapsed since window open to still enter.
         max_entry_time_secs: u64,
         /// Minimum absolute spot move fraction required (e.g. `0.001` = 0.1 %).
         min_spot_magnitude: f64,
         /// Maximum contract ask price to accept (e.g. `0.58`).
         max_entry_price: f64,
+        // ── Per-instance risk params (optional, defaults applied) ──
+        /// Starting USDC balance for this instance.
+        #[serde(default = "default_instance_balance")]
+        balance: f64,
+        /// Maximum USDC allocated to a single position.
+        #[serde(default = "default_instance_max_position")]
+        max_position_usdc: f64,
+        /// Maximum total USDC exposure across all open positions.
+        #[serde(default = "default_instance_max_exposure")]
+        max_exposure_usdc: f64,
+        /// Kelly fraction applied to raw Kelly sizing.
+        #[serde(default = "default_instance_kelly")]
+        kelly_fraction: f64,
+        /// Maximum USDC loss tolerated within a single calendar day.
+        #[serde(default = "default_instance_max_daily_loss")]
+        max_daily_loss: f64,
+        /// Simulated slippage in basis points applied to each fill.
+        #[serde(default = "default_instance_slippage")]
+        slippage_bps: u32,
+        /// Order execution mode: `"fok"` (default) or `"gtc"`.
+        #[serde(default = "default_order_mode")]
+        order_mode: String,
+        /// Seconds before an unfilled GTC order is cancelled.
+        #[serde(default = "default_gtc_timeout_secs")]
+        gtc_timeout_secs: u64,
     },
     /// Parameters for [`pm_signal::MomentumConfirmation`].
     MomentumConfirmation {
+        /// Human-readable label to distinguish variants (e.g. "tight", "loose").
+        #[serde(default)]
+        label: String,
+        /// Execution mode: `"paper"` (default) or `"live"`.
+        #[serde(default = "default_strategy_mode")]
+        mode: String,
         /// Earliest seconds elapsed before this strategy activates.
         min_entry_time_secs: u64,
         /// Latest seconds elapsed after which this strategy no longer fires.
@@ -57,19 +100,218 @@ pub enum StrategyConfig {
         min_spot_magnitude: f64,
         /// Maximum contract ask price to accept (e.g. `0.72`).
         max_entry_price: f64,
+        // ── Per-instance risk params (optional, defaults applied) ──
+        /// Starting USDC balance for this instance.
+        #[serde(default = "default_instance_balance")]
+        balance: f64,
+        /// Maximum USDC allocated to a single position.
+        #[serde(default = "default_instance_max_position")]
+        max_position_usdc: f64,
+        /// Maximum total USDC exposure across all open positions.
+        #[serde(default = "default_instance_max_exposure")]
+        max_exposure_usdc: f64,
+        /// Kelly fraction applied to raw Kelly sizing.
+        #[serde(default = "default_instance_kelly")]
+        kelly_fraction: f64,
+        /// Maximum USDC loss tolerated within a single calendar day.
+        #[serde(default = "default_instance_max_daily_loss")]
+        max_daily_loss: f64,
+        /// Simulated slippage in basis points applied to each fill.
+        #[serde(default = "default_instance_slippage")]
+        slippage_bps: u32,
+        /// Order execution mode: `"fok"` (default) or `"gtc"`.
+        #[serde(default = "default_order_mode")]
+        order_mode: String,
+        /// Seconds before an unfilled GTC order is cancelled.
+        #[serde(default = "default_gtc_timeout_secs")]
+        gtc_timeout_secs: u64,
     },
     /// Parameters for [`pm_signal::CompleteSetArb`].
     CompleteSetArb {
+        /// Execution mode: `"paper"` (default) or `"live"`.
+        #[serde(default = "default_strategy_mode")]
+        mode: String,
         /// Maximum acceptable combined ask (Up + Down) to trigger entry.
         max_combined_cost: f64,
         /// Minimum profit-per-share required (i.e. `1 - combined`).
         min_profit_per_share: f64,
+        // ── Per-instance risk params (optional, defaults applied) ──
+        /// Starting USDC balance for this instance.
+        #[serde(default = "default_instance_balance")]
+        balance: f64,
+        /// Maximum USDC allocated to a single position.
+        #[serde(default = "default_instance_max_position")]
+        max_position_usdc: f64,
+        /// Maximum total USDC exposure across all open positions.
+        #[serde(default = "default_instance_max_exposure")]
+        max_exposure_usdc: f64,
+        /// Kelly fraction applied to raw Kelly sizing.
+        #[serde(default = "default_instance_kelly")]
+        kelly_fraction: f64,
+        /// Maximum USDC loss tolerated within a single calendar day.
+        #[serde(default = "default_instance_max_daily_loss")]
+        max_daily_loss: f64,
+        /// Simulated slippage in basis points applied to each fill.
+        #[serde(default = "default_instance_slippage")]
+        slippage_bps: u32,
+        /// Order execution mode: `"fok"` (default) or `"gtc"`.
+        #[serde(default = "default_order_mode")]
+        order_mode: String,
+        /// Seconds before an unfilled GTC order is cancelled.
+        #[serde(default = "default_gtc_timeout_secs")]
+        gtc_timeout_secs: u64,
     },
     /// Parameters for [`pm_signal::HedgeLock`].
     HedgeLock {
+        /// Execution mode: `"paper"` (default) or `"live"`.
+        #[serde(default = "default_strategy_mode")]
+        mode: String,
         /// Maximum combined cost (entry + hedge ask) to still enter.
         max_combined_cost: f64,
+        // ── Per-instance risk params (optional, defaults applied) ──
+        /// Starting USDC balance for this instance.
+        #[serde(default = "default_instance_balance")]
+        balance: f64,
+        /// Maximum USDC allocated to a single position.
+        #[serde(default = "default_instance_max_position")]
+        max_position_usdc: f64,
+        /// Maximum total USDC exposure across all open positions.
+        #[serde(default = "default_instance_max_exposure")]
+        max_exposure_usdc: f64,
+        /// Kelly fraction applied to raw Kelly sizing.
+        #[serde(default = "default_instance_kelly")]
+        kelly_fraction: f64,
+        /// Maximum USDC loss tolerated within a single calendar day.
+        #[serde(default = "default_instance_max_daily_loss")]
+        max_daily_loss: f64,
+        /// Simulated slippage in basis points applied to each fill.
+        #[serde(default = "default_instance_slippage")]
+        slippage_bps: u32,
+        /// Order execution mode: `"fok"` (default) or `"gtc"`.
+        #[serde(default = "default_order_mode")]
+        order_mode: String,
+        /// Seconds before an unfilled GTC order is cancelled.
+        #[serde(default = "default_gtc_timeout_secs")]
+        gtc_timeout_secs: u64,
     },
+    /// Parameters for [`pm_signal::LateWindowSniper`].
+    LateWindowSniper {
+        /// Human-readable label to distinguish variants.
+        #[serde(default)]
+        label: String,
+        /// Execution mode: `"paper"` (default) or `"live"`.
+        #[serde(default = "default_strategy_mode")]
+        mode: String,
+        /// Maximum seconds remaining before this strategy activates.
+        max_remaining_secs: u64,
+        /// Minimum spot magnitude to confirm strong direction.
+        min_spot_magnitude: f64,
+        /// Maximum contract ask price — don't buy if already too expensive.
+        max_entry_price: f64,
+        // ── Per-instance risk params (optional, defaults applied) ──
+        /// Starting USDC balance for this instance.
+        #[serde(default = "default_instance_balance")]
+        balance: f64,
+        /// Maximum USDC allocated to a single position.
+        #[serde(default = "default_instance_max_position")]
+        max_position_usdc: f64,
+        /// Maximum total USDC exposure across all open positions.
+        #[serde(default = "default_instance_max_exposure")]
+        max_exposure_usdc: f64,
+        /// Kelly fraction applied to raw Kelly sizing.
+        #[serde(default = "default_instance_kelly")]
+        kelly_fraction: f64,
+        /// Maximum USDC loss tolerated within a single calendar day.
+        #[serde(default = "default_instance_max_daily_loss")]
+        max_daily_loss: f64,
+        /// Simulated slippage in basis points applied to each fill.
+        #[serde(default = "default_instance_slippage")]
+        slippage_bps: u32,
+        /// Order execution mode: `"fok"` (default) or `"gtc"`.
+        #[serde(default = "default_order_mode")]
+        order_mode: String,
+        /// Seconds before an unfilled GTC order is cancelled.
+        #[serde(default = "default_gtc_timeout_secs")]
+        gtc_timeout_secs: u64,
+    },
+    /// Parameters for [`pm_signal::MeanReversion`].
+    MeanReversion {
+        /// Human-readable label to distinguish variants.
+        #[serde(default)]
+        label: String,
+        /// Execution mode: `"paper"` (default) or `"live"`.
+        #[serde(default = "default_strategy_mode")]
+        mode: String,
+        /// Minimum seconds elapsed before this activates.
+        min_elapsed_secs: u64,
+        /// Minimum magnitude for the move to be considered "overshot".
+        min_spot_magnitude: f64,
+        /// Maximum price for the OPPOSITE side (how cheap the contrarian bet is).
+        max_opposite_price: f64,
+        // ── Per-instance risk params (optional, defaults applied) ──
+        /// Starting USDC balance for this instance.
+        #[serde(default = "default_instance_balance")]
+        balance: f64,
+        /// Maximum USDC allocated to a single position.
+        #[serde(default = "default_instance_max_position")]
+        max_position_usdc: f64,
+        /// Maximum total USDC exposure across all open positions.
+        #[serde(default = "default_instance_max_exposure")]
+        max_exposure_usdc: f64,
+        /// Kelly fraction applied to raw Kelly sizing.
+        #[serde(default = "default_instance_kelly")]
+        kelly_fraction: f64,
+        /// Maximum USDC loss tolerated within a single calendar day.
+        #[serde(default = "default_instance_max_daily_loss")]
+        max_daily_loss: f64,
+        /// Simulated slippage in basis points applied to each fill.
+        #[serde(default = "default_instance_slippage")]
+        slippage_bps: u32,
+        /// Order execution mode: `"fok"` (default) or `"gtc"`.
+        #[serde(default = "default_order_mode")]
+        order_mode: String,
+        /// Seconds before an unfilled GTC order is cancelled.
+        #[serde(default = "default_gtc_timeout_secs")]
+        gtc_timeout_secs: u64,
+    },
+}
+
+impl StrategyConfig {
+    /// Get the mode for this strategy (`"paper"` or `"live"`).
+    pub fn mode(&self) -> &str {
+        match self {
+            Self::EarlyDirectional { mode, .. }
+            | Self::MomentumConfirmation { mode, .. }
+            | Self::CompleteSetArb { mode, .. }
+            | Self::HedgeLock { mode, .. }
+            | Self::LateWindowSniper { mode, .. }
+            | Self::MeanReversion { mode, .. } => mode,
+        }
+    }
+
+    /// Get the order execution mode for this strategy (`"fok"` or `"gtc"`).
+    pub fn order_mode(&self) -> &str {
+        match self {
+            Self::EarlyDirectional { order_mode, .. }
+            | Self::MomentumConfirmation { order_mode, .. }
+            | Self::CompleteSetArb { order_mode, .. }
+            | Self::HedgeLock { order_mode, .. }
+            | Self::LateWindowSniper { order_mode, .. }
+            | Self::MeanReversion { order_mode, .. } => order_mode,
+        }
+    }
+
+    /// Get the GTC cancellation timeout in seconds for this strategy.
+    pub fn gtc_timeout_secs(&self) -> u64 {
+        match self {
+            Self::EarlyDirectional { gtc_timeout_secs, .. }
+            | Self::MomentumConfirmation { gtc_timeout_secs, .. }
+            | Self::CompleteSetArb { gtc_timeout_secs, .. }
+            | Self::HedgeLock { gtc_timeout_secs, .. }
+            | Self::LateWindowSniper { gtc_timeout_secs, .. }
+            | Self::MeanReversion { gtc_timeout_secs, .. } => *gtc_timeout_secs,
+        }
+    }
 }
 
 /// Default strategy list — mirrors the hardcoded values used before
@@ -80,24 +322,185 @@ pub enum StrategyConfig {
 pub fn default_strategies() -> Vec<StrategyConfig> {
     vec![
         StrategyConfig::EarlyDirectional {
+            label: String::new(),
+            mode: default_strategy_mode(),
             max_entry_time_secs: 180,
             min_spot_magnitude: 0.001,
             max_entry_price: 0.58,
+            balance: default_instance_balance(),
+            max_position_usdc: default_instance_max_position(),
+            max_exposure_usdc: default_instance_max_exposure(),
+            kelly_fraction: default_instance_kelly(),
+            max_daily_loss: default_instance_max_daily_loss(),
+            slippage_bps: default_instance_slippage(),
+            order_mode: default_order_mode(),
+            gtc_timeout_secs: default_gtc_timeout_secs(),
         },
         StrategyConfig::MomentumConfirmation {
+            label: String::new(),
+            mode: default_strategy_mode(),
             min_entry_time_secs: 180,
             max_entry_time_secs: 480,
             min_spot_magnitude: 0.003,
             max_entry_price: 0.72,
+            balance: default_instance_balance(),
+            max_position_usdc: default_instance_max_position(),
+            max_exposure_usdc: default_instance_max_exposure(),
+            kelly_fraction: default_instance_kelly(),
+            max_daily_loss: default_instance_max_daily_loss(),
+            slippage_bps: default_instance_slippage(),
+            order_mode: default_order_mode(),
+            gtc_timeout_secs: default_gtc_timeout_secs(),
         },
         StrategyConfig::CompleteSetArb {
+            mode: default_strategy_mode(),
             max_combined_cost: 0.98,
             min_profit_per_share: 0.01,
+            balance: default_instance_balance(),
+            max_position_usdc: default_instance_max_position(),
+            max_exposure_usdc: default_instance_max_exposure(),
+            kelly_fraction: default_instance_kelly(),
+            max_daily_loss: default_instance_max_daily_loss(),
+            slippage_bps: default_instance_slippage(),
+            order_mode: default_order_mode(),
+            gtc_timeout_secs: default_gtc_timeout_secs(),
         },
         StrategyConfig::HedgeLock {
+            mode: default_strategy_mode(),
             max_combined_cost: 0.95,
+            balance: default_instance_balance(),
+            max_position_usdc: default_instance_max_position(),
+            max_exposure_usdc: default_instance_max_exposure(),
+            kelly_fraction: default_instance_kelly(),
+            max_daily_loss: default_instance_max_daily_loss(),
+            slippage_bps: default_instance_slippage(),
+            order_mode: default_order_mode(),
+            gtc_timeout_secs: default_gtc_timeout_secs(),
         },
     ]
+}
+
+fn default_instance_balance() -> f64 {
+    125.0
+}
+fn default_instance_max_position() -> f64 {
+    25.0
+}
+fn default_instance_max_exposure() -> f64 {
+    100.0
+}
+fn default_instance_kelly() -> f64 {
+    0.25
+}
+fn default_instance_max_daily_loss() -> f64 {
+    50.0
+}
+fn default_instance_slippage() -> u32 {
+    10
+}
+
+fn default_order_mode() -> String {
+    String::from("fok")
+}
+
+fn default_gtc_timeout_secs() -> u64 {
+    120
+}
+
+fn default_max_positions_per_window() -> usize {
+    1
+}
+fn default_scan_interval_secs() -> u64 {
+    120
+}
+fn default_max_price_age_ms() -> u64 {
+    15_000
+}
+
+// ─── TrendFilterConfig ──────────────────────────────────────────────────────
+
+/// Trend filter configuration.
+///
+/// Controls the EMA-based higher-timeframe trend filter that prevents
+/// trading against the prevailing trend.  Particularly important for
+/// short (5 m) windows where signal-to-noise is low.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TrendFilterConfig {
+    /// Enable/disable the trend filter.
+    #[serde(default = "default_trend_filter_enabled")]
+    pub enabled: bool,
+    /// Fast EMA period in ticks (default: 20, ~10 min at 2 ticks/sec).
+    #[serde(default = "default_trend_fast_period")]
+    pub fast_period: usize,
+    /// Slow EMA period in ticks (default: 60, ~30 min).
+    #[serde(default = "default_trend_slow_period")]
+    pub slow_period: usize,
+    /// Minimum trend strength to consider the trend established (default: 0.0005).
+    #[serde(default = "default_min_trend_strength")]
+    pub min_trend_strength: f64,
+}
+
+impl Default for TrendFilterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_trend_filter_enabled(),
+            fast_period: default_trend_fast_period(),
+            slow_period: default_trend_slow_period(),
+            min_trend_strength: default_min_trend_strength(),
+        }
+    }
+}
+
+fn default_trend_filter_enabled() -> bool {
+    true
+}
+fn default_trend_fast_period() -> usize {
+    20
+}
+fn default_trend_slow_period() -> usize {
+    60
+}
+fn default_min_trend_strength() -> f64 {
+    0.0005
+}
+
+// ─── EntryTimingConfig ──────────────────────────────────────────────────────
+
+/// Configuration for smart entry timing.
+///
+/// When enabled, the bot waits after a signal fires for optimal conditions
+/// (spread improvement, better ask price) before executing, up to a timeout.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EntryTimingConfig {
+    /// Enable/disable smart entry timing (default: false — opt-in).
+    #[serde(default = "default_entry_timing_enabled")]
+    pub enabled: bool,
+    /// Maximum seconds to wait for optimal conditions after signal fires.
+    #[serde(default = "default_max_wait_secs")]
+    pub max_wait_secs: u64,
+    /// Minimum spread improvement (fraction narrower than at signal time) to trigger early entry.
+    #[serde(default = "default_min_spread_improvement")]
+    pub min_spread_improvement: f64,
+}
+
+impl Default for EntryTimingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_entry_timing_enabled(),
+            max_wait_secs: default_max_wait_secs(),
+            min_spread_improvement: default_min_spread_improvement(),
+        }
+    }
+}
+
+fn default_entry_timing_enabled() -> bool {
+    false
+}
+fn default_max_wait_secs() -> u64 {
+    5
+}
+fn default_min_spread_improvement() -> f64 {
+    0.02
 }
 
 // ─── Mode ────────────────────────────────────────────────────────────────────
@@ -188,6 +591,21 @@ pub struct BotSection {
     /// old config files continue to work without modification.
     #[serde(default = "default_strategies")]
     pub strategies: Vec<StrategyConfig>,
+    /// Maximum positions per window (default: 1).
+    #[serde(default = "default_max_positions_per_window")]
+    pub max_positions_per_window: usize,
+    /// Market scan interval in seconds (default: 30).
+    #[serde(default = "default_scan_interval_secs")]
+    pub scan_interval_secs: u64,
+    /// Maximum age of cached prices in milliseconds before fallback (default: 15000).
+    #[serde(default = "default_max_price_age_ms")]
+    pub max_price_age_ms: u64,
+    /// Higher-timeframe EMA trend filter configuration.
+    #[serde(default)]
+    pub trend_filter: TrendFilterConfig,
+    /// Smart entry timing configuration.
+    #[serde(default)]
+    pub entry_timing: EntryTimingConfig,
 }
 
 // ─── BotConfig ───────────────────────────────────────────────────────────────
@@ -384,16 +802,35 @@ log_dir = "logs"
         assert_eq!(
             cfg.bot.strategies[0],
             StrategyConfig::EarlyDirectional {
+                label: String::new(),
+                mode: default_strategy_mode(),
                 max_entry_time_secs: 120,
                 min_spot_magnitude: 0.002,
                 max_entry_price: 0.55,
+                balance: default_instance_balance(),
+                max_position_usdc: default_instance_max_position(),
+                max_exposure_usdc: default_instance_max_exposure(),
+                kelly_fraction: default_instance_kelly(),
+                max_daily_loss: default_instance_max_daily_loss(),
+                slippage_bps: default_instance_slippage(),
+                order_mode: default_order_mode(),
+                gtc_timeout_secs: default_gtc_timeout_secs(),
             }
         );
         assert_eq!(
             cfg.bot.strategies[1],
             StrategyConfig::CompleteSetArb {
+                mode: default_strategy_mode(),
                 max_combined_cost: 0.97,
                 min_profit_per_share: 0.02,
+                balance: default_instance_balance(),
+                max_position_usdc: default_instance_max_position(),
+                max_exposure_usdc: default_instance_max_exposure(),
+                kelly_fraction: default_instance_kelly(),
+                max_daily_loss: default_instance_max_daily_loss(),
+                slippage_bps: default_instance_slippage(),
+                order_mode: default_order_mode(),
+                gtc_timeout_secs: default_gtc_timeout_secs(),
             }
         );
     }

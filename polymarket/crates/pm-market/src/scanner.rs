@@ -44,6 +44,12 @@ pub struct MarketInfo {
     pub timeframe: Timeframe,
     /// ISO-8601 end date/time string from the API.
     pub end_date: String,
+    /// Total orderbook liquidity in USD (from Gamma API).
+    pub liquidity: f64,
+    /// 24-hour trading volume in USD.
+    pub volume_24h: f64,
+    /// Current spread (ask - bid).
+    pub spread: f64,
 }
 
 // ─── Gamma API response types ────────────────────────────────────────────────
@@ -70,9 +76,21 @@ pub struct GammaMarket {
     /// JSON-encoded array of outcome labels, e.g. `"[\"Up\",\"Down\"]"`.
     #[serde(default)]
     pub outcomes: String,
+    /// Start date/time ISO string.
+    #[serde(rename = "startDate", default)]
+    pub start_date: String,
     /// End date/time ISO string.
     #[serde(rename = "endDate", default)]
     pub end_date: String,
+    /// Total orderbook liquidity in USD.
+    #[serde(rename = "liquidityNum", default)]
+    pub liquidity: f64,
+    /// 24-hour trading volume in USD.
+    #[serde(rename = "volume24hr", default)]
+    pub volume_24h: f64,
+    /// Current spread (ask - bid).
+    #[serde(default)]
+    pub spread: f64,
 }
 
 /// A single event entry from the Gamma API response.
@@ -80,7 +98,7 @@ pub struct GammaMarket {
 pub struct GammaEvent {
     /// Event title (e.g. `"Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET"`).
     pub title: String,
-    /// Event slug (e.g. `"btc-updown-15m-1774798200"`).
+    /// Event slug (e.g. `"btc-updown-15m-1894708800"`).
     #[serde(default)]
     pub slug: String,
     /// Markets contained in this event.
@@ -134,12 +152,22 @@ fn parse_asset_timeframe(title: &str, slug: &str) -> Option<(Asset, Timeframe)> 
         // Generic "hour" match falls back to 1-hour.
         Timeframe::Hour1
     } else {
-        // Default to 15-minute if the event is clearly crypto Up/Down but has no
-        // explicit timeframe tag (the tag_slug=up-or-down endpoint returns mostly 15m).
-        Timeframe::Min15
+        // No recognisable timeframe — skip this market entirely.
+        // Daily / weekly / untagged markets must NOT default to a short timeframe
+        // or we'll buy into the wrong contract.
+        return None;
     };
 
     Some((asset, timeframe))
+}
+
+/// Extract the Unix timestamp from a Polymarket event slug.
+///
+/// Slugs follow the pattern `{asset}-updown-{tf}-{unix_ts}`, e.g.
+/// `btc-updown-15m-1774892700`. Returns `None` if the slug doesn't end
+/// with a parseable integer.
+fn extract_slug_timestamp(slug: &str) -> Option<i64> {
+    slug.rsplit('-').next()?.parse::<i64>().ok()
 }
 
 /// Extract `(token_id_up, token_id_down)` from the raw JSON-string fields
@@ -263,6 +291,33 @@ pub fn parse_gamma_response(json: &str, assets: &[Asset]) -> Result<Vec<MarketIn
                 }
             }
 
+            // Validate that the market's end_date is consistent with the
+            // expected timeframe by extracting the window-open timestamp from
+            // the event slug (e.g. `btc-updown-15m-1774892700`).
+            //
+            // NOTE: We cannot use market.start_date — it is the market
+            // *creation* timestamp, not the window open time.  A 15m market
+            // created a day earlier would look like a 24h duration.
+            if let Ok(end_dt) = market.end_date.parse::<chrono::DateTime<Utc>>() {
+                if let Some(window_open_ts) = extract_slug_timestamp(&event.slug) {
+                    let expected_end = window_open_ts + event_timeframe.duration_secs() as i64;
+                    let actual_end = end_dt.timestamp();
+                    // Allow ±5 minutes tolerance for rounding.
+                    if (actual_end - expected_end).unsigned_abs() > 300 {
+                        debug!(
+                            condition_id = %market.condition_id,
+                            slug = %event.slug,
+                            expected_end = expected_end,
+                            actual_end = actual_end,
+                            timeframe = %event_timeframe,
+                            title = %event.title,
+                            "skipping market — end_date doesn't match slug timestamp + timeframe"
+                        );
+                        continue;
+                    }
+                }
+            }
+
             let Some((token_id_up, token_id_down)) =
                 extract_token_ids_from_strings(&market.clob_token_ids, &market.outcomes)
             else {
@@ -286,6 +341,9 @@ pub fn parse_gamma_response(json: &str, assets: &[Asset]) -> Result<Vec<MarketIn
                 asset,
                 timeframe,
                 end_date: market.end_date.clone(),
+                liquidity: market.liquidity,
+                volume_24h: market.volume_24h,
+                spread: market.spread,
             });
 
             debug!(
@@ -307,11 +365,13 @@ mod tests {
     use super::*;
 
     /// Sample response matching the real Gamma API shape for tag_slug=up-or-down.
-    /// Dates are set far in the future so the end_time filter never drops them.
+    /// Slug timestamps and endDates are consistent:
+    ///   - BTC 15m: slug=1894708800 (2030-01-15T12:00Z) + 15m = endDate 2030-01-15T12:15Z
+    ///   - ETH 1h:  slug=1894710600 (2030-01-15T12:30Z) + 1h  = endDate 2030-01-15T13:30Z
     const SAMPLE_GAMMA_RESPONSE: &str = r#"[
         {
             "title": "Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET",
-            "slug": "btc-updown-15m-1774798200",
+            "slug": "btc-updown-15m-1894708800",
             "markets": [
                 {
                     "conditionId": "0xabc123",
@@ -325,13 +385,13 @@ mod tests {
         },
         {
             "title": "Ethereum Up or Down - March 29, 1:00PM-2:00PM ET",
-            "slug": "eth-updown-1h-1774800000",
+            "slug": "eth-updown-1h-1894710600",
             "markets": [
                 {
                     "conditionId": "0xdef456",
                     "active": true,
                     "closed": false,
-                    "endDate": "2030-01-15T13:00:00Z",
+                    "endDate": "2030-01-15T13:30:00Z",
                     "clobTokenIds": "[\"tok_eth_up\",\"tok_eth_down\"]",
                     "outcomes": "[\"Up\",\"Down\"]"
                 }
@@ -376,7 +436,7 @@ mod tests {
         let json = r#"[
             {
                 "title": "Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET",
-                "slug": "btc-updown-15m-1774798200",
+                "slug": "btc-updown-15m-1894708800",
                 "markets": [
                     {
                         "conditionId": "0x111",
@@ -400,7 +460,7 @@ mod tests {
         let json = r#"[
             {
                 "title": "Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET",
-                "slug": "btc-updown-15m-1774798200",
+                "slug": "btc-updown-15m-1894708800",
                 "markets": [
                     {
                         "conditionId": "0xexpired",
@@ -423,7 +483,7 @@ mod tests {
         let json = r#"[
             {
                 "title": "Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET",
-                "slug": "btc-updown-15m-1774798200",
+                "slug": "btc-updown-15m-1894708800",
                 "markets": [
                     {
                         "conditionId": "0xnodate",
@@ -445,13 +505,13 @@ mod tests {
         let json = r#"[
             {
                 "title": "Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET",
-                "slug": "btc-updown-15m-1774798200",
+                "slug": "btc-updown-15m-1894708800",
                 "markets": [
                     {
                         "conditionId": "0x222",
                         "active": true,
                         "closed": false,
-                        "endDate": "2030-01-15T13:00:00Z",
+                        "endDate": "2030-01-15T12:15:00Z",
                         "clobTokenIds": "",
                         "outcomes": ""
                     }
@@ -468,7 +528,7 @@ mod tests {
         let json = r#"[
             {
                 "title": "Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET",
-                "slug": "btc-updown-15m-1774798200",
+                "slug": "btc-updown-15m-1894708800",
                 "markets": [
                     {
                         "conditionId": "0x333",
@@ -492,7 +552,7 @@ mod tests {
     fn parse_asset_timeframe_btc_15m() {
         let (asset, tf) = parse_asset_timeframe(
             "Bitcoin Up or Down - March 29, 12:15PM-12:30PM ET",
-            "btc-updown-15m-1774798200",
+            "btc-updown-15m-1894708800",
         )
         .expect("should match BTC 15m");
         assert_eq!(asset, Asset::Btc);
@@ -503,7 +563,7 @@ mod tests {
     fn parse_asset_timeframe_eth_1h() {
         let (asset, tf) = parse_asset_timeframe(
             "Ethereum Up or Down - March 29, 1:00PM-2:00PM ET",
-            "eth-updown-1h-1774800000",
+            "eth-updown-1h-1894710600",
         )
         .expect("should match ETH 1h");
         assert_eq!(asset, Asset::Eth);

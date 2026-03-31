@@ -20,6 +20,8 @@ pub struct RiskConfig {
     pub max_daily_loss_usdc: f64,
     /// Fraction of Kelly criterion to use (e.g., 0.25).
     pub kelly_fraction: f64,
+    /// Maximum same-side positions before correlation guard triggers (default: 2).
+    pub max_same_side_positions: usize,
 }
 
 // ─── RiskManager ─────────────────────────────────────────────────────────────
@@ -102,8 +104,7 @@ impl RiskManager {
             .map(|p| p.asset)
             .collect();
 
-        // 2 existing + 1 proposed = 3 → reject.
-        if same_side_assets.len() >= 2 {
+        if same_side_assets.len() >= self.config.max_same_side_positions {
             warn!(
                 side = %decision.side,
                 correlated_assets = same_side_assets.len(),
@@ -270,7 +271,8 @@ mod tests {
     extern crate std;
 
     use pm_types::{
-        Asset, ContractPrice, EntryDecision, OpenPosition, Pnl, Side, StrategyId, WindowId,
+        Asset, ContractPrice, EntryDecision, OpenPosition, Pnl, Side, StrategyId, StrategyLabel,
+        WindowId,
     };
 
     use super::*;
@@ -283,6 +285,7 @@ mod tests {
             max_total_exposure_usdc: 200.0,
             max_daily_loss_usdc: 100.0,
             kelly_fraction: 0.25,
+            max_same_side_positions: 2,
         }
     }
 
@@ -292,6 +295,7 @@ mod tests {
             limit_price: ContractPrice::new(0.55).expect("valid price"),
             confidence,
             strategy_id: StrategyId::EarlyDirectional,
+            label: StrategyLabel::EMPTY,
         }
     }
 

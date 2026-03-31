@@ -13,7 +13,8 @@ use alloc::{boxed::Box, vec::Vec};
 use pm_types::{EntryDecision, MarketState};
 
 use crate::{
-    CompleteSetArb, EarlyDirectional, HedgeLock, MomentumConfirmation,
+    CompleteSetArb, EarlyDirectional, HedgeLock, LateWindowSniper, MeanReversion,
+    MomentumConfirmation,
     strategy_trait::Strategy,
 };
 
@@ -31,7 +32,7 @@ pub type DecisionsIter<'a> = core::iter::FilterMap<
 ///
 /// Sized for the four concrete strategies in the current engine.  Raise this
 /// constant if more strategies are added.
-pub const MAX_STRATEGIES: usize = 4;
+pub const MAX_STRATEGIES: usize = 6;
 
 // ─── Decisions ───────────────────────────────────────────────────────────────
 
@@ -118,6 +119,10 @@ pub enum AnyStrategy {
     Momentum(MomentumConfirmation),
     /// [`HedgeLock`] variant.
     Hedge(HedgeLock),
+    /// [`LateWindowSniper`] variant.
+    LateSniper(LateWindowSniper),
+    /// [`MeanReversion`] variant.
+    MeanRev(MeanReversion),
     /// Escape hatch: any boxed [`Strategy`] trait object.
     Boxed(Box<dyn Strategy>),
 }
@@ -125,12 +130,14 @@ pub enum AnyStrategy {
 impl AnyStrategy {
     /// Evaluate the strategy — no virtual dispatch for the four concrete arms.
     #[inline]
-    fn evaluate(&self, state: &MarketState) -> Option<EntryDecision> {
+    pub fn evaluate(&self, state: &MarketState) -> Option<EntryDecision> {
         match self {
             Self::Arb(s) => s.evaluate(state),
             Self::Early(s) => s.evaluate(state),
             Self::Momentum(s) => s.evaluate(state),
             Self::Hedge(s) => s.evaluate(state),
+            Self::LateSniper(s) => s.evaluate(state),
+            Self::MeanRev(s) => s.evaluate(state),
             Self::Boxed(s) => s.evaluate(state),
         }
     }
@@ -215,8 +222,8 @@ mod tests {
     use alloc::{boxed::Box, vec};
 
     use pm_types::{
-        Asset, ContractPrice, EntryDecision, MarketState, Price, Side, StrategyId, Timeframe,
-        WindowId,
+        Asset, ContractPrice, EntryDecision, MarketState, Price, Side, StrategyId, StrategyLabel,
+        Timeframe, WindowId,
     };
 
     use super::*;
@@ -239,6 +246,7 @@ mod tests {
                 limit_price: ContractPrice::new(0.50).expect("valid"),
                 confidence: self.confidence,
                 strategy_id: self.id,
+                label: StrategyLabel::EMPTY,
             })
         }
     }
@@ -268,6 +276,7 @@ mod tests {
             contract_ask_down: ContractPrice::new(0.48),
             contract_bid_up: ContractPrice::new(0.53),
             contract_bid_down: ContractPrice::new(0.46),
+            orderbook_imbalance: None,
         }
     }
 

@@ -14,11 +14,11 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result};
 use pm_bookkeeper::{export_equity_curve, export_summary, export_trades_csv};
-use pm_executor::{BacktestConfig, ModelPriceProvider, run_backtest};
+use pm_executor::{ModelPriceProvider, run_backtest_v2};
 use pm_oracle::contract_model;
 use pm_oracle::pbt_replay::{PbtObservation, pbt_to_price_observations};
 use pm_oracle::PbtReplay;
-use pm_signal::build_engine_from_config;
+use pm_signal::build_instances_from_config;
 use pm_types::{Asset, Timeframe, config::BotConfig};
 use tracing::info;
 
@@ -155,10 +155,16 @@ pub fn run_pbt_backtest(cfg: &BotConfig) -> Result<()> {
 
     info!(ticks = ticks.len(), "feeding ticks to backtest engine");
 
-    // Build strategy engine from TOML config — parameters are fully
-    // configurable via [[bot.strategies]] blocks.  Falls back to sensible
-    // defaults when the key is absent from the config file.
-    let engine = build_engine_from_config(&cfg.bot.strategies);
+    // Build independent strategy instances from TOML config — parameters are
+    // fully configurable via [[bot.strategies]] blocks.  Each instance owns its
+    // balance, positions, and risk parameters.
+    let mut instances: Vec<Box<dyn pm_types::StrategyInstance>> =
+        build_instances_from_config(&cfg.bot.strategies)
+            .into_iter()
+            .map(|i| Box::new(i) as Box<dyn pm_types::StrategyInstance>)
+            .collect();
+
+    info!(count = instances.len(), "strategy instances created for PBT backtest");
 
     // Use the PBT-calibrated model as the price provider.
     let price_provider = ModelPriceProvider {
@@ -166,57 +172,63 @@ pub fn run_pbt_backtest(cfg: &BotConfig) -> Result<()> {
         half_spread: 0.005, // tighter spread for PBT data — it's from real orderbooks
     };
 
-    let bt_config = BacktestConfig {
-        initial_balance: cfg.backtest.initial_balance,
-        slippage_bps: cfg.backtest.slippage_bps,
-        max_position_usdc: cfg.bot.max_position_usdc,
-        max_positions_per_window: 1,
-    };
-
-    let result = run_backtest(
+    let result_v2 = run_backtest_v2(
         ticks.into_iter(),
-        &engine,
+        &mut instances,
         &price_provider,
-        &bt_config,
         &enabled_assets,
         &enabled_timeframes,
+        Some(&cfg.bot.trend_filter),
     );
+
+    // Log per-instance results.
+    let mut all_trades: Vec<pm_types::TradeRecord> = Vec::new();
+    for inst_result in &result_v2.instances {
+        info!(
+            instance = %inst_result.label,
+            balance = format!("${:.2}", inst_result.final_balance),
+            record = %inst_result.stats.record_str(),
+            pnl = format!("${:+.2}", inst_result.stats.realized_pnl),
+            trades = inst_result.trades.len(),
+            "instance result"
+        );
+        all_trades.extend_from_slice(&inst_result.trades);
+    }
+
+    let total_balance: f64 = result_v2.instances.iter().map(|i| i.final_balance).sum();
+    let total_pnl: f64 = result_v2.instances.iter().map(|i| i.stats.realized_pnl).sum();
+    let total_wins: u32 = result_v2.instances.iter().map(|i| i.stats.wins).sum();
+    let total_losses: u32 = result_v2.instances.iter().map(|i| i.stats.losses).sum();
+    let total_trades_count = total_wins + total_losses;
+    let win_rate = if total_trades_count > 0 {
+        total_wins as f64 / total_trades_count as f64 * 100.0
+    } else {
+        0.0
+    };
 
     info!(
-        total_trades = result.summary.total_trades,
-        wins = result.summary.wins,
-        losses = result.summary.losses,
-        win_rate = result.summary.win_rate,
-        total_pnl = result.summary.total_pnl,
-        final_balance = result.final_balance,
-        sharpe = result.summary.sharpe_ratio,
-        profit_factor = result.summary.profit_factor,
-        max_drawdown = result.summary.max_drawdown,
-        "PBT backtest complete"
+        total_trades = total_trades_count,
+        wins = total_wins,
+        losses = total_losses,
+        win_rate = format!("{win_rate:.1}%"),
+        total_pnl = format!("${total_pnl:+.2}"),
+        total_balance = format!("${total_balance:.2}"),
+        "PBT backtest complete (v2)"
     );
-
-    // Per-strategy breakdown.
-    for (id, summary) in &result.per_strategy {
-        info!(
-            strategy = %id,
-            trades = summary.total_trades,
-            wins = summary.wins,
-            win_rate = summary.win_rate,
-            total_pnl = summary.total_pnl,
-            "per-strategy summary"
-        );
-    }
 
     // Export results.
     let pbt_log = log_dir.join("pbt");
     std::fs::create_dir_all(&pbt_log)
         .context("failed to create PBT log directory")?;
 
-    export_trades_csv(&pbt_log.join("trades.csv"), &result.trades)
+    // Compute a combined summary for export.
+    let combined_summary = pm_bookkeeper::compute_summary(&all_trades);
+
+    export_trades_csv(&pbt_log.join("trades.csv"), &all_trades)
         .context("failed to export PBT trades.csv")?;
-    export_equity_curve(&pbt_log.join("equity.csv"), &result.trades)
+    export_equity_curve(&pbt_log.join("equity.csv"), &all_trades)
         .context("failed to export PBT equity.csv")?;
-    export_summary(&pbt_log.join("summary.json"), &result.summary)
+    export_summary(&pbt_log.join("summary.json"), &combined_summary)
         .context("failed to export PBT summary.json")?;
 
     info!(log_dir = %pbt_log.display(), "PBT results exported");

@@ -30,25 +30,47 @@ timeframes = ["min5", "min15"]
 # 81.4% WR, PF 14.11, -$75 max DD
 [[bot.strategies]]
 type = "early_directional"
+mode = "paper"
 max_entry_time_secs = 150
 min_spot_magnitude = 0.002
 max_entry_price = 0.53
+balance = 250.0
+max_position_usdc = 25.0
+max_exposure_usdc = 100.0
+kelly_fraction = 0.25
+max_daily_loss = 50.0
+slippage_bps = 10
 
 [[bot.strategies]]
 type = "momentum_confirmation"
+mode = "paper"
 min_entry_time_secs = 180
 max_entry_time_secs = 480
 min_spot_magnitude = 0.003
 max_entry_price = 0.72
+balance = 250.0
+max_position_usdc = 25.0
+max_exposure_usdc = 100.0
+kelly_fraction = 0.25
+max_daily_loss = 50.0
+slippage_bps = 10
 
-[[bot.strategies]]
-type = "complete_set_arb"
-max_combined_cost = 0.98
-min_profit_per_share = 0.01
+# Disabled: CompleteSetArb only buys one leg — needs proper two-leg execution.
+# [[bot.strategies]]
+# type = "complete_set_arb"
+# max_combined_cost = 0.98
+# min_profit_per_share = 0.01
 
-[[bot.strategies]]
-type = "hedge_lock"
-max_combined_cost = 0.95
+# Disabled: HedgeLock needs two-leg execution to work correctly.
+# [[bot.strategies]]
+# type = "hedge_lock"
+# max_combined_cost = 0.95
+
+[bot.trend_filter]
+enabled = true
+fast_period = 20
+slow_period = 60
+min_trend_strength = 0.0005
 
 [backtest]
 start_date = "2026-03-01"

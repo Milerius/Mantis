@@ -193,6 +193,8 @@ pub fn run_sweep<P: ContractPriceProvider + Sync>(
                 base_config,
                 enabled_assets,
                 enabled_timeframes,
+                None,
+                None,
             );
 
             SweepResult {
