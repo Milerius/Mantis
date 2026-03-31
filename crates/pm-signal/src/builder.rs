@@ -159,6 +159,7 @@ pub fn build_instances_from_config(
                         kelly_fraction,
                         max_daily_loss,
                         slippage_bps,
+                        ..
                     } => {
                         let auto_label = if label.is_empty() {
                             std::format!("ED-{max_entry_price}")
@@ -197,6 +198,7 @@ pub fn build_instances_from_config(
                         kelly_fraction,
                         max_daily_loss,
                         slippage_bps,
+                        ..
                     } => {
                         let auto_label = if label.is_empty() {
                             std::format!("MC-{max_entry_price}")
@@ -233,6 +235,7 @@ pub fn build_instances_from_config(
                         kelly_fraction,
                         max_daily_loss,
                         slippage_bps,
+                        ..
                     } => {
                         let strat = AnyStrategy::Arb(CompleteSetArb::new(
                             *max_combined_cost,
@@ -258,6 +261,7 @@ pub fn build_instances_from_config(
                         kelly_fraction,
                         max_daily_loss,
                         slippage_bps,
+                        ..
                     } => {
                         let strat = AnyStrategy::Hedge(HedgeLock::new(*max_combined_cost));
                         (
@@ -283,6 +287,7 @@ pub fn build_instances_from_config(
                         kelly_fraction,
                         max_daily_loss,
                         slippage_bps,
+                        ..
                     } => {
                         let auto_label = if label.is_empty() {
                             std::format!("LWS-{max_entry_price}")
@@ -320,6 +325,7 @@ pub fn build_instances_from_config(
                         kelly_fraction,
                         max_daily_loss,
                         slippage_bps,
+                        ..
                     } => {
                         let auto_label = if label.is_empty() {
                             std::format!("MR-{max_opposite_price}")

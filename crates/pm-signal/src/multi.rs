@@ -13,7 +13,8 @@ use alloc::{boxed::Box, vec::Vec};
 use pm_types::{EntryDecision, MarketState};
 
 use crate::{
-    CompleteSetArb, EarlyDirectional, HedgeLock, MomentumConfirmation,
+    CompleteSetArb, EarlyDirectional, HedgeLock, LateWindowSniper, MeanReversion,
+    MomentumConfirmation,
     strategy_trait::Strategy,
 };
 
@@ -31,7 +32,7 @@ pub type DecisionsIter<'a> = core::iter::FilterMap<
 ///
 /// Sized for the four concrete strategies in the current engine.  Raise this
 /// constant if more strategies are added.
-pub const MAX_STRATEGIES: usize = 4;
+pub const MAX_STRATEGIES: usize = 6;
 
 // ─── Decisions ───────────────────────────────────────────────────────────────
 
@@ -118,6 +119,10 @@ pub enum AnyStrategy {
     Momentum(MomentumConfirmation),
     /// [`HedgeLock`] variant.
     Hedge(HedgeLock),
+    /// [`LateWindowSniper`] variant.
+    LateSniper(LateWindowSniper),
+    /// [`MeanReversion`] variant.
+    MeanRev(MeanReversion),
     /// Escape hatch: any boxed [`Strategy`] trait object.
     Boxed(Box<dyn Strategy>),
 }
@@ -131,6 +136,8 @@ impl AnyStrategy {
             Self::Early(s) => s.evaluate(state),
             Self::Momentum(s) => s.evaluate(state),
             Self::Hedge(s) => s.evaluate(state),
+            Self::LateSniper(s) => s.evaluate(state),
+            Self::MeanRev(s) => s.evaluate(state),
             Self::Boxed(s) => s.evaluate(state),
         }
     }
