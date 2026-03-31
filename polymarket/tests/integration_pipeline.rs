@@ -63,6 +63,9 @@ fn early_directional_state(window_id: u64, elapsed: u64) -> MarketState {
         contract_bid_up: ContractPrice::new(0.50),
         contract_bid_down: ContractPrice::new(0.48),
         orderbook_imbalance: None,
+        binance_price: None,
+        okx_price: None,
+        momentum_score: 0.0,
     }
 }
 
@@ -83,6 +86,9 @@ fn momentum_state(window_id: u64, elapsed: u64) -> MarketState {
         contract_bid_up: ContractPrice::new(0.53),
         contract_bid_down: ContractPrice::new(0.46),
         orderbook_imbalance: None,
+        binance_price: None,
+        okx_price: None,
+        momentum_score: 0.0,
     }
 }
 

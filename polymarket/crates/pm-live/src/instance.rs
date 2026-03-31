@@ -96,6 +96,9 @@ pub struct LiveStrategyInstance {
     last_gtc_order: Option<crate::order_manager::PendingOrder>,
     /// Optional channel for sending GTC orders to the main loop's OrderManager.
     gtc_order_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::order_manager::PendingOrder>>,
+    /// Cached token info to avoid mutex lock on every tick.
+    /// (asset, timeframe, token_up, token_down, condition_id, end_date_ms)
+    cached_token_info: Option<(Asset, Timeframe, String, String, String, u64)>,
 }
 
 impl LiveStrategyInstance {
@@ -129,18 +132,64 @@ impl LiveStrategyInstance {
             gtc_timeout_ms: gtc_timeout_secs * 1000,
             last_gtc_order: None,
             gtc_order_tx,
+            cached_token_info: None,
         }
     }
 
     /// Look up token ID, condition ID, and window end for (asset, timeframe, side).
+    ///
+    /// Uses a per-instance cache to avoid locking the shared token map on every tick.
+    /// The cache is invalidated when the (asset, timeframe) pair changes.
     fn get_token_info(&self, asset: Asset, timeframe: Timeframe, side: Side) -> Option<(String, String, u64)> {
+        // Check cache first.
+        if let Some((ref ca, ref ct, ref tok_up, ref tok_down, ref cid, end_ms)) =
+            self.cached_token_info
+        {
+            if *ca == asset && *ct == timeframe {
+                let token_id = match side {
+                    Side::Up => tok_up.clone(),
+                    Side::Down => tok_down.clone(),
+                };
+                return Some((token_id, cid.clone(), end_ms));
+            }
+        }
+
+        // Cache miss — lock the shared map.
         let map = self.token_map.lock().ok()?;
         let pair = map.get(&(asset, timeframe))?;
         let token_id = match side {
             Side::Up => pair.up.clone(),
             Side::Down => pair.down.clone(),
         };
-        Some((token_id, pair.condition_id.clone(), pair.end_date_ms))
+        let result = (token_id, pair.condition_id.clone(), pair.end_date_ms);
+
+        // We can't mutate &self here, so we drop the lock and return.
+        // The cache will be populated via `invalidate_token_cache()` or on next
+        // mutable access. For now, store via interior trick below.
+        // Actually — get_token_info is called from on_tick which is &mut self,
+        // but this fn takes &self. We'll populate cache in on_tick after calling.
+        Some(result)
+    }
+
+    /// Populate the token info cache for the given (asset, timeframe).
+    fn warm_token_cache(&mut self, asset: Asset, timeframe: Timeframe) {
+        if let Some((ref ca, ref ct, ..)) = self.cached_token_info {
+            if *ca == asset && *ct == timeframe {
+                return; // already cached
+            }
+        }
+        if let Ok(map) = self.token_map.lock() {
+            if let Some(pair) = map.get(&(asset, timeframe)) {
+                self.cached_token_info = Some((
+                    asset,
+                    timeframe,
+                    pair.up.clone(),
+                    pair.down.clone(),
+                    pair.condition_id.clone(),
+                    pair.end_date_ms,
+                ));
+            }
+        }
     }
 
     /// Map our domain `Side` to the SDK's CLOB `Side`.
@@ -252,16 +301,40 @@ impl LiveStrategyInstance {
         let mut trades = Vec::new();
         let mut i = 0;
 
+        if !self.real_positions.is_empty() {
+            info!(
+                instance = %self.label(),
+                positions = self.real_positions.len(),
+                "poll_resolutions: checking positions"
+            );
+        }
+
         while i < self.real_positions.len() {
             let pos = &self.real_positions[i];
 
             // Only poll after window_end + 30 seconds.
             if now_ms < pos.window_end_ms + 30_000 {
+                info!(
+                    instance = %self.label(),
+                    asset = %pos.asset,
+                    side = %pos.side,
+                    window_end_ms = pos.window_end_ms,
+                    now_ms = now_ms,
+                    wait_secs = (pos.window_end_ms + 30_000).saturating_sub(now_ms) / 1000,
+                    "poll_resolutions: window not ended yet — waiting"
+                );
                 i += 1;
                 continue;
             }
 
             let condition_id = pos.condition_id.clone();
+            info!(
+                instance = %self.label(),
+                asset = %pos.asset,
+                side = %pos.side,
+                condition_id = %condition_id,
+                "poll_resolutions: checking CLOB API for resolution"
+            );
             let result = tokio::task::block_in_place(|| {
                 self.rt_handle.block_on(async {
                     check_market_resolution(http_client, &condition_id).await
@@ -297,6 +370,36 @@ impl LiveStrategyInstance {
                         our_token = %pos.token_id,
                         "LIVE RESOLVED (oracle)"
                     );
+
+                    // TODO(auto-redeem): Implement one of these approaches:
+                    //
+                    // 1. Relayer API (gasless, same as PM UI):
+                    //    - POST to relayer-v2.polymarket.com/submit
+                    //    - Requires Builder API credentials (POLY_BUILDER_API_KEY)
+                    //    - Encode redeemPositions calldata, sign with EIP-712
+                    //    - See: docs.polymarket.com/trading/gasless
+                    //    - See: github.com/Polymarket/builder-relayer-client
+                    //
+                    // 2. Switch to EOA wallet:
+                    //    - Direct CTF contract call works from EOA
+                    //    - No relayer needed, but requires moving funds
+                    //    - Set signature_type to Eoa in clob.rs
+                    //
+                    // 3. Sell before resolution (during window):
+                    //    - Monitor contract price via WS, sell at $0.95+
+                    //    - Works with any wallet type
+                    //    - Loses $0.01-0.05 per share vs full $1 redemption
+                    //
+                    // For now: log reminder to redeem manually in the PM UI.
+                    if won {
+                        info!(
+                            instance = %self.label(),
+                            condition_id = %condition_id,
+                            shares = pos.shares,
+                            payout = format!("${:.2}", pos.shares),
+                            "REDEEM IN UI — winning shares ready to claim"
+                        );
+                    }
 
                     let exit_price_val = if won { 1.0 } else { 0.0 };
                     #[expect(clippy::expect_used)]
@@ -400,6 +503,27 @@ impl StrategyInstance for LiveStrategyInstance {
         // 3. Evaluate signal (pure, no side effects).
         let decision = self.paper.evaluate_signal(state)?;
 
+        // 3b. Confidence filter — skip weak signals.
+        const MIN_CONFIDENCE: f64 = 0.20;
+        if decision.confidence < MIN_CONFIDENCE {
+            return None;
+        }
+
+        // 3c. Spread filter — skip when bid-ask spread on our side is too wide.
+        let our_spread = match decision.side {
+            Side::Up => match (state.contract_ask_up, state.contract_bid_up) {
+                (Some(ask), Some(bid)) => ask.as_f64() - bid.as_f64(),
+                _ => 0.0,
+            },
+            Side::Down => match (state.contract_ask_down, state.contract_bid_down) {
+                (Some(ask), Some(bid)) => ask.as_f64() - bid.as_f64(),
+                _ => 0.0,
+            },
+        };
+        if our_spread > 0.04 {
+            return None;
+        }
+
         // 4. Exposure check.
         let exposure: f64 = self.real_positions.iter().map(|p| p.size_usdc).sum();
         if exposure >= self.paper.max_exposure_usdc() {
@@ -437,16 +561,17 @@ impl StrategyInstance for LiveStrategyInstance {
         }
 
         // 7. Resolve token ID + condition ID from scanner-populated map.
+        self.warm_token_cache(state.asset, state.timeframe);
         let (token_id, condition_id, window_end_ms) =
             self.get_token_info(state.asset, state.timeframe, decision.side)?;
 
         // 7b. GTC dispatch: place maker limit order, return None (fills arrive via WS).
         if self.order_mode == "gtc" {
-            let clob = self.clob.clone();
-            // Post 1 tick ($0.01) below the ask to rest on the book.
-            // This avoids post_only rejection ("order crosses book").
+            // Post at the ask price. With post_only=false, if there's
+            // resting liquidity we fill immediately as taker (pay ~1.5% fee).
+            // If not, we rest on the book as maker (0% fee).
             let ask_price = decision.limit_price.as_f64().min(MAX_LIVE_ENTRY);
-            let price_rounded = ((ask_price - 0.01) * 100.0).floor() / 100.0;
+            let price_rounded = (ask_price * 100.0).floor() / 100.0;
             if price_rounded < MIN_LIVE_ENTRY {
                 self.window_slots[slot] = Some(state.window_id);
                 return None;
@@ -456,82 +581,138 @@ impl StrategyInstance for LiveStrategyInstance {
             // GTC orders have a minimum size of 5 shares on Polymarket.
             let size_shares = size_shares.max(5.0);
 
-            let gtc_result = tokio::task::block_in_place(|| {
-                self.rt_handle.block_on(async {
-                    place_gtc_order(
-                        &clob,
-                        &token_id,
-                        Self::to_clob_side(decision.side),
-                        size_shares,
-                        price_rounded,
-                    )
-                    .await
-                })
+            // Log full signal context before placing the order.
+            info!(
+                instance = %self.label(),
+                asset = %state.asset,
+                timeframe = ?state.timeframe,
+                side = %decision.side,
+                window_open = format!("{:.2}", state.window_open_price.as_f64()),
+                current_spot = format!("{:.2}", state.current_spot.as_f64()),
+                magnitude = format!("{:.4}", state.spot_magnitude),
+                elapsed_secs = state.time_elapsed_secs,
+                remaining_secs = state.time_remaining_secs,
+                ask_up = state.contract_ask_up.map(|p| format!("{:.2}", p.as_f64())).unwrap_or_else(|| "-".into()),
+                ask_down = state.contract_ask_down.map(|p| format!("{:.2}", p.as_f64())).unwrap_or_else(|| "-".into()),
+                entry_price = format!("{:.2}", price_rounded),
+                size_shares = format!("{:.2}", size_shares),
+                confidence = format!("{:.2}", decision.confidence),
+                momentum = format!("{:.6}", state.momentum_score),
+                "SIGNAL FIRED — placing GTC order"
+            );
+
+            // Mark the slot immediately so we don't fire again on the same window.
+            self.window_slots[slot] = Some(state.window_id);
+
+            // Also track in paper for comparison.
+            let _ = self.paper.on_tick(state);
+
+            // Extract everything needed for the spawned task (can't move &mut self).
+            let clob = self.clob.clone();
+            let clob_side = Self::to_clob_side(decision.side);
+            let token_id_owned = token_id.clone();
+            let instance_label = self.label().to_string();
+            let gtc_timeout_ms = self.gtc_timeout_ms;
+            let asset = state.asset;
+            let timeframe = state.timeframe;
+            let side = decision.side;
+            let strategy_id = decision.strategy_id;
+            let window_id = state.window_id;
+            let condition_id_owned = condition_id.clone();
+
+            // Clone the channel sender for the spawned task.
+            let gtc_tx = self.gtc_order_tx.clone();
+
+            // Spawn async order placement — does NOT block the tick loop.
+            tokio::task::spawn(async move {
+                let result = place_gtc_order(
+                    &clob,
+                    &token_id_owned,
+                    clob_side,
+                    size_shares,
+                    price_rounded,
+                )
+                .await;
+
+                match result {
+                    Ok(order_result) => {
+                        info!(
+                            instance = %instance_label,
+                            order_id = %order_result.order_id,
+                            asset = %asset,
+                            side = %side,
+                            price = price_rounded,
+                            size_shares = size_shares,
+                            "GTC ORDER POSTED (async)"
+                        );
+
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0, |d| d.as_millis() as u64);
+
+                        let pending = crate::order_manager::PendingOrder {
+                            order_id: order_result.order_id,
+                            token_id: token_id_owned,
+                            asset,
+                            timeframe,
+                            side,
+                            price: price_rounded,
+                            original_size_shares: size_shares,
+                            filled_shares: 0.0,
+                            filled_usdc: 0.0,
+                            placed_at_ms: now_ms,
+                            timeout_ms: gtc_timeout_ms,
+                            strategy_id,
+                            slot,
+                            window_id,
+                            instance_label: instance_label.clone(),
+                            condition_id: condition_id_owned,
+                            window_end_ms,
+                        };
+
+                        if let Some(ref tx) = gtc_tx {
+                            if let Err(e) = tx.send(pending) {
+                                warn!(
+                                    instance = %instance_label,
+                                    error = %e,
+                                    "failed to send PendingOrder via channel"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            instance = %instance_label,
+                            error = %e,
+                            asset = %asset,
+                            side = %side,
+                            "GTC ORDER FAILED (async)"
+                        );
+                    }
+                }
             });
 
-            match gtc_result {
-                Ok(result) => {
-                    info!(
-                        instance = %self.label(),
-                        order_id = %result.order_id,
-                        asset = %state.asset,
-                        side = %decision.side,
-                        price = price_rounded,
-                        size_shares = size_shares,
-                        "GTC ORDER POSTED"
-                    );
-                    self.window_slots[slot] = Some(state.window_id);
-
-                    // Build the pending order for OrderManager tracking.
-                    let now_ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_or(0, |d| d.as_millis() as u64);
-
-                    let pending = crate::order_manager::PendingOrder {
-                        order_id: result.order_id,
-                        token_id,
-                        asset: state.asset,
-                        timeframe: state.timeframe,
-                        side: decision.side,
-                        price: price_rounded,
-                        original_size_shares: size_shares,
-                        filled_shares: 0.0,
-                        filled_usdc: 0.0,
-                        placed_at_ms: now_ms,
-                        timeout_ms: self.gtc_timeout_ms,
-                        strategy_id: decision.strategy_id,
-                        slot,
-                        window_id: state.window_id,
-                        instance_label: self.label().to_string(),
-                        condition_id: condition_id.clone(),
-                        window_end_ms,
-                    };
-
-                    // Send via channel if available; otherwise store locally.
-                    if let Some(ref tx) = self.gtc_order_tx {
-                        let _ = tx.send(pending);
-                    } else {
-                        self.last_gtc_order = Some(pending);
-                    }
-
-                    // Also track in paper for comparison.
-                    let _ = self.paper.on_tick(state);
-                }
-                Err(e) => {
-                    warn!(
-                        instance = %self.label(),
-                        error = %e,
-                        asset = %state.asset,
-                        side = %decision.side,
-                        "GTC ORDER FAILED"
-                    );
-                    self.window_slots[slot] = Some(state.window_id);
-                }
-            }
-            return None; // GTC fills arrive asynchronously
+            return None; // GTC fills arrive asynchronously via User WS
         }
 
         // 8. Place market FOK order with slippage protection.
+        info!(
+            instance = %self.label(),
+            asset = %state.asset,
+            timeframe = ?state.timeframe,
+            side = %decision.side,
+            window_open = format!("{:.2}", state.window_open_price.as_f64()),
+            current_spot = format!("{:.2}", state.current_spot.as_f64()),
+            magnitude = format!("{:.4}", state.spot_magnitude),
+            elapsed_secs = state.time_elapsed_secs,
+            remaining_secs = state.time_remaining_secs,
+            ask_up = state.contract_ask_up.map(|p| format!("{:.2}", p.as_f64())).unwrap_or_else(|| "-".into()),
+            ask_down = state.contract_ask_down.map(|p| format!("{:.2}", p.as_f64())).unwrap_or_else(|| "-".into()),
+            entry_price = format!("{:.2}", decision.limit_price.as_f64()),
+            confidence = format!("{:.2}", decision.confidence),
+            momentum = format!("{:.6}", state.momentum_score),
+            "SIGNAL FIRED — placing FOK order"
+        );
         let clob = self.clob.clone();
         let clob_side = Self::to_clob_side(decision.side);
         // Round to 2 decimal places — CLOB requires max 2dp for maker, 4dp for taker.

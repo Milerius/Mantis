@@ -538,6 +538,9 @@ pub fn run_backtest<P: ContractPriceProvider>(
                 contract_bid_up: ContractPrice::new((ask_up.as_f64() - 0.02).clamp(0.0, 1.0)),
                 contract_bid_down: ContractPrice::new((ask_down.as_f64() - 0.02).clamp(0.0, 1.0)),
                 orderbook_imbalance: None,
+                binance_price: None,
+                okx_price: None,
+                momentum_score: 0.0,
             };
 
             // FIX 2: evaluate_all returns zero-alloc Decisions array.
@@ -816,6 +819,9 @@ pub fn run_backtest_v2<P: ContractPriceProvider>(
                     (ask_down.as_f64() - 0.02).clamp(0.0, 1.0),
                 ),
                 orderbook_imbalance: None,
+                binance_price: None,
+                okx_price: None,
+                momentum_score: 0.0,
             };
 
             // Each instance evaluates independently.

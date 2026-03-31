@@ -131,6 +131,9 @@ mod tests {
             contract_bid_up: ask_up.and_then(|v| ContractPrice::new(v - 0.02)),
             contract_bid_down: ask_down.and_then(|v| ContractPrice::new(v - 0.02)),
             orderbook_imbalance: None,
+            binance_price: None,
+            okx_price: None,
+            momentum_score: 0.0,
         }
     }
 

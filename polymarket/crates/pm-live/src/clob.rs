@@ -180,15 +180,14 @@ pub struct GtcOrderResult {
     pub status: String,
 }
 
-/// Place a GTC (Good-Til-Cancelled) limit buy order with `post_only=true`.
+/// Place a GTC (Good-Til-Cancelled) limit buy order.
 ///
-/// Rests on the book as a maker order (0% fees + rebates).
-/// Returns the order ID and status. Does NOT return fill details —
-/// fills arrive asynchronously via the User WebSocket.
+/// If liquidity exists at our price, fills immediately as taker (~1.5% fee).
+/// Otherwise rests on the book as maker (0% fee + rebates).
 ///
 /// # Errors
 ///
-/// Returns `Err` if the order is rejected (e.g. post_only would cross spread).
+/// Returns `Err` if the order cannot be built, signed, or posted.
 pub async fn place_gtc_order(
     ctx: &ClobContext,
     token_id: &str,
@@ -216,7 +215,7 @@ pub async fn place_gtc_order(
         .size(size_dec)
         .side(side)
         .order_type(OrderType::GTC)
-        .post_only(true)
+        // No post_only — fill as taker if crossing, rest as maker if not.
         .build()
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))
@@ -271,6 +270,82 @@ pub async fn cancel_order(ctx: &ClobContext, order_id: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Sell winning shares at $0.99 via a FOK market sell order.
+///
+/// After a market resolves in our favor, sell shares at near-$1 to
+/// convert to USDC. This avoids the on-chain CTF redeem (which requires
+/// the Safe/relayer) and nets ~$0.99 per share.
+///
+/// # Errors
+///
+/// Returns `Err` if the sell order fails.
+pub async fn sell_winning_position(
+    ctx: &ClobContext,
+    token_id: &str,
+    shares: f64,
+) -> Result<f64> {
+    let token_u256 = U256::from_str(token_id)
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("invalid token_id for U256 conversion")?;
+
+    // Sell shares — for SELL orders, amount is in shares (not USDC).
+    let shares_dec = Decimal::try_from(shares)
+        .context("invalid shares for Decimal conversion")?
+        .round_dp(2);
+
+    let amount = Amount::shares(shares_dec)
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("failed to create shares Amount")?;
+
+    // Price floor: sell at minimum $0.99 per share.
+    let price_dec = Decimal::try_from(0.99)
+        .context("invalid price")?;
+
+    let signable = ctx
+        .client
+        .market_order()
+        .token_id(token_u256)
+        .amount(amount)
+        .price(price_dec)
+        .side(ClobSide::Sell)
+        .order_type(OrderType::FOK)
+        .build()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("failed to build sell order")?;
+
+    let signed = ctx
+        .client
+        .sign(&*ctx.signer, signable)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("failed to sign sell order")?;
+
+    let response = ctx
+        .client
+        .post_order(signed)
+        .await
+        .map_err(|e| {
+            warn!(error = %e, "CLOB sell order raw error");
+            anyhow::anyhow!("sell order: {e}")
+        })?;
+
+    if !response.success {
+        anyhow::bail!(
+            "sell order rejected: {}",
+            response.error_msg.as_deref().unwrap_or("unknown")
+        );
+    }
+
+    let usdc_received = response
+        .taking_amount
+        .to_string()
+        .parse::<f64>()
+        .unwrap_or(0.0);
+
+    Ok(usdc_received)
 }
 
 /// Result of checking market resolution via the CLOB API.
@@ -339,4 +414,60 @@ pub async fn check_market_resolution(
         closed: true,
         winning_token_id,
     })
+}
+
+/// Redeem winning tokens for USDC after market resolution.
+///
+/// Calls `redeemPositions` on the CTF contract with index_sets `[1, 2]`
+/// (both YES and NO — only winners pay out).
+///
+/// # Errors
+///
+/// Returns `Err` if the on-chain transaction fails.
+pub async fn redeem_winning_position(
+    signer: &PrivateKeySigner,
+    condition_id: &str,
+) -> Result<String> {
+    use alloy::providers::ProviderBuilder;
+    use polymarket_client_sdk::ctf::Client as CtfClient;
+    use polymarket_client_sdk::ctf::types::RedeemPositionsRequest;
+    use polymarket_client_sdk::types::{Address, B256};
+
+    let polygon_rpc = "https://polygon-rpc.com";
+
+    // Build a provider with our signer for on-chain transactions.
+    let provider = ProviderBuilder::new()
+        .wallet(alloy::network::EthereumWallet::from(signer.clone()))
+        .connect_http(polygon_rpc.parse().context("invalid RPC URL")?);
+
+    let ctf_client = CtfClient::new(provider, POLYGON)
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("failed to create CTF client")?;
+
+    // Parse condition_id from hex string to B256.
+    let cond_b256 = B256::from_str(condition_id)
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("invalid condition_id for B256")?;
+
+    // USDC.e on Polygon.
+    let usdc_address: Address = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+        .parse()
+        .context("invalid USDC address")?;
+
+    let request = RedeemPositionsRequest::for_binary_market(usdc_address, cond_b256);
+
+    let response = ctf_client
+        .redeem_positions(&request)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("redeem_positions transaction failed")?;
+
+    let tx_hash = format!("{:?}", response.transaction_hash);
+    info!(
+        condition_id = %condition_id,
+        tx_hash = %tx_hash,
+        "REDEEM SUCCESS — winning tokens converted to USDC"
+    );
+
+    Ok(tx_hash)
 }

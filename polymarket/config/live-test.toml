@@ -32,16 +32,16 @@ type = "late_window_sniper"
 label = "LWS-LIVE"
 mode = "live"
 order_mode = "gtc"
-gtc_timeout_secs = 55
+gtc_timeout_secs = 110
 balance = 40.0
 max_position_usdc = 5.0
 max_exposure_usdc = 30.0
 kelly_fraction = 0.20
 max_daily_loss = 15.0
 slippage_bps = 10
-max_remaining_secs = 60
+max_remaining_secs = 120
 min_spot_magnitude = 0.002
-max_entry_price = 0.85
+max_entry_price = 0.90
 
 # LIVE: MC-loose — momentum confirmation alongside LWS (GTC maker orders)
 [[bot.strategies]]

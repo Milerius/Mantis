@@ -152,6 +152,27 @@ impl StrategyInstance for ConcreteStrategyInstance {
         // 3. Evaluate -- pure function
         let decision = self.strategy.evaluate(state)?;
 
+        // 3b. Confidence filter — skip weak signals.
+        const MIN_CONFIDENCE: f64 = 0.20;
+        if decision.confidence < MIN_CONFIDENCE {
+            return None;
+        }
+
+        // 3c. Spread filter — skip when bid-ask spread on our side is too wide.
+        let our_spread = match decision.side {
+            Side::Up => match (state.contract_ask_up, state.contract_bid_up) {
+                (Some(ask), Some(bid)) => ask.as_f64() - bid.as_f64(),
+                _ => 0.0,
+            },
+            Side::Down => match (state.contract_ask_down, state.contract_bid_down) {
+                (Some(ask), Some(bid)) => ask.as_f64() - bid.as_f64(),
+                _ => 0.0,
+            },
+        };
+        if our_spread > 0.04 {
+            return None;
+        }
+
         // 4. Exposure check
         let total_exposure: f64 = self.open_positions.iter().map(|p| p.pos.size_usdc).sum();
         if total_exposure >= self.max_exposure_usdc {
@@ -326,6 +347,9 @@ mod tests {
             contract_bid_up: ContractPrice::new(ask - 0.02),
             contract_bid_down: ContractPrice::new(1.0 - ask - 0.02),
             orderbook_imbalance: None,
+            binance_price: None,
+            okx_price: None,
+            momentum_score: 0.0,
         }
     }
 

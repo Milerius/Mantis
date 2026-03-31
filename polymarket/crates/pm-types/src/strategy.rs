@@ -94,6 +94,13 @@ pub struct MarketState {
     /// Positive = buy pressure (bullish), negative = sell pressure (bearish).
     /// `None` when no L2 orderbook data is available.
     pub orderbook_imbalance: Option<f64>,
+    /// Latest Binance spot price for cross-exchange confirmation.
+    pub binance_price: Option<Price>,
+    /// Latest OKX spot price for cross-exchange confirmation.
+    pub okx_price: Option<Price>,
+    /// Multi-timeframe momentum score from weighted 30s/60s/120s/240s slopes.
+    /// Positive = upward momentum, negative = downward. Range ~[-0.01, +0.01].
+    pub momentum_score: f64,
 }
 
 impl MarketState {
@@ -367,6 +374,9 @@ mod tests {
             contract_bid_up: ContractPrice::new(ask_up - 0.02),
             contract_bid_down: ContractPrice::new(ask_down - 0.02),
             orderbook_imbalance: None,
+            binance_price: None,
+            okx_price: None,
+            momentum_score: 0.0,
         }
     }
 

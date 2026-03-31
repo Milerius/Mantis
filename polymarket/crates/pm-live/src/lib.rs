@@ -14,6 +14,7 @@ pub mod user_ws;
 pub use clob::{
     ClobContext, GtcOrderResult, LiveFill, MarketResolutionResult, cancel_order,
     check_market_resolution, init_clob_client, place_fok_order, place_gtc_order,
+    redeem_winning_position,
 };
 pub use instance::{LiveStrategyInstance, SharedTokenMap, TokenPair};
 pub use order_manager::{FilledOrder, OrderManager, PendingOrder};

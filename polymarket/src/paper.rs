@@ -22,7 +22,7 @@ use pm_market::{
     SharedTokenAssetMap,
 };
 use pm_market::scanner::scan_active_markets;
-use pm_oracle::{BinanceWs, EmaTracker, OkxWs, OracleRouter, PriceBuffer};
+use pm_oracle::{BinanceWs, EmaTracker, ExchangePriceTracker, OkxWs, OracleRouter, PriceBuffer};
 use pm_live::{LiveStrategyInstance, OrderManager, SharedTokenMap, TokenPair, UserWsEvent, run_user_ws, user_ws_channel};
 use pm_signal::build_instances_from_config;
 use pm_types::{
@@ -297,6 +297,8 @@ fn build_market_state(
     timeframe: Timeframe,
     window: &Window,
     prices: &OrderbookPrices,
+    exchange_tracker: &ExchangePriceTracker,
+    price_buffer: &PriceBuffer,
 ) -> MarketState {
     let magnitude = window.magnitude(tick.price);
     let time_elapsed_secs =
@@ -319,6 +321,9 @@ fn build_market_state(
         contract_bid_up: prices.contract_bid_up,
         contract_bid_down: prices.contract_bid_down,
         orderbook_imbalance: prices.orderbook_imbalance,
+        binance_price: exchange_tracker.binance_price(tick.asset),
+        okx_price: exchange_tracker.okx_price(tick.asset),
+        momentum_score: price_buffer.momentum_score(tick.asset, tick.timestamp_ms, tick.price.as_f64()),
     }
 }
 
@@ -484,6 +489,8 @@ fn process_tick(
     window_recorder: &mut WindowRecorder,
     ema_tracker: &mut EmaTracker,
     local_l2: &L2OrderbookManager,
+    exchange_tracker: &ExchangePriceTracker,
+    price_buffer: &PriceBuffer,
 ) {
     // Update the EMA tracker with the latest price for this asset.
     ema_tracker.update(tick.asset, tick.price.as_f64());
@@ -553,7 +560,7 @@ fn process_tick(
         prices.orderbook_imbalance =
             compute_l2_imbalance(local_l2, up_token_id_opt);
 
-        let state = build_market_state(tick, timeframe, &window, &prices);
+        let state = build_market_state(tick, timeframe, &window, &prices, exchange_tracker, price_buffer);
 
         // Record combined snapshot.
         if let Err(e) = recorder.record(
@@ -751,6 +758,7 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
     let mut oracle_router = OracleRouter::new();
     let mut price_buffer = PriceBuffer::new();
+    let mut exchange_tracker = ExchangePriceTracker::new();
 
     // ── EMA tracker (for logging / future trend filter integration) ─────────
     let tf_cfg = &cfg.bot.trend_filter;
@@ -906,6 +914,12 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
                         // Promote into the matching live instance for oracle resolution.
                         // condition_id and window_end_ms are captured at order placement time.
+                        info!(
+                            instance = %fill.instance_label,
+                            condition_id = %fill.condition_id,
+                            window_end_ms = fill.window_end_ms,
+                            "PROMOTE: passing fill to instance"
+                        );
                         for instance in instances.iter_mut() {
                             if instance.label() == fill.instance_label {
                                 instance.promote_gtc_fill(
@@ -1051,10 +1065,12 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
 
             // Poll CLOB API for live position resolution every 5 seconds.
             () = tokio::time::sleep_until(next_resolution_poll) => {
+                #[expect(clippy::cast_possible_truncation)]
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_millis() as u64);
                 for instance in instances.iter_mut() {
+                    debug!(instance = %instance.label(), "polling oracle resolutions");
                     let trades = instance.poll_resolutions(now_ms);
                     for trade in &trades {
                         let result = if trade.pnl.as_f64() >= 0.0 { "WIN" } else { "LOSS" };
@@ -1221,6 +1237,8 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     );
                 }
 
+                exchange_tracker.update(&tick);
+
                 let Some(tick) = oracle_router.process(tick) else {
                     continue;
                 };
@@ -1260,6 +1278,8 @@ pub async fn run_paper(cfg: &BotConfig) -> Result<()> {
                     &mut window_recorder,
                     &mut ema_tracker,
                     &local_l2,
+                    &exchange_tracker,
+                    &price_buffer,
                 );
 
                 // ── Periodic session summary (every 5 min) ─────────────────

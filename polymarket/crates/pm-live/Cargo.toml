@@ -8,10 +8,10 @@ license.workspace = true
 [dependencies]
 pm-types = { workspace = true, features = ["std"] }
 pm-signal = { workspace = true, features = ["std"] }
-polymarket-client-sdk = { version = "0.4", features = ["clob", "ws", "heartbeats", "tracing"] }
+polymarket-client-sdk = { version = "0.4", features = ["clob", "ws", "heartbeats", "tracing", "ctf"] }
 futures-util = "0.3"
 tokio-util = "0.7"
-alloy = { version = "1", features = ["signers"] }
+alloy = { version = "1", features = ["signers", "providers", "provider-http", "network"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 tracing = "0.1"
 anyhow = "1"

@@ -165,6 +165,36 @@ impl PriceBuffer {
     pub fn latest(&self, asset: Asset) -> Option<Price> {
         self.buffers[asset.index()].latest()
     }
+
+    /// Compute a weighted momentum score for `asset` relative to `current_price`.
+    ///
+    /// Samples the buffer at four lookback windows (30 s, 60 s, 120 s, 240 s) and
+    /// computes a weighted average of the relative price change
+    /// `(current - past) / past` at each horizon.  Only lookback windows for
+    /// which a historical price is available contribute to the score.
+    ///
+    /// Returns `0.0` if no historical data is available for any lookback.
+    #[must_use]
+    pub fn momentum_score(&self, asset: Asset, now_ms: u64, current_price: f64) -> f64 {
+        const LOOKBACKS_MS: [u64; 4] = [30_000, 60_000, 120_000, 240_000];
+        const WEIGHTS: [f64; 4] = [0.15, 0.20, 0.30, 0.35];
+
+        let mut score = 0.0;
+        let mut total_weight = 0.0;
+
+        for (&lb, &w) in LOOKBACKS_MS.iter().zip(WEIGHTS.iter()) {
+            if let Some(past_price) = self.price_at(asset, now_ms.saturating_sub(lb)) {
+                let past = past_price.as_f64();
+                if past > 0.0 {
+                    let slope = (current_price - past) / past;
+                    score += slope * w;
+                    total_weight += w;
+                }
+            }
+        }
+
+        if total_weight > 0.0 { score / total_weight } else { 0.0 }
+    }
 }
 
 impl Default for PriceBuffer {
@@ -281,5 +311,64 @@ mod tests {
         buf.push(Asset::Btc, 20_000, p(2.0));
         // Timestamp before the first entry.
         assert!(buf.price_at(Asset::Btc, 5_000).is_none());
+    }
+
+    // ─── momentum_score tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn momentum_score_empty_buffer_returns_zero() {
+        let buf = PriceBuffer::new();
+        let score = buf.momentum_score(Asset::Btc, 300_000, 50_000.0);
+        assert_eq!(score, 0.0, "empty buffer should return 0.0");
+    }
+
+    #[test]
+    fn momentum_score_uptrend_positive() {
+        let mut buf = PriceBuffer::new();
+        // Seed prices in the past so all four lookbacks resolve.
+        // now_ms = 300_000; lookbacks at -30s, -60s, -120s, -240s.
+        buf.push(Asset::Btc, 300_000 - 240_000, p(90_000.0));
+        buf.push(Asset::Btc, 300_000 - 120_000, p(95_000.0));
+        buf.push(Asset::Btc, 300_000 - 60_000,  p(97_000.0));
+        buf.push(Asset::Btc, 300_000 - 30_000,  p(98_000.0));
+        // Current price is 100_000 — all past prices are lower, so uptrend.
+        let score = buf.momentum_score(Asset::Btc, 300_000, 100_000.0);
+        assert!(score > 0.0, "uptrend should produce positive score, got {score}");
+    }
+
+    #[test]
+    fn momentum_score_downtrend_negative() {
+        let mut buf = PriceBuffer::new();
+        // Past prices all higher than current — downtrend.
+        buf.push(Asset::Eth, 300_000 - 240_000, p(4_000.0));
+        buf.push(Asset::Eth, 300_000 - 120_000, p(3_800.0));
+        buf.push(Asset::Eth, 300_000 - 60_000,  p(3_600.0));
+        buf.push(Asset::Eth, 300_000 - 30_000,  p(3_200.0));
+        let score = buf.momentum_score(Asset::Eth, 300_000, 3_000.0);
+        assert!(score < 0.0, "downtrend should produce negative score, got {score}");
+    }
+
+    #[test]
+    fn momentum_score_flat_returns_zero() {
+        let mut buf = PriceBuffer::new();
+        let price_val = 1_000.0;
+        buf.push(Asset::Sol, 300_000 - 240_000, p(price_val));
+        buf.push(Asset::Sol, 300_000 - 120_000, p(price_val));
+        buf.push(Asset::Sol, 300_000 - 60_000,  p(price_val));
+        buf.push(Asset::Sol, 300_000 - 30_000,  p(price_val));
+        let score = buf.momentum_score(Asset::Sol, 300_000, price_val);
+        assert!(score.abs() < f64::EPSILON, "flat price should produce score ≈ 0.0, got {score}");
+    }
+
+    #[test]
+    fn momentum_score_partial_lookbacks_uses_available_data() {
+        let mut buf = PriceBuffer::new();
+        // Only push data at -30s; the other lookbacks will find the same entry
+        // (price_at returns the last entry at or before the requested time).
+        // We push a single entry far enough back that all lookbacks find it.
+        buf.push(Asset::Xrp, 10_000, p(0.50));
+        // now_ms = 300_000; current_price > past_price → positive score.
+        let score = buf.momentum_score(Asset::Xrp, 300_000, 0.60);
+        assert!(score > 0.0, "partial data with uptrend should be positive, got {score}");
     }
 }

@@ -3,7 +3,7 @@
 //! Fires mid-window when a directional move that started early has been
 //! sustained long enough to confirm trend continuation.
 
-use pm_types::{EntryDecision, MarketState, StrategyId, StrategyLabel};
+use pm_types::{EntryDecision, MarketState, Side, StrategyId, StrategyLabel};
 
 use crate::strategy_trait::Strategy;
 
@@ -112,7 +112,40 @@ impl Strategy for MomentumConfirmation {
             1.0 - (2.0 * elapsed_past_min / window_len - 1.0).abs()
         };
         let price_margin = (self.max_entry_price - ask.as_f64()) / self.max_entry_price;
-        let confidence = ((position_in_window + price_margin) * 0.5).clamp(0.0, 1.0);
+        let mut confidence = ((position_in_window + price_margin) * 0.5).clamp(0.0, 1.0);
+
+        // Orderbook imbalance boost: if bid/ask skew confirms our direction, boost confidence.
+        if let (Some(bid_up), Some(ask_down)) = (state.contract_bid_up, state.contract_ask_down) {
+            // Imbalance: positive = market leans Up, negative = leans Down.
+            let imbalance = bid_up.as_f64() - ask_down.as_f64();
+            let aligned = match state.spot_direction {
+                Side::Up => imbalance > 0.05,
+                Side::Down => imbalance < -0.05,
+            };
+            if aligned {
+                confidence = (confidence + 0.10).min(1.0);
+            }
+        }
+
+        // Cross-exchange confirmation: penalize if exchanges disagree.
+        if let (Some(bp), Some(op)) = (state.binance_price, state.okx_price) {
+            let bin_up = bp.as_f64() > state.window_open_price.as_f64();
+            let okx_up = op.as_f64() > state.window_open_price.as_f64();
+            if bin_up != okx_up {
+                confidence *= 0.5;
+            }
+        }
+
+        // Multi-timeframe momentum: boost if aligned, penalize if opposing.
+        let momentum_aligned = match state.spot_direction {
+            Side::Up => state.momentum_score > 0.0005,
+            Side::Down => state.momentum_score < -0.0005,
+        };
+        if momentum_aligned {
+            confidence = (confidence + 0.15).min(1.0);
+        } else if state.momentum_score.abs() > 0.0005 {
+            confidence = (confidence - 0.15).max(0.0);
+        }
 
         Some(EntryDecision {
             side: state.spot_direction,
@@ -151,6 +184,9 @@ mod tests {
             contract_bid_up: ask_direction.and_then(|v| ContractPrice::new(v - 0.02)),
             contract_bid_down: ContractPrice::new(0.43),
             orderbook_imbalance: None,
+            binance_price: None,
+            okx_price: None,
+            momentum_score: 0.0,
         }
     }
 

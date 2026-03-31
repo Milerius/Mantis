@@ -277,6 +277,9 @@ mod tests {
             contract_bid_up: ContractPrice::new(0.53),
             contract_bid_down: ContractPrice::new(0.46),
             orderbook_imbalance: None,
+            binance_price: None,
+            okx_price: None,
+            momentum_score: 0.0,
         }
     }
 

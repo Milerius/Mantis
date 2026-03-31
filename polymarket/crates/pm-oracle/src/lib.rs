@@ -3,6 +3,7 @@
 #![deny(unsafe_code)]
 
 pub mod contract_model;
+pub mod exchange_tracker;
 pub mod downloader;
 pub mod ema;
 pub mod oracle_router;
@@ -19,6 +20,7 @@ pub mod ws_okx;
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 
 pub use contract_model::ContractPriceModel;
+pub use exchange_tracker::ExchangePriceTracker;
 pub use ema::EmaTracker;
 pub use oracle_router::OracleRouter;
 pub use pbt_replay::{PbtObservation, PbtReplay, pbt_to_price_observations};
