@@ -339,6 +339,8 @@ fn build_instances_from_config_produces_correct_count() {
             kelly_fraction: 0.25,
             max_daily_loss: 50.0,
             slippage_bps: 10,
+            order_mode: "fok".into(),
+            gtc_timeout_secs: 120,
         },
         StrategyConfig::MomentumConfirmation {
             label: "MC-tight".into(),
@@ -353,6 +355,8 @@ fn build_instances_from_config_produces_correct_count() {
             kelly_fraction: 0.25,
             max_daily_loss: 50.0,
             slippage_bps: 10,
+            order_mode: "fok".into(),
+            gtc_timeout_secs: 120,
         },
     ];
 
@@ -379,6 +383,8 @@ fn build_instances_each_fires_on_appropriate_signal() {
             kelly_fraction: 0.25,
             max_daily_loss: 50.0,
             slippage_bps: 10,
+            order_mode: "fok".into(),
+            gtc_timeout_secs: 120,
         },
         StrategyConfig::MomentumConfirmation {
             label: "MC".into(),
@@ -393,6 +399,8 @@ fn build_instances_each_fires_on_appropriate_signal() {
             kelly_fraction: 0.25,
             max_daily_loss: 50.0,
             slippage_bps: 10,
+            order_mode: "fok".into(),
+            gtc_timeout_secs: 120,
         },
     ];
 

@@ -293,6 +293,32 @@ impl L2OrderbookManager {
         self.books.get(token_id)
     }
 
+    /// Process a `book` event (L2 incremental update) for a token.
+    ///
+    /// Creates the book on first update.
+    pub fn process_book_event(
+        &mut self,
+        token_id: &str,
+        event: &BookEvent,
+        timestamp_ms: u64,
+    ) {
+        let book = self
+            .books
+            .entry(token_id.to_owned())
+            .or_default();
+
+        for bid in &event.bids {
+            let Ok(price) = bid.price.parse::<f64>() else { continue };
+            let Ok(size) = bid.size.parse::<f64>() else { continue };
+            book.update_bid(price_to_cents(price), size, timestamp_ms);
+        }
+        for ask in &event.asks {
+            let Ok(price) = ask.price.parse::<f64>() else { continue };
+            let Ok(size) = ask.size.parse::<f64>() else { continue };
+            book.update_ask(price_to_cents(price), size, timestamp_ms);
+        }
+    }
+
     /// Process a batch of price changes for a token.
     ///
     /// Creates the book on first update.
@@ -336,7 +362,60 @@ impl Default for L2OrderbookManager {
 /// Thread-safe shared handle to the L2 orderbook manager.
 pub type SharedL2Manager = std::sync::Arc<std::sync::Mutex<L2OrderbookManager>>;
 
-// ─── Parsing helper ─────────────────────────────────────────────────────────
+// ─── Book Event (L2 incremental update) ────────────────────────────────────
+
+/// A single level from a `book` WebSocket event.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BookLevel {
+    /// Price as string-encoded decimal (e.g. `"0.50"`).
+    pub price: String,
+    /// New total size at this level (string-encoded; `"0"` = remove).
+    pub size: String,
+}
+
+/// Envelope for a `book` WebSocket event — the actual L2 incremental update.
+///
+/// Format from Polymarket WS:
+/// ```json
+/// {"event_type":"book","asset_id":"TOKEN_ID",
+///  "bids":[{"price":"0.48","size":"100"}],
+///  "asks":[{"price":"0.52","size":"200"}],
+///  "timestamp":"1774782000","hash":"..."}
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct BookEvent {
+    /// Always `"book"`.
+    pub event_type: String,
+    /// Token ID this event applies to.
+    pub asset_id: String,
+    /// Changed bid levels.
+    #[serde(default)]
+    pub bids: Vec<BookLevel>,
+    /// Changed ask levels.
+    #[serde(default)]
+    pub asks: Vec<BookLevel>,
+    /// Unix timestamp (string-encoded seconds).
+    #[serde(default)]
+    pub timestamp: String,
+}
+
+// ─── Parsing helpers ────────────────────────────────────────────────────────
+
+/// Parse a raw WebSocket text message as a `book` event (L2 incremental update).
+///
+/// Returns `None` for non-`book` events or parse failures.
+#[must_use]
+pub fn parse_book_event(raw: &str) -> Option<BookEvent> {
+    // Fast-path rejection: avoid full JSON parse for non-book messages.
+    if !raw.contains("\"book\"") {
+        return None;
+    }
+    let event: BookEvent = serde_json::from_str(raw).ok()?;
+    if event.event_type != "book" {
+        return None;
+    }
+    Some(event)
+}
 
 /// Parse a raw WebSocket text message as a `price_change` event.
 ///

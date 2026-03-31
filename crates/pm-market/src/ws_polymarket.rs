@@ -392,6 +392,13 @@ impl PolymarketWs {
                                                     &event,
                                                 );
                                             }
+                                        } else if let Some(book_event) = l2_orderbook::parse_book_event(text_str) {
+                                            // L2 incremental orderbook update.
+                                            if let Some(ref tx) = self.pm_event_tx {
+                                                let _ = tx.send(book_event_to_pm_event(&book_event));
+                                            } else {
+                                                handle_book_event(&self.l2_manager, &book_event);
+                                            }
                                         } else if let Some(pc_event) = l2_orderbook::parse_price_change(text_str) {
                                             if let Some(ref tx) = self.pm_event_tx {
                                                 let _ = tx.send(price_change_to_event(&pc_event));
@@ -660,6 +667,60 @@ fn handle_price_change(
         Err(e) => {
             warn!(error = %e, "l2_manager mutex poisoned — skipping price_change");
         }
+    }
+}
+
+// ─── L2 book event handler ──────────────────────────────────────────────────
+
+/// Apply a `book` event (L2 incremental update) to the shared L2 orderbook manager.
+fn handle_book_event(
+    l2_manager: &SharedL2Manager,
+    event: &l2_orderbook::BookEvent,
+) {
+    let timestamp_ms: u64 = event
+        .timestamp
+        .parse::<f64>()
+        .map_or_else(
+            |_| {
+                #[expect(clippy::cast_possible_truncation, reason = "millis since epoch fits in u64 for centuries")]
+                let ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
+                ms
+            },
+            |s| {
+                #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "timestamp_ms fits in u64")]
+                let ms = (s * 1_000.0) as u64;
+                ms
+            },
+        );
+
+    match l2_manager.lock() {
+        Ok(mut mgr) => {
+            mgr.process_book_event(&event.asset_id, event, timestamp_ms);
+        }
+        Err(e) => {
+            warn!(error = %e, "l2_manager mutex poisoned — skipping book event");
+        }
+    }
+}
+
+/// Convert a `book` event into a [`PmEvent::Book`].
+fn book_event_to_pm_event(event: &l2_orderbook::BookEvent) -> PmEvent {
+    let timestamp_ms: u64 = event
+        .timestamp
+        .parse::<f64>()
+        .map_or(0, |s| {
+            #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let ms = (s * 1_000.0) as u64;
+            ms
+        });
+
+    PmEvent::Book {
+        token_id: event.asset_id.clone(),
+        bids: event.bids.clone(),
+        asks: event.asks.clone(),
+        timestamp_ms,
     }
 }
 

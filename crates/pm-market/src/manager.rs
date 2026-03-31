@@ -115,6 +115,9 @@ mod tests {
             asset,
             timeframe,
             end_date: "2024-01-15T12:00:00Z".to_owned(),
+            liquidity: 0.0,
+            volume_24h: 0.0,
+            spread: 0.0,
         }
     }
 

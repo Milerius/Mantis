@@ -77,6 +77,12 @@ pub enum StrategyConfig {
         /// Simulated slippage in basis points applied to each fill.
         #[serde(default = "default_instance_slippage")]
         slippage_bps: u32,
+        /// Order execution mode: `"fok"` (default) or `"gtc"`.
+        #[serde(default = "default_order_mode")]
+        order_mode: String,
+        /// Seconds before an unfilled GTC order is cancelled.
+        #[serde(default = "default_gtc_timeout_secs")]
+        gtc_timeout_secs: u64,
     },
     /// Parameters for [`pm_signal::MomentumConfirmation`].
     MomentumConfirmation {
@@ -113,6 +119,12 @@ pub enum StrategyConfig {
         /// Simulated slippage in basis points applied to each fill.
         #[serde(default = "default_instance_slippage")]
         slippage_bps: u32,
+        /// Order execution mode: `"fok"` (default) or `"gtc"`.
+        #[serde(default = "default_order_mode")]
+        order_mode: String,
+        /// Seconds before an unfilled GTC order is cancelled.
+        #[serde(default = "default_gtc_timeout_secs")]
+        gtc_timeout_secs: u64,
     },
     /// Parameters for [`pm_signal::CompleteSetArb`].
     CompleteSetArb {
@@ -142,6 +154,12 @@ pub enum StrategyConfig {
         /// Simulated slippage in basis points applied to each fill.
         #[serde(default = "default_instance_slippage")]
         slippage_bps: u32,
+        /// Order execution mode: `"fok"` (default) or `"gtc"`.
+        #[serde(default = "default_order_mode")]
+        order_mode: String,
+        /// Seconds before an unfilled GTC order is cancelled.
+        #[serde(default = "default_gtc_timeout_secs")]
+        gtc_timeout_secs: u64,
     },
     /// Parameters for [`pm_signal::HedgeLock`].
     HedgeLock {
@@ -169,6 +187,12 @@ pub enum StrategyConfig {
         /// Simulated slippage in basis points applied to each fill.
         #[serde(default = "default_instance_slippage")]
         slippage_bps: u32,
+        /// Order execution mode: `"fok"` (default) or `"gtc"`.
+        #[serde(default = "default_order_mode")]
+        order_mode: String,
+        /// Seconds before an unfilled GTC order is cancelled.
+        #[serde(default = "default_gtc_timeout_secs")]
+        gtc_timeout_secs: u64,
     },
     /// Parameters for [`pm_signal::LateWindowSniper`].
     LateWindowSniper {
@@ -203,6 +227,12 @@ pub enum StrategyConfig {
         /// Simulated slippage in basis points applied to each fill.
         #[serde(default = "default_instance_slippage")]
         slippage_bps: u32,
+        /// Order execution mode: `"fok"` (default) or `"gtc"`.
+        #[serde(default = "default_order_mode")]
+        order_mode: String,
+        /// Seconds before an unfilled GTC order is cancelled.
+        #[serde(default = "default_gtc_timeout_secs")]
+        gtc_timeout_secs: u64,
     },
     /// Parameters for [`pm_signal::MeanReversion`].
     MeanReversion {
@@ -237,6 +267,12 @@ pub enum StrategyConfig {
         /// Simulated slippage in basis points applied to each fill.
         #[serde(default = "default_instance_slippage")]
         slippage_bps: u32,
+        /// Order execution mode: `"fok"` (default) or `"gtc"`.
+        #[serde(default = "default_order_mode")]
+        order_mode: String,
+        /// Seconds before an unfilled GTC order is cancelled.
+        #[serde(default = "default_gtc_timeout_secs")]
+        gtc_timeout_secs: u64,
     },
 }
 
@@ -250,6 +286,30 @@ impl StrategyConfig {
             | Self::HedgeLock { mode, .. }
             | Self::LateWindowSniper { mode, .. }
             | Self::MeanReversion { mode, .. } => mode,
+        }
+    }
+
+    /// Get the order execution mode for this strategy (`"fok"` or `"gtc"`).
+    pub fn order_mode(&self) -> &str {
+        match self {
+            Self::EarlyDirectional { order_mode, .. }
+            | Self::MomentumConfirmation { order_mode, .. }
+            | Self::CompleteSetArb { order_mode, .. }
+            | Self::HedgeLock { order_mode, .. }
+            | Self::LateWindowSniper { order_mode, .. }
+            | Self::MeanReversion { order_mode, .. } => order_mode,
+        }
+    }
+
+    /// Get the GTC cancellation timeout in seconds for this strategy.
+    pub fn gtc_timeout_secs(&self) -> u64 {
+        match self {
+            Self::EarlyDirectional { gtc_timeout_secs, .. }
+            | Self::MomentumConfirmation { gtc_timeout_secs, .. }
+            | Self::CompleteSetArb { gtc_timeout_secs, .. }
+            | Self::HedgeLock { gtc_timeout_secs, .. }
+            | Self::LateWindowSniper { gtc_timeout_secs, .. }
+            | Self::MeanReversion { gtc_timeout_secs, .. } => *gtc_timeout_secs,
         }
     }
 }
@@ -273,6 +333,8 @@ pub fn default_strategies() -> Vec<StrategyConfig> {
             kelly_fraction: default_instance_kelly(),
             max_daily_loss: default_instance_max_daily_loss(),
             slippage_bps: default_instance_slippage(),
+            order_mode: default_order_mode(),
+            gtc_timeout_secs: default_gtc_timeout_secs(),
         },
         StrategyConfig::MomentumConfirmation {
             label: String::new(),
@@ -287,6 +349,8 @@ pub fn default_strategies() -> Vec<StrategyConfig> {
             kelly_fraction: default_instance_kelly(),
             max_daily_loss: default_instance_max_daily_loss(),
             slippage_bps: default_instance_slippage(),
+            order_mode: default_order_mode(),
+            gtc_timeout_secs: default_gtc_timeout_secs(),
         },
         StrategyConfig::CompleteSetArb {
             mode: default_strategy_mode(),
@@ -298,6 +362,8 @@ pub fn default_strategies() -> Vec<StrategyConfig> {
             kelly_fraction: default_instance_kelly(),
             max_daily_loss: default_instance_max_daily_loss(),
             slippage_bps: default_instance_slippage(),
+            order_mode: default_order_mode(),
+            gtc_timeout_secs: default_gtc_timeout_secs(),
         },
         StrategyConfig::HedgeLock {
             mode: default_strategy_mode(),
@@ -308,6 +374,8 @@ pub fn default_strategies() -> Vec<StrategyConfig> {
             kelly_fraction: default_instance_kelly(),
             max_daily_loss: default_instance_max_daily_loss(),
             slippage_bps: default_instance_slippage(),
+            order_mode: default_order_mode(),
+            gtc_timeout_secs: default_gtc_timeout_secs(),
         },
     ]
 }
@@ -329,6 +397,14 @@ fn default_instance_max_daily_loss() -> f64 {
 }
 fn default_instance_slippage() -> u32 {
     10
+}
+
+fn default_order_mode() -> String {
+    String::from("fok")
+}
+
+fn default_gtc_timeout_secs() -> u64 {
+    120
 }
 
 fn default_max_positions_per_window() -> usize {
@@ -737,6 +813,8 @@ log_dir = "logs"
                 kelly_fraction: default_instance_kelly(),
                 max_daily_loss: default_instance_max_daily_loss(),
                 slippage_bps: default_instance_slippage(),
+                order_mode: default_order_mode(),
+                gtc_timeout_secs: default_gtc_timeout_secs(),
             }
         );
         assert_eq!(
@@ -751,6 +829,8 @@ log_dir = "logs"
                 kelly_fraction: default_instance_kelly(),
                 max_daily_loss: default_instance_max_daily_loss(),
                 slippage_bps: default_instance_slippage(),
+                order_mode: default_order_mode(),
+                gtc_timeout_secs: default_gtc_timeout_secs(),
             }
         );
     }

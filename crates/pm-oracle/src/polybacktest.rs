@@ -242,8 +242,10 @@ impl PbtClient {
         let page_size: u32 = 100;
 
         loop {
-            // No artificial delay — rely on 429 retry logic at the caller level.
-            // Rate limit: 300 req/min / 10 req/sec burst handled by retry-on-429.
+            // Small delay to stay under the 10 req/sec PBT burst limit.
+            if offset > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            }
 
             let page = self
                 .list_markets(coin, market_type, page_size, offset)

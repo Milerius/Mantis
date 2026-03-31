@@ -26,6 +26,10 @@ pub enum StrategyId {
     MomentumConfirmation,
     /// Hedge lock: buy the opposite side to cap a losing position.
     HedgeLock,
+    /// Late-window sniper: enter when direction is strongly established near expiry.
+    LateWindowSniper,
+    /// Mean reversion: fade overshoots by entering the opposite side.
+    MeanReversion,
 }
 
 impl StrategyId {
@@ -44,6 +48,8 @@ impl core::fmt::Display for StrategyId {
             Self::EarlyDirectional => write!(f, "EarlyDir"),
             Self::MomentumConfirmation => write!(f, "Momentum"),
             Self::HedgeLock => write!(f, "Hedge"),
+            Self::LateWindowSniper => write!(f, "LateSniper"),
+            Self::MeanReversion => write!(f, "MeanRev"),
         }
     }
 }
@@ -229,6 +235,13 @@ impl InstanceStats {
             self.wins as f64 / total as f64 * 100.0
         }
     }
+
+    /// Format as "12W/3L (80%)".
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn record_str(&self) -> std::string::String {
+        std::format!("{}W/{}L ({:.0}%)", self.wins, self.losses, self.win_rate())
+    }
 }
 
 // ─── FillEvent ──────────────────────────────────────────────────────────────
@@ -238,6 +251,7 @@ impl InstanceStats {
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 pub struct FillEvent {
     /// Label of the instance that produced this fill.
+    #[cfg_attr(feature = "std", serde(skip))]
     pub label: StrategyLabel,
     /// Underlying asset.
     pub asset: Asset,
@@ -277,6 +291,48 @@ pub trait StrategyInstance: Send + Sync {
         outcome: Side,
         timestamp_ms: u64,
     ) -> std::vec::Vec<crate::trade::TradeRecord>;
+
+    /// Resolve positions using the actual Polymarket oracle result.
+    ///
+    /// `winning_token_id` is the token ID declared winner by the Polymarket
+    /// oracle. Only meaningful for live instances — paper instances should
+    /// use `on_window_close` instead. Default is a no-op.
+    fn on_market_resolved(
+        &mut self,
+        _winning_token_id: &str,
+        _timestamp_ms: u64,
+    ) -> std::vec::Vec<crate::trade::TradeRecord> {
+        std::vec::Vec::new()
+    }
+
+    /// Poll external APIs to resolve live positions whose windows have ended.
+    ///
+    /// Only meaningful for live instances. Default is a no-op.
+    /// `now_ms` is the current Unix timestamp in milliseconds.
+    fn poll_resolutions(&mut self, _now_ms: u64) -> std::vec::Vec<crate::trade::TradeRecord> {
+        std::vec::Vec::new()
+    }
+
+    /// Promote a completed GTC fill into a tracked real position.
+    ///
+    /// Only meaningful for live instances. Default is a no-op.
+    #[expect(clippy::too_many_arguments)]
+    fn promote_gtc_fill(
+        &mut self,
+        _order_id: &str,
+        _token_id: &str,
+        _condition_id: &str,
+        _window_end_ms: u64,
+        _asset: Asset,
+        _timeframe: Timeframe,
+        _side: Side,
+        _avg_price: f64,
+        _size_usdc: f64,
+        _shares: f64,
+        _slot: usize,
+        _window_id: WindowId,
+        _strategy_id: StrategyId,
+    ) {}
 
     /// Current balance.
     fn balance(&self) -> f64;
@@ -320,6 +376,8 @@ mod tests {
         assert_eq!(StrategyId::EarlyDirectional.to_string(), "EarlyDir");
         assert_eq!(StrategyId::MomentumConfirmation.to_string(), "Momentum");
         assert_eq!(StrategyId::HedgeLock.to_string(), "Hedge");
+        assert_eq!(StrategyId::LateWindowSniper.to_string(), "LateSniper");
+        assert_eq!(StrategyId::MeanReversion.to_string(), "MeanRev");
     }
 
     #[test]

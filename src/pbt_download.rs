@@ -51,20 +51,33 @@ pub async fn run_pbt_download(cfg: &BotConfig) -> Result<()> {
     let cache_dir = Path::new(&cfg.data.cache_dir).join("polybacktest");
 
     // Coins and market types to download.
+    // Prioritize missing/sparse data first, heavy datasets last.
     let coins_types: Vec<(&str, &str)> = vec![
-        ("btc", "15m"),
-        ("eth", "15m"),
-        ("btc", "5m"),
-        ("eth", "5m"),
-        ("btc", "1h"),
-        ("eth", "1h"),
+        ("xrp", "15m"),  // 0 files — highest priority
+        ("xrp", "5m"),   // 0 files
+        ("eth", "15m"),  // 200 files — need more
+        ("eth", "5m"),   // 200 files
+        ("sol", "15m"),  // 200 files
+        ("sol", "5m"),   // 200 files
+        ("btc", "5m"),   // 271 files — need more
+        ("btc", "1h"),   // 0 files
+        ("eth", "1h"),   // 0 files
+        ("btc", "4h"),   // 0 files
+        ("eth", "4h"),   // 0 files
+        ("btc", "15m"),  // 2384 files — mostly cached, last
     ];
 
     let mut total_downloaded: usize = 0;
 
     for (coin, market_type) in &coins_types {
         info!(coin, market_type, "downloading PBT data");
-        let count = download_pbt_data(
+
+        // Cool down between coin/timeframe combos to avoid PBT burst limit.
+        if total_downloaded > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+
+        match download_pbt_data(
             &client,
             coin,
             market_type,
@@ -72,9 +85,15 @@ pub async fn run_pbt_download(cfg: &BotConfig) -> Result<()> {
             0, // no limit — download all
         )
         .await
-        .with_context(|| format!("PBT download failed for {coin}/{market_type}"))?;
-
-        total_downloaded += count;
+        {
+            Ok(count) => {
+                total_downloaded += count;
+                info!(coin, market_type, count, "PBT download batch complete");
+            }
+            Err(e) => {
+                tracing::warn!(coin, market_type, error = %e, "PBT download failed — skipping");
+            }
+        }
     }
 
     info!(total_downloaded, "PBT download complete");

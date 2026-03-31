@@ -3,7 +3,7 @@
 //! Replaces `Arc<Mutex<...>>` shared state with an `mpsc` channel that
 //! the WebSocket task sends through, and the main loop receives from.
 
-use crate::l2_orderbook::PriceChange;
+use crate::l2_orderbook::{BookLevel, PriceChange};
 
 // ─── PmEvent ────────────────────────────────────────────────────────────────
 
@@ -21,7 +21,18 @@ pub enum PmEvent {
         /// Unix timestamp in milliseconds.
         timestamp_ms: u64,
     },
-    /// L2 orderbook price change.
+    /// L2 orderbook incremental update (`book` event).
+    Book {
+        /// Token ID this event applies to.
+        token_id: String,
+        /// Changed bid levels.
+        bids: Vec<BookLevel>,
+        /// Changed ask levels.
+        asks: Vec<BookLevel>,
+        /// Unix timestamp in milliseconds.
+        timestamp_ms: u64,
+    },
+    /// L2 orderbook price change (legacy).
     PriceChange {
         /// Token ID this event applies to.
         token_id: String,

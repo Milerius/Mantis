@@ -30,6 +30,7 @@ timeframes = ["min5", "min15"]
 # 81.4% WR, PF 14.11, -$75 max DD
 [[bot.strategies]]
 type = "early_directional"
+mode = "paper"
 max_entry_time_secs = 150
 min_spot_magnitude = 0.002
 max_entry_price = 0.53
@@ -42,6 +43,7 @@ slippage_bps = 10
 
 [[bot.strategies]]
 type = "momentum_confirmation"
+mode = "paper"
 min_entry_time_secs = 180
 max_entry_time_secs = 480
 min_spot_magnitude = 0.003
