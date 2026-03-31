@@ -1,0 +1,19 @@
+[package]
+name = "pm-executor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pm-types = { workspace = true, features = ["std"] }
+pm-signal = { workspace = true, features = ["std"] }
+pm-bookkeeper = { workspace = true }
+pm-oracle = { workspace = true }
+pm-risk = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+rayon = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,28 @@
+[package]
+name = "pm-oracle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pm-types = { workspace = true, features = ["std"] }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+simd-json = "0.14"
+tracing = { workspace = true }
+thiserror = { workspace = true }
+flate2 = { workspace = true }
+chrono = { workspace = true }
+rayon = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

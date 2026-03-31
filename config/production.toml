@@ -1,0 +1,83 @@
+[bot]
+mode = "paper"
+min_edge = 0.03
+max_position_usdc = 25.0
+max_total_exposure_usdc = 500.0
+max_daily_loss_usdc = 100.0
+kelly_fraction = 0.25
+
+[[bot.assets]]
+asset = "btc"
+enabled = true
+timeframes = ["min5", "min15"]
+
+[[bot.assets]]
+asset = "eth"
+enabled = true
+timeframes = ["min5", "min15"]
+
+[[bot.assets]]
+asset = "sol"
+enabled = true
+timeframes = ["min5", "min15"]
+
+[[bot.assets]]
+asset = "xrp"
+enabled = true
+timeframes = ["min5", "min15"]
+
+# Config E: the winner from A/B testing
+# 81.4% WR, PF 14.11, -$75 max DD
+[[bot.strategies]]
+type = "early_directional"
+mode = "paper"
+max_entry_time_secs = 150
+min_spot_magnitude = 0.002
+max_entry_price = 0.53
+balance = 250.0
+max_position_usdc = 25.0
+max_exposure_usdc = 100.0
+kelly_fraction = 0.25
+max_daily_loss = 50.0
+slippage_bps = 10
+
+[[bot.strategies]]
+type = "momentum_confirmation"
+mode = "paper"
+min_entry_time_secs = 180
+max_entry_time_secs = 480
+min_spot_magnitude = 0.003
+max_entry_price = 0.72
+balance = 250.0
+max_position_usdc = 25.0
+max_exposure_usdc = 100.0
+kelly_fraction = 0.25
+max_daily_loss = 50.0
+slippage_bps = 10
+
+# Disabled: CompleteSetArb only buys one leg — needs proper two-leg execution.
+# [[bot.strategies]]
+# type = "complete_set_arb"
+# max_combined_cost = 0.98
+# min_profit_per_share = 0.01
+
+# Disabled: HedgeLock needs two-leg execution to work correctly.
+# [[bot.strategies]]
+# type = "hedge_lock"
+# max_combined_cost = 0.95
+
+[bot.trend_filter]
+enabled = true
+fast_period = 20
+slow_period = 60
+min_trend_strength = 0.0005
+
+[backtest]
+start_date = "2026-03-01"
+end_date = "2026-03-30"
+initial_balance = 500.0
+slippage_bps = 10
+
+[data]
+cache_dir = "data"
+log_dir = "logs"

@@ -1,0 +1,23 @@
+[package]
+name = "pm-live"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+pm-types = { workspace = true, features = ["std"] }
+pm-signal = { workspace = true, features = ["std"] }
+polymarket-client-sdk = { version = "0.4", features = ["clob", "ws", "heartbeats", "tracing"] }
+futures-util = "0.3"
+tokio-util = "0.7"
+alloy = { version = "1", features = ["signers"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+tracing = "0.1"
+anyhow = "1"
+rust_decimal = "1"
+reqwest = { version = "0.12", features = ["json"] }
+serde_json = "1"
+
+[lints]
+workspace = true

@@ -43,3 +43,10 @@ docs/specs/
 docs/brainstorms/
 docs/superpowers/
 philosophy/
+
+# Polymarket bot secrets and data
+config/secrets.toml
+run-live.sh
+data/
+logs/
+.DS_Store
