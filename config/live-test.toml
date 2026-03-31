@@ -1,0 +1,93 @@
+[bot]
+mode = "paper"
+min_edge = 0.01
+max_position_usdc = 10.0
+max_total_exposure_usdc = 80.0
+max_daily_loss_usdc = 30.0
+kelly_fraction = 0.25
+
+[[bot.assets]]
+asset = "btc"
+enabled = true
+timeframes = ["min5", "min15"]
+
+[[bot.assets]]
+asset = "eth"
+enabled = true
+timeframes = ["min5", "min15"]
+
+[[bot.assets]]
+asset = "sol"
+enabled = true
+timeframes = ["min5", "min15"]
+
+[[bot.assets]]
+asset = "xrp"
+enabled = false
+timeframes = ["min5", "min15"]
+
+# LIVE: LWS — Late Window Sniper, 20W/0L (100%) in paper
+[[bot.strategies]]
+type = "late_window_sniper"
+label = "LWS-LIVE"
+mode = "live"
+order_mode = "gtc"
+gtc_timeout_secs = 55
+balance = 40.0
+max_position_usdc = 5.0
+max_exposure_usdc = 30.0
+kelly_fraction = 0.20
+max_daily_loss = 15.0
+slippage_bps = 10
+max_remaining_secs = 60
+min_spot_magnitude = 0.002
+max_entry_price = 0.85
+
+# LIVE: MC-loose — momentum confirmation alongside LWS (GTC maker orders)
+[[bot.strategies]]
+type = "momentum_confirmation"
+label = "MC-loose-LIVE"
+mode = "live"
+order_mode = "gtc"
+gtc_timeout_secs = 120
+balance = 40.0
+max_position_usdc = 5.0
+max_exposure_usdc = 30.0
+kelly_fraction = 0.20
+max_daily_loss = 15.0
+slippage_bps = 10
+min_entry_time_secs = 120
+max_entry_time_secs = 600
+min_spot_magnitude = 0.001
+max_entry_price = 0.65
+
+# LIVE: MC-tight — high conviction momentum (GTC maker orders)
+[[bot.strategies]]
+type = "momentum_confirmation"
+label = "MC-tight-LIVE"
+mode = "live"
+order_mode = "gtc"
+gtc_timeout_secs = 120
+balance = 40.0
+max_position_usdc = 5.0
+max_exposure_usdc = 30.0
+kelly_fraction = 0.25
+max_daily_loss = 15.0
+slippage_bps = 10
+min_entry_time_secs = 180
+max_entry_time_secs = 480
+min_spot_magnitude = 0.003
+max_entry_price = 0.72
+
+[bot.trend_filter]
+enabled = false
+
+[backtest]
+start_date = "2025-10-01"
+end_date = "2026-03-30"
+initial_balance = 80.0
+slippage_bps = 10
+
+[data]
+cache_dir = "data"
+log_dir = "logs"

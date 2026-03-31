@@ -1,0 +1,57 @@
+[bot]
+mode = "backtest"
+min_edge = 0.03
+max_position_usdc = 500.0
+max_total_exposure_usdc = 50000.0
+max_daily_loss_usdc = 10000.0
+kelly_fraction = 0.25
+
+[[bot.assets]]
+asset = "btc"
+enabled = true
+timeframes = ["min5", "min15"]
+
+[[bot.assets]]
+asset = "eth"
+enabled = true
+timeframes = ["min5", "min15"]
+
+[[bot.assets]]
+asset = "sol"
+enabled = true
+timeframes = ["min5", "min15"]
+
+[[bot.assets]]
+asset = "xrp"
+enabled = true
+timeframes = ["min5", "min15"]
+
+# Config E
+[[bot.strategies]]
+type = "early_directional"
+max_entry_time_secs = 150
+min_spot_magnitude = 0.002
+max_entry_price = 0.53
+
+[[bot.strategies]]
+type = "momentum_confirmation"
+min_entry_time_secs = 180
+max_entry_time_secs = 480
+min_spot_magnitude = 0.003
+max_entry_price = 0.72
+
+[bot.trend_filter]
+enabled = true
+fast_period = 20
+slow_period = 60
+min_trend_strength = 0.0005
+
+[backtest]
+start_date = "2025-10-01"
+end_date = "2026-03-30"
+initial_balance = 50000.0
+slippage_bps = 10
+
+[data]
+cache_dir = "data"
+log_dir = "logs"
