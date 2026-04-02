@@ -275,3 +275,37 @@ def test_paper_executor_tick_fills_resting_order():
         assert fills[0][1] == 0.50  # filled at new ask
         assert fills[0][2] == 100
         assert oid not in ex.get_open_orders()  # removed after fill
+
+
+def test_micro_live_executor_caps_shares():
+    from btc_15m_bot import MicroLiveExecutor
+    with patch("btc_15m_bot.ClobClient") as MockClient:
+        mock_client = MagicMock()
+        mock_client.create_order.return_value = MagicMock()
+        mock_client.post_order.return_value = {"orderID": "live-1", "status": "live"}
+        MockClient.return_value = mock_client
+
+        ex = MicroLiveExecutor(private_key="0xfake", micro_size=1.0)
+        ex._client = mock_client
+        oid = ex.place_gtc_order("token-1", "BUY", 0.55, 100)
+
+        call_args = mock_client.create_order.call_args
+        order_args = call_args[0][0]
+        assert order_args.size == 1.0
+
+
+def test_live_executor_uses_full_size():
+    from btc_15m_bot import LiveExecutor
+    with patch("btc_15m_bot.ClobClient") as MockClient:
+        mock_client = MagicMock()
+        mock_client.create_order.return_value = MagicMock()
+        mock_client.post_order.return_value = {"orderID": "live-2", "status": "live"}
+        MockClient.return_value = mock_client
+
+        ex = LiveExecutor(private_key="0xfake")
+        ex._client = mock_client
+        oid = ex.place_gtc_order("token-1", "BUY", 0.55, 100)
+
+        call_args = mock_client.create_order.call_args
+        order_args = call_args[0][0]
+        assert order_args.size == 100

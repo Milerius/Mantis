@@ -28,6 +28,18 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 
+try:
+    from py_clob_client.client import ClobClient
+    from py_clob_client.clob_types import OrderArgs, OrderType
+    from py_clob_client.order_builder.constants import BUY
+    HAS_CLOB_CLIENT = True
+except ImportError:
+    HAS_CLOB_CLIENT = False
+    ClobClient = None
+    OrderArgs = None
+    OrderType = None
+    BUY = None
+
 # ---------------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------------
@@ -437,8 +449,89 @@ class PaperExecutor:
 
 
 # ---------------------------------------------------------------------------
+# LiveExecutor / MicroLiveExecutor
+# ---------------------------------------------------------------------------
+
+
+class LiveExecutor:
+    def __init__(self, private_key: str, chain_id: int = 137):
+        if not HAS_CLOB_CLIENT:
+            raise ImportError("py-clob-client required for live mode: pip install py-clob-client")
+        self._client = ClobClient(
+            CLOB_REST,
+            key=private_key,
+            chain_id=chain_id,
+        )
+        self._client.set_api_creds(self._client.create_or_derive_api_creds())
+        self._orders: Dict[str, dict] = {}
+        self._fills: List[Tuple[str, float, float, float]] = []
+
+    def place_gtc_order(self, token_id: str, side: str, price: float, shares: float) -> str:
+        if not token_id:
+            raise ValueError("token_id required")
+        if shares <= 0 or price <= 0:
+            raise ValueError(f"Invalid order: shares={shares} price={price}")
+        clob_side = BUY
+        order_args = OrderArgs(token_id=token_id, price=price, size=shares, side=clob_side)
+        signed = self._client.create_order(order_args)
+        resp = self._client.post_order(signed, OrderType.GTC)
+        oid = resp.get("orderID", "")
+        self._orders[oid] = {"token_id": token_id, "price": price, "shares": shares}
+        log.info(f"[LIVE] Posted GTC {oid}: BUY {shares:.0f} @ ${price:.4f}")
+        return oid
+
+    def cancel_order(self, order_id: str):
+        try:
+            self._client.cancel(order_id=order_id)
+            self._orders.pop(order_id, None)
+            log.info(f"[LIVE] Cancelled {order_id}")
+        except Exception as e:
+            log.warning(f"Cancel error for {order_id}: {e}")
+
+    def cancel_all(self):
+        try:
+            self._client.cancel_all()
+            self._orders.clear()
+            log.info("[LIVE] Cancelled all orders")
+        except Exception as e:
+            log.warning(f"Cancel all error: {e}")
+
+    def get_fills(self) -> List[Tuple[str, float, float, float]]:
+        for oid in list(self._orders.keys()):
+            try:
+                order = self._client.get_order(oid)
+                matched = float(order.get("size_matched", 0))
+                if matched > 0:
+                    price = float(order.get("price", 0))
+                    existing = sum(f[2] for f in self._fills if f[0] == oid)
+                    new_fill = matched - existing
+                    if new_fill > 0:
+                        self._fills.append((oid, price, new_fill, time.time()))
+            except Exception as e:
+                log.warning(f"Fill check error for {oid}: {e}")
+        return list(self._fills)
+
+    def get_open_orders(self) -> List[str]:
+        return list(self._orders.keys())
+
+    def reset(self):
+        self.cancel_all()
+        self._fills.clear()
+
+
+class MicroLiveExecutor(LiveExecutor):
+    def __init__(self, private_key: str, micro_size: float = 1.0, chain_id: int = 137):
+        super().__init__(private_key, chain_id)
+        self.micro_size = micro_size
+
+    def place_gtc_order(self, token_id: str, side: str, price: float, shares: float) -> str:
+        capped = min(shares, self.micro_size)
+        log.info(f"[MICRO] Capping {shares:.0f} → {capped:.1f} shares")
+        return super().place_gtc_order(token_id, side, price, capped)
+
+
+# ---------------------------------------------------------------------------
 # Placeholder — subsequent tasks will add:
-#   Task 6:  LiveExecutor / MicroLiveExecutor
 #   Task 7:  OrderManager + safety rules
 #   Task 8:  SettlementHandler + WindowRecorder
 #   Task 9:  SpyThread
