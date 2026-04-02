@@ -1,6 +1,9 @@
+import json
 import pytest
 import sys
 import os
+import tempfile
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
@@ -369,3 +372,48 @@ def test_order_manager_posts_insurance():
         om = OrderManager(executor=ex, position=pos, config=CONFIG)
         om.post_insurance("token-down")
         assert len(ex.get_open_orders()) == len(CONFIG["insurance_prices"])
+
+
+def test_window_recorder_writes_json():
+    from btc_15m_bot import WindowRecorder, Market, Position
+    with tempfile.TemporaryDirectory() as tmpdir:
+        rec = WindowRecorder(replay_dir=tmpdir)
+        market = Market(
+            condition_id="0xabc", token_up="t1", token_down="t2",
+            slug="btc-updown-15m-1775140200",
+            window_open=1775140200, window_close=1775141100,
+        )
+        pos = Position()
+        pos.add_fill("Up", 100, 0.55, 55.0)
+        signal_data = {"btc_open_price": 84000, "btc_at_signal": 84050,
+                       "delta": 50, "direction": "Up"}
+        rec.write(market=market, position=pos, winner="Up",
+                  signal=signal_data, spy_data=None)
+
+        files = list(Path(tmpdir).glob("*.json"))
+        assert len(files) == 1
+        data = json.loads(files[0].read_text())
+        assert data["window"]["slug"] == "btc-updown-15m-1775140200"
+        assert data["our_position"]["pnl"] == pytest.approx(45.0)
+        assert data["window"]["winner"] == "Up"
+
+
+def test_settlement_handler_resolves_winner():
+    from btc_15m_bot import SettlementHandler
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = [{
+            "slug": "btc-updown-15m-1775140200",
+            "markets": [{
+                "conditionId": "0xabc",
+                "outcomes": '["Up", "Down"]',
+                "outcomePrices": '["1", "0"]',
+                "closed": True,
+            }]
+        }]
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        sh = SettlementHandler()
+        winner = sh.resolve(slug="btc-updown-15m-1775140200", condition_id="0xabc")
+        assert winner == "Up"

@@ -24,6 +24,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import requests
@@ -606,8 +607,100 @@ class OrderManager:
 
 
 # ---------------------------------------------------------------------------
+# Task 8: SettlementHandler + WindowRecorder
+# ---------------------------------------------------------------------------
+
+class SettlementHandler:
+    def resolve(self, slug: str, condition_id: str, retries: int = 5, delay: float = 10) -> Optional[str]:
+        for attempt in range(retries):
+            try:
+                resp = requests.get(
+                    f"{GAMMA_API}/events",
+                    params={"slug": slug, "closed": "true"},
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                events = resp.json()
+                for event in events:
+                    for mkt in event.get("markets", []):
+                        if mkt.get("conditionId") != condition_id:
+                            continue
+                        prices = json.loads(mkt.get("outcomePrices", "[]"))
+                        outcomes = json.loads(mkt.get("outcomes", "[]"))
+                        if len(prices) == 2 and len(outcomes) == 2:
+                            if float(prices[0]) > float(prices[1]):
+                                return outcomes[0]
+                            else:
+                                return outcomes[1]
+            except Exception as e:
+                log.warning(f"Resolution attempt {attempt+1} failed: {e}")
+            if attempt < retries - 1:
+                time.sleep(delay)
+        log.error(f"Could not resolve {slug} after {retries} attempts")
+        return None
+
+
+class WindowRecorder:
+    def __init__(self, replay_dir: str = "window_replay/"):
+        self.replay_dir = Path(replay_dir)
+        self.replay_dir.mkdir(parents=True, exist_ok=True)
+
+    def write(self, market: Market, position: Position, winner: Optional[str],
+              signal: dict, spy_data: Optional[dict] = None):
+        open_dt = datetime.fromtimestamp(market.window_open, tz=timezone.utc)
+        filename = f"{open_dt.strftime('%Y-%m-%d_%H-%M')}_btc-15m.json"
+
+        up_avg = position.up_cost / position.up_shares if position.up_shares > 0 else 0
+        dn_avg = position.down_cost / position.down_shares if position.down_shares > 0 else 0
+        pnl = position.pnl_if(winner) if winner else 0
+        deployed = position.total_deployed
+        roi = pnl / deployed * 100 if deployed > 0 else 0
+
+        record = {
+            "window": {
+                "slug": market.slug,
+                "open_time": open_dt.isoformat(),
+                "close_time": datetime.fromtimestamp(market.window_close, tz=timezone.utc).isoformat(),
+                "winner": winner,
+            },
+            "signal": signal,
+            "our_trades": [
+                {"time": datetime.fromtimestamp(f.ts, tz=timezone.utc).isoformat(),
+                 "side": f.side, "price": f.price, "shares": f.shares,
+                 "usdc": f.usdc, "type": f.order_type}
+                for f in position.fills
+            ],
+            "our_position": {
+                "up_shares": position.up_shares,
+                "up_cost": round(position.up_cost, 2),
+                "up_avg_price": round(up_avg, 4),
+                "down_shares": position.down_shares,
+                "down_cost": round(position.down_cost, 2),
+                "down_avg_price": round(dn_avg, 4),
+                "total_deployed": round(deployed, 2),
+                "pnl": round(pnl, 2),
+                "roi_pct": round(roi, 1),
+            },
+            "spy": spy_data,
+        }
+
+        if spy_data and winner:
+            spy_pnl = spy_data.get("position", {}).get("pnl", 0)
+            record["comparison"] = {
+                "our_pnl": round(pnl, 2),
+                "spy_pnl": spy_pnl,
+                "same_direction": signal.get("direction") == spy_data.get("direction"),
+                "our_w_avg": round(up_avg if winner == "Up" else dn_avg, 4),
+                "spy_w_avg": spy_data.get("w_avg", 0),
+            }
+
+        filepath = self.replay_dir / filename
+        filepath.write_text(json.dumps(record, indent=2, default=str))
+        log.info(f"Replay saved: {filepath}")
+
+
+# ---------------------------------------------------------------------------
 # Placeholder — subsequent tasks will add:
-#   Task 8:  SettlementHandler + WindowRecorder
 #   Task 9:  SpyThread
 #   Task 10: main() + CLI entry point
 # ---------------------------------------------------------------------------
