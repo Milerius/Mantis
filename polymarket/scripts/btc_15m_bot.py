@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
 """
 BTC 15-minute Up/Down trading bot for Polymarket.
 
@@ -55,15 +58,7 @@ CONFIG = {
 # Logger
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(CONFIG["log_file"]),
-    ],
-)
-logger = logging.getLogger("btc_15m_bot")
+log = logging.getLogger("btc15m")
 
 # ---------------------------------------------------------------------------
 # Data Classes
