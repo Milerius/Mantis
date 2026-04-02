@@ -69,7 +69,7 @@ CONFIG = {
     "spy_enabled": False,
     "spy_wallet": "0xe1d6b51521bd4365769199f392f9818661bd907c",
     "spy_poll_interval_sec": 5,
-    "heisenberg_api_key": os.environ.get("HEISENBERG_API_KEY", ""),
+    "heisenberg_api_key": os.environ.get("HEISENBERG_API_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzgwMzM3ODU0LCJpYXQiOjE3NzUxNTM4NTQsImp0aSI6IjFkNTFlODk0YjgxNTRmNWE4ZDA5NTlmYzA2OTJiODhkIiwidXNlcl9pZCI6MTI0OCwic2NvcGUiOiJsYXVuY2hwYWQ6YWdlbnQtcmVhZCxyZXRyaWV2ZXI6ZWNoby1nZW5lcmF0aW9uLHJldHJpZXZlcjpmZWF0dXJlLWV4dHJhY3Rpb24sdXNlcjpyZWFkLHJldHJpZXZlcjphZ2VudC1vcHRpb24tcmV0cmlldmFsLGxhdW5jaHBhZDphZ2VudC1jcmVhdGlvbixsYXVuY2hwYWQ6YWdlbnQtdXBkYXRlLHVzZXI6d3JpdGUscmV0cmlldmVyOnNlbWFudGljLXJldHJpZXZhbCxsYXVuY2hwYWQ6ZWNoby1zdHlsZS1jcmVhdGlvbiIsInRva2VuX25hbWUiOiJiYXNlX2xvZ2luIn0.4KYt2DlYN_RNraB1PgrAaEA-3wJy0gMZMRAIrpDT4Dk"),
     "replay_dir": "window_replay/",
     "log_file": "bot.log",
 }
@@ -366,11 +366,27 @@ class SignalEngine:
 CLOB_REST = "https://clob.polymarket.com"
 
 
+PM_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+
+
 class PaperExecutor:
+    """Paper executor with real-time Polymarket WebSocket for realistic fill simulation.
+
+    At placement: sweeps all ask levels up to our price for immediate fills.
+    For resting orders: subscribes to the Polymarket market WS and fills when
+    the best_ask drops to our resting price.
+    """
+
     def __init__(self):
         self._orders: Dict[str, dict] = {}
-        self._fills: List[Tuple[str, float, float, float]] = []  # (order_id, price, shares, ts)
+        self._fills: List[Tuple[str, float, float, float]] = []
         self._next_id = 0
+        self._lock = threading.Lock()
+        # WS state
+        self._ws_thread: Optional[threading.Thread] = None
+        self._ws_running = False
+        self._subscribed_tokens: set = set()
+        self._best_asks: Dict[str, float] = {}
 
     def place_gtc_order(self, token_id: str, side: str, price: float, shares: float) -> str:
         if not token_id:
@@ -381,65 +397,167 @@ class PaperExecutor:
         oid = f"paper-{self._next_id}"
         self._next_id += 1
 
-        book = self._fetch_book(token_id)
-        asks = book.get("asks", [])
+        # Sweep all ask levels up to our price for immediate fills
+        filled = self._try_immediate_fill(oid, token_id, side, price, shares)
 
-        if side == "BUY" and asks:
-            best_ask = float(asks[0].get("price", 999))
-            ask_size = float(asks[0].get("size", 0))
-            if price >= best_ask:
-                fill_shares = min(shares, ask_size)
-                fill_price = best_ask
-                self._fills.append((oid, fill_price, fill_shares, time.time()))
-                remaining = shares - fill_shares
-                if remaining > 0:
-                    self._orders[oid] = {
-                        "token_id": token_id, "side": side,
-                        "price": price, "shares": remaining,
-                    }
-                log.info(f"[PAPER] Immediate fill {fill_shares:.0f} @ ${fill_price:.4f} (order {oid})")
-                return oid
+        remaining = shares - filled
+        if remaining > 0:
+            with self._lock:
+                self._orders[oid] = {
+                    "token_id": token_id, "side": side,
+                    "price": price, "shares": remaining,
+                }
+            log.info(f"[PAPER] Resting order {oid}: {side} {remaining:.0f} @ ${price:.4f}")
+            self._ensure_ws_subscription(token_id)
 
-        self._orders[oid] = {
-            "token_id": token_id, "side": side,
-            "price": price, "shares": shares,
-        }
-        log.info(f"[PAPER] Resting order {oid}: {side} {shares:.0f} @ ${price:.4f}")
         return oid
 
+    def _try_immediate_fill(self, oid: str, token_id: str, side: str, price: float, shares: float) -> float:
+        """Sweep the orderbook for immediate fills. Returns shares filled."""
+        book = self._fetch_book(token_id)
+        asks = book.get("asks", [])
+        if side != "BUY" or not asks:
+            return 0
+
+        total_filled = 0
+        remaining = shares
+        for ask in asks:
+            ask_price = float(ask.get("price", 999))
+            ask_size = float(ask.get("size", 0))
+            if ask_price > price:
+                break
+            fill_shares = min(remaining, ask_size)
+            with self._lock:
+                self._fills.append((oid, ask_price, fill_shares, time.time()))
+            total_filled += fill_shares
+            remaining -= fill_shares
+            log.info(f"[PAPER] Immediate fill {oid}: {fill_shares:.0f} @ ${ask_price:.4f}")
+            if remaining <= 0:
+                break
+        return total_filled
+
     def tick(self):
-        filled_oids = []
-        for oid, order in list(self._orders.items()):
-            book = self._fetch_book(order["token_id"])
-            asks = book.get("asks", [])
-            if order["side"] == "BUY" and asks:
-                best_ask = float(asks[0].get("price", 999))
-                ask_size = float(asks[0].get("size", 0))
-                if order["price"] >= best_ask:
-                    fill_shares = min(order["shares"], ask_size)
-                    self._fills.append((oid, best_ask, fill_shares, time.time()))
-                    order["shares"] -= fill_shares
-                    log.info(f"[PAPER] Fill {oid}: {fill_shares:.0f} @ ${best_ask:.4f}")
-                    if order["shares"] <= 0:
-                        filled_oids.append(oid)
-        for oid in filled_oids:
-            del self._orders[oid]
+        """Check resting orders against WS best_ask. Also REST fallback."""
+        with self._lock:
+            filled_oids = []
+            for oid, order in list(self._orders.items()):
+                token_id = order["token_id"]
+                best_ask = self._best_asks.get(token_id)
+                if best_ask is None:
+                    book = self._fetch_book(token_id)
+                    asks = book.get("asks", [])
+                    if asks:
+                        best_ask = float(asks[0].get("price", 999))
+
+                if best_ask is not None and order["side"] == "BUY" and order["price"] >= best_ask:
+                    self._fills.append((oid, best_ask, order["shares"], time.time()))
+                    log.info(f"[PAPER] Fill {oid}: {order['shares']:.0f} @ ${best_ask:.4f} (tick)")
+                    filled_oids.append(oid)
+            for oid in filled_oids:
+                del self._orders[oid]
 
     def cancel_order(self, order_id: str):
-        self._orders.pop(order_id, None)
+        with self._lock:
+            self._orders.pop(order_id, None)
 
     def cancel_all(self):
-        self._orders.clear()
+        with self._lock:
+            self._orders.clear()
 
     def get_fills(self) -> List[Tuple[str, float, float, float]]:
-        return list(self._fills)
+        with self._lock:
+            return list(self._fills)
 
     def get_open_orders(self) -> List[str]:
-        return list(self._orders.keys())
+        with self._lock:
+            return list(self._orders.keys())
 
     def reset(self):
-        self._orders.clear()
-        self._fills.clear()
+        self.cancel_all()
+        with self._lock:
+            self._fills.clear()
+
+    def stop(self):
+        self._ws_running = False
+        if self._ws_thread:
+            self._ws_thread.join(timeout=3)
+
+    # ── WebSocket ────────────────────────────────────────────────────────
+
+    def _ensure_ws_subscription(self, token_id: str):
+        if token_id in self._subscribed_tokens:
+            return
+        self._subscribed_tokens.add(token_id)
+        if not self._ws_running:
+            self._ws_running = True
+            self._ws_thread = threading.Thread(target=self._ws_loop, daemon=True)
+            self._ws_thread.start()
+
+    def _ws_loop(self):
+        import websockets.sync.client as ws_sync
+        while self._ws_running:
+            try:
+                ws = ws_sync.connect(PM_WS_URL)
+                log.info("[PAPER] Polymarket WS connected")
+                if self._subscribed_tokens:
+                    ws.send(json.dumps({
+                        "assets_ids": list(self._subscribed_tokens),
+                        "type": "market",
+                    }))
+                    log.info(f"[PAPER] Subscribed to {len(self._subscribed_tokens)} tokens")
+                while self._ws_running:
+                    try:
+                        msg = ws.recv(timeout=3)
+                    except (TimeoutError, Exception):
+                        continue
+                    if msg in ("PONG", "[]"):
+                        continue
+                    try:
+                        data = json.loads(msg)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(data, list):
+                        for item in data:
+                            self._process_ws_message(item)
+                    elif isinstance(data, dict):
+                        self._process_ws_message(data)
+                ws.close()
+            except Exception as e:
+                if self._ws_running:
+                    log.warning(f"[PAPER] Polymarket WS error: {e}, reconnecting in 2s")
+                    time.sleep(2)
+
+    def _process_ws_message(self, msg: dict):
+        # Full book snapshot
+        if "bids" in msg and "asks" in msg:
+            asset_id = msg.get("asset_id", "")
+            asks = msg.get("asks", [])
+            if asks and asset_id:
+                best_ask = float(asks[0].get("price", 999))
+                self._best_asks[asset_id] = best_ask
+                self._check_resting_fills(asset_id, best_ask)
+            return
+        # Price change events
+        for change in msg.get("price_changes", []):
+            asset_id = change.get("asset_id", "")
+            best_ask_str = change.get("best_ask")
+            if best_ask_str and asset_id:
+                best_ask = float(best_ask_str)
+                self._best_asks[asset_id] = best_ask
+                self._check_resting_fills(asset_id, best_ask)
+
+    def _check_resting_fills(self, token_id: str, best_ask: float):
+        with self._lock:
+            filled_oids = []
+            for oid, order in list(self._orders.items()):
+                if order["token_id"] != token_id or order["side"] != "BUY":
+                    continue
+                if order["price"] >= best_ask:
+                    self._fills.append((oid, best_ask, order["shares"], time.time()))
+                    log.info(f"[PAPER] WS Fill {oid}: {order['shares']:.0f} @ ${best_ask:.4f}")
+                    filled_oids.append(oid)
+            for oid in filled_oids:
+                del self._orders[oid]
 
     def _fetch_book(self, token_id: str) -> dict:
         try:
@@ -617,9 +735,13 @@ class SettlementHandler:
     def resolve(self, slug: str, condition_id: str, retries: int = 5, delay: float = 10) -> Optional[str]:
         for attempt in range(retries):
             try:
+                # Gamma API uses long-form slug (btc-up-or-down-15m-XXX)
+                # but our slug might be short-form (btc-updown-15m-XXX)
+                # Search by condition_id via closed 15M events instead
                 resp = requests.get(
                     f"{GAMMA_API}/events",
-                    params={"slug": slug, "closed": "true"},
+                    params={"limit": "20", "closed": "true",
+                            "tag_slug": ["up-or-down", "15M"]},
                     timeout=10,
                 )
                 resp.raise_for_status()
