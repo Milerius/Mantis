@@ -69,8 +69,10 @@ def test_market_dataclass():
         slug="btc-updown-15m-1775140200",
         window_open=1775140200,
         window_close=1775141100,
+        market_id=1819236,
     )
     assert m.window_close - m.window_open == 900
+    assert m.market_id == 1819236
 
 
 def test_window_manager_next_window():
@@ -403,20 +405,18 @@ def test_settlement_handler_resolves_winner():
     from btc_15m_bot import SettlementHandler
     with patch("btc_15m_bot.requests.get") as mock_get:
         mock_resp = MagicMock()
-        mock_resp.json.return_value = [{
-            "slug": "btc-updown-15m-1775140200",
-            "markets": [{
-                "conditionId": "0xabc",
-                "outcomes": '["Up", "Down"]',
-                "outcomePrices": '["1", "0"]',
-                "closed": True,
-            }]
-        }]
-        mock_resp.raise_for_status = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "id": 1819236,
+            "outcomes": '["Up", "Down"]',
+            "outcomePrices": '["1", "0"]',
+            "closed": True,
+        }
         mock_get.return_value = mock_resp
 
         sh = SettlementHandler()
-        winner = sh.resolve(slug="btc-updown-15m-1775140200", condition_id="0xabc")
+        winner = sh.resolve(slug="btc-updown-15m-1775140200", condition_id="0xabc",
+                           market_id=1819236)
         assert winner == "Up"
 
 
@@ -485,3 +485,112 @@ def test_run_one_window_paper_mode(tmp_path):
         assert result["pnl"] != 0
         replays = list(tmp_path.glob("*.json"))
         assert len(replays) == 1
+
+
+def test_settlement_resolves_via_market_id():
+    from btc_15m_bot import SettlementHandler
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "id": 1819236,
+            "outcomes": '["Up", "Down"]',
+            "outcomePrices": '["1", "0"]',
+            "closed": True,
+        }
+        mock_get.return_value = mock_resp
+
+        sh = SettlementHandler()
+        winner = sh.resolve(slug="btc-updown-15m-123", condition_id="0xabc",
+                           market_id=1819236)
+        assert winner == "Up"
+        # Verify it called the right URL
+        mock_get.assert_called_once()
+        call_url = mock_get.call_args[0][0]
+        assert "1819236" in call_url
+
+
+def test_settlement_resolves_down_winner():
+    from btc_15m_bot import SettlementHandler
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "outcomes": '["Up", "Down"]',
+            "outcomePrices": '["0", "1"]',
+            "closed": True,
+        }
+        mock_get.return_value = mock_resp
+
+        sh = SettlementHandler()
+        winner = sh.resolve(slug="x", condition_id="0x1", market_id=123)
+        assert winner == "Down"
+
+
+def test_settlement_retries_when_not_settled():
+    from btc_15m_bot import SettlementHandler
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        # First call: prices are equal (not settled yet)
+        unsettled = MagicMock()
+        unsettled.status_code = 200
+        unsettled.json.return_value = {
+            "outcomes": '["Up", "Down"]',
+            "outcomePrices": '["0.5", "0.5"]',
+            "closed": False,
+        }
+        # Second call: resolved
+        settled = MagicMock()
+        settled.status_code = 200
+        settled.json.return_value = {
+            "outcomes": '["Up", "Down"]',
+            "outcomePrices": '["1", "0"]',
+            "closed": True,
+        }
+        mock_get.side_effect = [unsettled, settled]
+
+        sh = SettlementHandler()
+        winner = sh.resolve(slug="x", condition_id="0x1", market_id=99,
+                           retries=2, delay=0)  # delay=0 for fast test
+        assert winner == "Up"
+        assert mock_get.call_count == 2
+
+
+def test_settlement_fallback_to_orderbook():
+    from btc_15m_bot import SettlementHandler
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        # Market API returns unsettled
+        unsettled = MagicMock()
+        unsettled.status_code = 200
+        unsettled.json.return_value = {
+            "outcomes": '["Up", "Down"]',
+            "outcomePrices": '["0.5", "0.5"]',
+        }
+        # Orderbook check: Up token has bid at 0.95
+        up_book = MagicMock()
+        up_book.status_code = 200
+        up_book.json.return_value = {"bids": [{"price": "0.95", "size": "1000"}], "asks": []}
+
+        mock_get.side_effect = [unsettled] * 3 + [up_book]
+
+        sh = SettlementHandler()
+        winner = sh.resolve(slug="x", condition_id="0x1", market_id=99,
+                           token_up="tok-up", token_down="tok-down",
+                           retries=3, delay=0)
+        assert winner == "Up"
+
+
+def test_market_dataclass_has_market_id():
+    from btc_15m_bot import Market
+    m = Market(
+        condition_id="0xabc", token_up="t1", token_down="t2",
+        slug="btc-updown-15m-123", window_open=100, window_close=1000,
+        market_id=1819236,
+    )
+    assert m.market_id == 1819236
+
+    # market_id is optional
+    m2 = Market(
+        condition_id="0xabc", token_up="t1", token_down="t2",
+        slug="test", window_open=100, window_close=1000,
+    )
+    assert m2.market_id is None

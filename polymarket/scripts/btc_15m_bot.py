@@ -94,6 +94,7 @@ class Market:
     slug: str
     window_open: int    # Unix timestamp (seconds)
     window_close: int   # Unix timestamp (seconds)
+    market_id: Optional[int] = None  # Gamma API numeric ID
 
 
 @dataclass
@@ -282,6 +283,7 @@ class MarketDiscovery:
                     slug=event.get("slug", ""),
                     window_open=window_open,
                     window_close=window_close,
+                    market_id=mkt.get("id"),
                 )
                 self._cache[window_open] = market
                 return market
@@ -732,43 +734,48 @@ class OrderManager:
 # ---------------------------------------------------------------------------
 
 class SettlementHandler:
-    def resolve(self, slug: str, condition_id: str, retries: int = 5, delay: float = 10) -> Optional[str]:
+    def resolve(self, slug: str, condition_id: str, market_id: Optional[int] = None,
+                token_up: str = "", token_down: str = "",
+                retries: int = 5, delay: float = 10) -> Optional[str]:
         for attempt in range(retries):
             try:
-                # Gamma API uses long-form slug (btc-up-or-down-15m-XXX)
-                # but our slug might be short-form (btc-updown-15m-XXX)
-                # Search by condition_id via closed 15M events instead
-                resp = requests.get(
-                    f"{GAMMA_API}/events",
-                    params={"limit": "20", "closed": "true",
-                            "tag_slug": ["up-or-down", "15M"]},
-                    timeout=10,
-                )
-                resp.raise_for_status()
-                events = resp.json()
-                resolved = None
-                for event in events:
-                    for mkt in event.get("markets", []):
-                        if mkt.get("conditionId") != condition_id:
-                            continue
-                        prices = json.loads(mkt.get("outcomePrices", "[]"))
-                        outcomes = json.loads(mkt.get("outcomes", "[]"))
+                # Approach A: direct market lookup by numeric ID
+                if market_id:
+                    resp = requests.get(f"{GAMMA_API}/markets/{market_id}", timeout=10)
+                    if resp.status_code == 200:
+                        mkt = resp.json()
+                        prices = mkt.get("outcomePrices", "")
+                        outcomes = mkt.get("outcomes", "")
+                        # Parse — these might be JSON strings or already lists
+                        if isinstance(prices, str):
+                            prices = json.loads(prices)
+                        if isinstance(outcomes, str):
+                            outcomes = json.loads(outcomes)
                         if len(prices) == 2 and len(outcomes) == 2:
                             p0, p1 = float(prices[0]), float(prices[1])
-                            if abs(p0 - p1) < 0.01:
-                                break  # not settled yet
-                            if p0 > p1:
-                                resolved = outcomes[0]
-                            else:
-                                resolved = outcomes[1]
-                    if resolved:
-                        break
-                if resolved:
-                    return resolved
+                            if abs(p0 - p1) > 0.5:  # clearly resolved
+                                resolved = outcomes[0] if p0 > p1 else outcomes[1]
+                                return resolved
             except Exception as e:
                 log.warning(f"Resolution attempt {attempt+1} failed: {e}")
             if attempt < retries - 1:
                 time.sleep(delay)
+
+        # Approach B: fallback — check orderbook prices
+        if token_up and token_down:
+            try:
+                for token_id, outcome in [(token_up, "Up"), (token_down, "Down")]:
+                    book = requests.get(
+                        f"{CLOB_REST}/book",
+                        params={"token_id": token_id},
+                        timeout=5,
+                    ).json()
+                    bids = book.get("bids", [])
+                    if bids and float(bids[0].get("price", 0)) > 0.90:
+                        return outcome
+            except Exception as e:
+                log.warning(f"Orderbook fallback failed: {e}")
+
         log.error(f"Could not resolve {slug} after {retries} attempts")
         return None
 
@@ -1019,7 +1026,9 @@ def run_one_window(config: dict, market: Market, direction: str,
     # Resolve winner if not provided (test mode provides it)
     if winner is None:
         sh = SettlementHandler()
-        winner = sh.resolve(slug=market.slug, condition_id=market.condition_id)
+        winner = sh.resolve(slug=market.slug, condition_id=market.condition_id,
+                            market_id=market.market_id,
+                            token_up=market.token_up, token_down=market.token_down)
 
     # Compute PnL
     pnl = position.pnl_if(winner) if winner else 0
