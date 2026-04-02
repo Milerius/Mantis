@@ -290,9 +290,11 @@ class SignalEngine:
         self.current_price: float = 0.0
         self._ws_thread: Optional[threading.Thread] = None
         self._running = False
+        self._lock = threading.Lock()
 
     def delta(self) -> float:
-        return self.current_price - self.open_price
+        with self._lock:
+            return self.current_price - self.open_price
 
     def compute_direction(self) -> Optional[str]:
         d = self.delta()
@@ -301,7 +303,8 @@ class SignalEngine:
         return "Up" if d > 0 else "Down"
 
     def snapshot_open(self):
-        self.open_price = self.current_price
+        with self._lock:
+            self.open_price = self.current_price
         log.info(f"Signal: open_price = ${self.open_price:,.2f}")
 
     def start_ws(self):
@@ -311,6 +314,8 @@ class SignalEngine:
 
     def stop_ws(self):
         self._running = False
+        if self._ws_thread is not None:
+            self._ws_thread.join(timeout=3)
 
     def _ws_loop(self):
         import websockets.sync.client as ws_sync
@@ -321,7 +326,10 @@ class SignalEngine:
                     while self._running:
                         msg = ws.recv(timeout=5)
                         data = json.loads(msg)
-                        self.current_price = float(data.get("p", 0))
+                        if "p" not in data:
+                            continue
+                        with self._lock:
+                            self.current_price = float(data["p"])
             except Exception as e:
                 if self._running:
                     log.warning(f"Binance WS error: {e}, reconnecting in 2s")
