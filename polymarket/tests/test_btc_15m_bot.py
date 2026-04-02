@@ -66,3 +66,39 @@ def test_market_dataclass():
         window_close=1775141100,
     )
     assert m.window_close - m.window_open == 900
+
+
+def test_window_manager_next_window():
+    from btc_15m_bot import WindowManager
+    wm = WindowManager(window_duration=900)
+
+    # At timestamp 1775140500 (2.5 min into a window that opened at 1775140200)
+    nxt = wm.next_window_open(now=1775140500)
+    assert nxt == 1775141100  # next 15m boundary
+
+    # At exact boundary
+    nxt = wm.next_window_open(now=1775140200)
+    assert nxt == 1775140200
+
+
+def test_window_manager_pct_through():
+    from btc_15m_bot import WindowManager
+    import pytest
+    wm = WindowManager(window_duration=900)
+    wm.window_open = 1000
+    wm.window_close = 1900
+
+    assert wm.pct_through(1000) == 0.0
+    assert wm.pct_through(1450) == pytest.approx(50.0)
+    assert wm.pct_through(1900) == pytest.approx(100.0)
+
+
+def test_window_manager_skip_mid_window():
+    from btc_15m_bot import WindowManager
+    wm = WindowManager(window_duration=900)
+
+    # 10% into a window — should skip to next
+    current_window_start = 1775140200
+    now = current_window_start + 90  # 10% through
+    nxt = wm.next_window_open(now=now)
+    assert nxt == current_window_start + 900  # next window

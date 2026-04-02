@@ -19,8 +19,10 @@ Tasks completed:
 
 import logging
 import os
+import time
 from dataclasses import dataclass
-from typing import List
+from datetime import datetime, timezone
+from typing import List, Optional
 
 # ---------------------------------------------------------------------------
 # CONFIG
@@ -152,9 +154,47 @@ class Position:
             raise ValueError(f"Unknown winning_side: {winning_side!r}")
 
 
+class WindowManager:
+    def __init__(self, window_duration: int = 900):
+        self.duration = window_duration
+        self.window_open: int = 0
+        self.window_close: int = 0
+
+    def next_window_open(self, now: Optional[float] = None) -> int:
+        now = int(now or time.time())
+        current_boundary = (now // self.duration) * self.duration
+        pct = (now - current_boundary) / self.duration * 100
+        if pct <= 5:
+            return current_boundary
+        else:
+            return current_boundary + self.duration
+
+    def set_window(self, open_ts: int):
+        self.window_open = open_ts
+        self.window_close = open_ts + self.duration
+
+    def pct_through(self, now: Optional[float] = None) -> float:
+        now = now or time.time()
+        if self.window_open == 0:
+            return 0.0
+        elapsed = now - self.window_open
+        return max(0.0, min(100.0, elapsed / self.duration * 100))
+
+    def wait_for_window(self) -> int:
+        """Sleep until next window open. Returns the window_open timestamp."""
+        target = self.next_window_open()
+        now = time.time()
+        wait = target - now
+        if wait > 0:
+            log.info(f"Waiting {wait:.0f}s for next window at "
+                     f"{datetime.fromtimestamp(target, tz=timezone.utc).strftime('%H:%M:%S')} UTC")
+            time.sleep(wait)
+        self.set_window(target)
+        return target
+
+
 # ---------------------------------------------------------------------------
 # Placeholder — subsequent tasks will add:
-#   Task 2:  WindowManager
 #   Task 3:  MarketDiscovery
 #   Task 4:  SignalEngine
 #   Task 5:  PaperExecutor
