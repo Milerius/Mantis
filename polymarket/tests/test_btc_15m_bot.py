@@ -244,3 +244,34 @@ def test_paper_executor_cancel_all():
         assert len(ex.get_open_orders()) == 2
         ex.cancel_all()
         assert len(ex.get_open_orders()) == 0
+
+
+def test_paper_executor_tick_fills_resting_order():
+    from btc_15m_bot import PaperExecutor
+    # First: place resting order (ask too high)
+    high_ask_book = {"asks": [{"price": "0.80", "size": "200"}], "bids": []}
+    # Second: on tick, ask drops to our price
+    low_ask_book = {"asks": [{"price": "0.50", "size": "200"}], "bids": []}
+
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        # First call: placement (high ask, no fill)
+        mock_resp_high = MagicMock()
+        mock_resp_high.json.return_value = high_ask_book
+        mock_get.return_value = mock_resp_high
+
+        ex = PaperExecutor()
+        oid = ex.place_gtc_order("token-1", "BUY", 0.55, 100)
+        assert len(ex.get_fills()) == 0
+        assert oid in ex.get_open_orders()
+
+        # Now tick with lower ask
+        mock_resp_low = MagicMock()
+        mock_resp_low.json.return_value = low_ask_book
+        mock_get.return_value = mock_resp_low
+
+        ex.tick()
+        fills = ex.get_fills()
+        assert len(fills) == 1
+        assert fills[0][1] == 0.50  # filled at new ask
+        assert fills[0][2] == 100
+        assert oid not in ex.get_open_orders()  # removed after fill

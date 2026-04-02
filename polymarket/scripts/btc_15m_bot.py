@@ -359,8 +359,10 @@ class PaperExecutor:
         self._next_id = 0
 
     def place_gtc_order(self, token_id: str, side: str, price: float, shares: float) -> str:
-        assert token_id, "token_id required"
-        assert shares > 0 and price > 0, f"Invalid order: shares={shares} price={price}"
+        if not token_id:
+            raise ValueError("token_id required")
+        if shares <= 0 or price <= 0:
+            raise ValueError(f"Invalid order: shares={shares} price={price}")
 
         oid = f"paper-{self._next_id}"
         self._next_id += 1
