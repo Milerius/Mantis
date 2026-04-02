@@ -7,7 +7,7 @@ BTC 15-minute Up/Down trading bot for Polymarket.
 Tasks completed:
   Task 1: CONFIG, data classes, logger setup   [DONE]
   Task 2: WindowManager                        [TODO]
-  Task 3: MarketDiscovery                      [TODO]
+  Task 3: MarketDiscovery                      [DONE]
   Task 4: SignalEngine                         [TODO]
   Task 5: PaperExecutor                        [TODO]
   Task 6: LiveExecutor + MicroLiveExecutor     [TODO]
@@ -17,12 +17,15 @@ Tasks completed:
   Task 10: Main Loop + CLI                     [TODO]
 """
 
+import json
 import logging
 import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional
+
+import requests
 
 # ---------------------------------------------------------------------------
 # CONFIG
@@ -194,8 +197,87 @@ class WindowManager:
 
 
 # ---------------------------------------------------------------------------
+# MarketDiscovery
+# ---------------------------------------------------------------------------
+
+GAMMA_API = "https://gamma-api.polymarket.com"
+
+
+class MarketDiscovery:
+    def __init__(self, asset: str = "btc"):
+        self.asset = asset.lower()
+        self._cache: Dict[int, Optional[Market]] = {}
+
+    def find_market(self, window_open: int) -> Optional[Market]:
+        if window_open in self._cache:
+            return self._cache[window_open]
+
+        try:
+            resp = requests.get(
+                f"{GAMMA_API}/events",
+                params={
+                    "limit": "100",
+                    "active": "true",
+                    "closed": "false",
+                    "tag_slug": ["up-or-down", "15M"],
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            events = resp.json()
+        except Exception as e:
+            log.warning(f"Gamma API error: {e}")
+            self._cache[window_open] = None
+            return None
+
+        window_close = window_open + CONFIG["window_duration"]
+        target_slug_part = f"{self.asset}-updown-15m-{window_open}"
+
+        for event in events:
+            slug = event.get("slug", "").lower()
+            if target_slug_part not in slug:
+                continue
+
+            for mkt in event.get("markets", []):
+                if not mkt.get("active") or mkt.get("closed"):
+                    continue
+
+                try:
+                    clob_ids = json.loads(mkt.get("clobTokenIds", "[]"))
+                    outcomes = json.loads(mkt.get("outcomes", "[]"))
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+                if len(clob_ids) < 2 or len(outcomes) < 2:
+                    continue
+
+                token_up, token_down = "", ""
+                for i, outcome in enumerate(outcomes):
+                    if outcome.lower() == "up":
+                        token_up = clob_ids[i]
+                    elif outcome.lower() == "down":
+                        token_down = clob_ids[i]
+
+                if not token_up or not token_down:
+                    continue
+
+                market = Market(
+                    condition_id=mkt.get("conditionId", ""),
+                    token_up=token_up,
+                    token_down=token_down,
+                    slug=event.get("slug", ""),
+                    window_open=window_open,
+                    window_close=window_close,
+                )
+                self._cache[window_open] = market
+                return market
+
+        self._cache[window_open] = None
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Placeholder — subsequent tasks will add:
-#   Task 3:  MarketDiscovery
 #   Task 4:  SignalEngine
 #   Task 5:  PaperExecutor
 #   Task 6:  LiveExecutor / MicroLiveExecutor

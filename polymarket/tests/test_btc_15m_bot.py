@@ -1,6 +1,7 @@
 import pytest
 import sys
 import os
+from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 
@@ -102,3 +103,50 @@ def test_window_manager_skip_mid_window():
     now = current_window_start + 90  # 10% through
     nxt = wm.next_window_open(now=now)
     assert nxt == current_window_start + 900  # next window
+
+
+def test_market_discovery_parses_gamma_response():
+    from btc_15m_bot import MarketDiscovery, Market
+
+    fake_event = {
+        "slug": "btc-updown-15m-1775140200",
+        "title": "Bitcoin Up or Down",
+        "markets": [{
+            "active": True,
+            "closed": False,
+            "conditionId": "0xabc123",
+            "clobTokenIds": '["token-up-1", "token-down-2"]',
+            "outcomes": '["Up", "Down"]',
+            "endDate": "2026-04-02T14:45:00Z",
+            "question": "BTC up or down 14:30-14:45?"
+        }]
+    }
+
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = [fake_event]
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        md = MarketDiscovery(asset="btc")
+        market = md.find_market(window_open=1775140200)
+
+        assert market is not None
+        assert market.token_up == "token-up-1"
+        assert market.token_down == "token-down-2"
+        assert market.condition_id == "0xabc123"
+        assert market.slug == "btc-updown-15m-1775140200"
+
+
+def test_market_discovery_returns_none_when_no_match():
+    from btc_15m_bot import MarketDiscovery
+
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = []
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        md = MarketDiscovery(asset="btc")
+        market = md.find_market(window_open=1775140200)
+        assert market is None
