@@ -161,7 +161,7 @@ class WindowManager:
         self.window_close: int = 0
 
     def next_window_open(self, now: Optional[float] = None) -> int:
-        now = int(now or time.time())
+        now = int(time.time() if now is None else now)
         current_boundary = (now // self.duration) * self.duration
         pct = (now - current_boundary) / self.duration * 100
         if pct <= 5:
@@ -174,7 +174,7 @@ class WindowManager:
         self.window_close = open_ts + self.duration
 
     def pct_through(self, now: Optional[float] = None) -> float:
-        now = now or time.time()
+        now = time.time() if now is None else now
         if self.window_open == 0:
             return 0.0
         elapsed = now - self.window_open
