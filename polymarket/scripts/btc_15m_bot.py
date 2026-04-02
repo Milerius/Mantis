@@ -20,6 +20,7 @@ Tasks completed:
 import json
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -276,8 +277,68 @@ class MarketDiscovery:
 
 
 # ---------------------------------------------------------------------------
+# SignalEngine
+# ---------------------------------------------------------------------------
+
+BINANCE_WS_URL = "wss://stream.binance.com:9443/ws/btcusdt@trade"
+
+
+class SignalEngine:
+    def __init__(self, min_delta: float = 10.0):
+        self.min_delta = min_delta
+        self.open_price: float = 0.0
+        self.current_price: float = 0.0
+        self._ws_thread: Optional[threading.Thread] = None
+        self._running = False
+
+    def delta(self) -> float:
+        return self.current_price - self.open_price
+
+    def compute_direction(self) -> Optional[str]:
+        d = self.delta()
+        if abs(d) < self.min_delta:
+            return None
+        return "Up" if d > 0 else "Down"
+
+    def snapshot_open(self):
+        self.open_price = self.current_price
+        log.info(f"Signal: open_price = ${self.open_price:,.2f}")
+
+    def start_ws(self):
+        self._running = True
+        self._ws_thread = threading.Thread(target=self._ws_loop, daemon=True)
+        self._ws_thread.start()
+
+    def stop_ws(self):
+        self._running = False
+
+    def _ws_loop(self):
+        import websockets.sync.client as ws_sync
+        while self._running:
+            try:
+                with ws_sync.connect(BINANCE_WS_URL) as ws:
+                    log.info("Binance WS connected")
+                    while self._running:
+                        msg = ws.recv(timeout=5)
+                        data = json.loads(msg)
+                        self.current_price = float(data.get("p", 0))
+            except Exception as e:
+                if self._running:
+                    log.warning(f"Binance WS error: {e}, reconnecting in 2s")
+                    time.sleep(2)
+
+    def wait_for_signal(self, delay_sec: float) -> Optional[str]:
+        self.snapshot_open()
+        time.sleep(delay_sec)
+        direction = self.compute_direction()
+        d = self.delta()
+        log.info(f"Signal: BTC ${self.open_price:,.2f} → ${self.current_price:,.2f} "
+                 f"(delta ${d:+,.2f}) → direction={direction}")
+        return direction
+
+
+# ---------------------------------------------------------------------------
 # Placeholder — subsequent tasks will add:
-#   Task 4:  SignalEngine
 #   Task 5:  PaperExecutor
 #   Task 6:  LiveExecutor / MicroLiveExecutor
 #   Task 7:  OrderManager + safety rules

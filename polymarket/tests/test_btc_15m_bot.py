@@ -150,3 +150,39 @@ def test_market_discovery_returns_none_when_no_match():
         md = MarketDiscovery(asset="btc")
         market = md.find_market(window_open=1775140200)
         assert market is None
+
+
+def test_signal_engine_direction_up():
+    from btc_15m_bot import SignalEngine
+    se = SignalEngine(min_delta=10.0)
+    se.open_price = 84000.0
+    se.current_price = 84050.0
+    direction = se.compute_direction()
+    assert direction == "Up"
+
+
+def test_signal_engine_direction_down():
+    from btc_15m_bot import SignalEngine
+    se = SignalEngine(min_delta=10.0)
+    se.open_price = 84000.0
+    se.current_price = 83920.0
+    direction = se.compute_direction()
+    assert direction == "Down"
+
+
+def test_signal_engine_skip_on_small_delta():
+    from btc_15m_bot import SignalEngine
+    se = SignalEngine(min_delta=10.0)
+    se.open_price = 84000.0
+    se.current_price = 84005.0
+    direction = se.compute_direction()
+    assert direction is None
+
+
+def test_signal_engine_delta():
+    from btc_15m_bot import SignalEngine
+    import pytest
+    se = SignalEngine(min_delta=10.0)
+    se.open_price = 84000.0
+    se.current_price = 84123.45
+    assert se.delta() == pytest.approx(123.45)
