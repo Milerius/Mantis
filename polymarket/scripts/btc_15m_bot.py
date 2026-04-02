@@ -531,8 +531,82 @@ class MicroLiveExecutor(LiveExecutor):
 
 
 # ---------------------------------------------------------------------------
+# OrderManager
+# ---------------------------------------------------------------------------
+
+
+class OrderManager:
+    def __init__(self, executor, position: Position, config: dict):
+        self.executor = executor
+        self.position = position
+        self.config = config
+        self.side_switches = 0
+        self.current_direction: Optional[str] = None
+        self._favored_orders: List[str] = []
+        self._insurance_orders: List[str] = []
+
+    def place_favored(self, token_id: str, price: float, shares: float) -> bool:
+        if price > self.config["favored_max_price"]:
+            log.warning(f"Rejected: price ${price:.4f} > max ${self.config['favored_max_price']}")
+            return False
+        projected = self.position.total_deployed + (shares * price)
+        if projected > self.config["max_deploy_per_window"]:
+            log.warning(f"Rejected: projected ${projected:.0f} > budget ${self.config['max_deploy_per_window']}")
+            return False
+        oid = self.executor.place_gtc_order(token_id, "BUY", price, shares)
+        self._favored_orders.append(oid)
+        return True
+
+    def place_insurance(self, token_id: str, price: float, shares: float) -> bool:
+        if price > self.config["insurance_max_price"]:
+            log.warning(f"Rejected insurance: price ${price:.4f} > max ${self.config['insurance_max_price']}")
+            return False
+        oid = self.executor.place_gtc_order(token_id, "BUY", price, shares)
+        self._insurance_orders.append(oid)
+        return True
+
+    def post_favored_ladder(self, token_id: str, direction: str):
+        self.current_direction = direction
+        shares = self.config["favored_shares"]
+        if self.config["mode"] == "micro-live":
+            shares = self.config["micro_live_size"]
+        for price in self.config["favored_prices"]:
+            self.place_favored(token_id, price, shares)
+
+    def post_insurance(self, token_id: str):
+        shares = self.config["insurance_shares"]
+        if self.config["mode"] == "micro-live":
+            shares = self.config["micro_live_size"]
+        for price in self.config["insurance_prices"]:
+            self.place_insurance(token_id, price, shares)
+
+    def cancel_all(self):
+        self.executor.cancel_all()
+        self._favored_orders.clear()
+        self._insurance_orders.clear()
+
+    def update_fills(self):
+        for oid, price, shares, ts in self.executor.get_fills():
+            side = self._side_for_order(oid)
+            usdc = shares * price
+            already = any(f.order_id == oid and f.ts == ts for f in self.position.fills)
+            if not already:
+                self.position.add_fill(side, shares, price, usdc, ts=ts,
+                                       order_type=self._type_for_order(oid), order_id=oid)
+                log.info(f"Fill: {side} {shares:.0f} @ ${price:.4f} = ${usdc:.2f}")
+
+    def _side_for_order(self, oid: str) -> str:
+        if oid in self._favored_orders:
+            return self.current_direction or "Up"
+        else:
+            return "Down" if self.current_direction == "Up" else "Up"
+
+    def _type_for_order(self, oid: str) -> str:
+        return "favored" if oid in self._favored_orders else "insurance"
+
+
+# ---------------------------------------------------------------------------
 # Placeholder — subsequent tasks will add:
-#   Task 7:  OrderManager + safety rules
 #   Task 8:  SettlementHandler + WindowRecorder
 #   Task 9:  SpyThread
 #   Task 10: main() + CLI entry point

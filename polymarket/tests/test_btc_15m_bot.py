@@ -309,3 +309,63 @@ def test_live_executor_uses_full_size():
         call_args = mock_client.create_order.call_args
         order_args = call_args[0][0]
         assert order_args.size == 100
+
+
+def test_order_manager_rejects_above_max_price():
+    from btc_15m_bot import OrderManager, PaperExecutor, Position, CONFIG
+    fake_book = {"asks": [{"price": "0.90", "size": "200"}], "bids": []}
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = fake_book
+        mock_get.return_value = mock_resp
+        ex = PaperExecutor()
+        pos = Position()
+        om = OrderManager(executor=ex, position=pos, config=CONFIG)
+        placed = om.place_favored("token-up", 0.80, 100)
+        assert placed is False
+        assert len(ex.get_open_orders()) == 0
+
+
+def test_order_manager_rejects_over_budget():
+    from btc_15m_bot import OrderManager, PaperExecutor, Position, CONFIG
+    fake_book = {"asks": [{"price": "0.50", "size": "5000"}], "bids": []}
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = fake_book
+        mock_get.return_value = mock_resp
+        ex = PaperExecutor()
+        pos = Position()
+        config = dict(CONFIG)
+        config["max_deploy_per_window"] = 100
+        om = OrderManager(executor=ex, position=pos, config=config)
+        assert om.place_favored("token-up", 0.50, 100) is True
+        pos.add_fill("Up", 100, 0.50, 50.0)
+        assert om.place_favored("token-up", 0.60, 100) is False
+
+
+def test_order_manager_posts_full_ladder():
+    from btc_15m_bot import OrderManager, PaperExecutor, Position, CONFIG
+    fake_book = {"asks": [{"price": "0.90", "size": "5000"}], "bids": []}
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = fake_book
+        mock_get.return_value = mock_resp
+        ex = PaperExecutor()
+        pos = Position()
+        om = OrderManager(executor=ex, position=pos, config=CONFIG)
+        om.post_favored_ladder("token-up", "Up")
+        assert len(ex.get_open_orders()) == len(CONFIG["favored_prices"])
+
+
+def test_order_manager_posts_insurance():
+    from btc_15m_bot import OrderManager, PaperExecutor, Position, CONFIG
+    fake_book = {"asks": [{"price": "0.90", "size": "5000"}], "bids": []}
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = fake_book
+        mock_get.return_value = mock_resp
+        ex = PaperExecutor()
+        pos = Position()
+        om = OrderManager(executor=ex, position=pos, config=CONFIG)
+        om.post_insurance("token-down")
+        assert len(ex.get_open_orders()) == len(CONFIG["insurance_prices"])
