@@ -700,7 +700,118 @@ class WindowRecorder:
 
 
 # ---------------------------------------------------------------------------
+# Task 9: SpyThread
+# ---------------------------------------------------------------------------
+
+HEISENBERG_API = "https://narrative.agent.heisenberg.so/api/v2/semantic/retrieve/parameterized"
+
+
+class SpyThread:
+    def __init__(self, wallet: str, api_key: str,
+                 window_open: int, window_close: int, slug: str,
+                 poll_interval: float = 5.0):
+        self.wallet = wallet
+        self.api_key = api_key
+        self.window_open = window_open
+        self.window_close = window_close
+        self.slug = slug
+        self.poll_interval = poll_interval
+        self._data: Dict = {}
+        self._lock = threading.Lock()
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self):
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=3)
+
+    def get_data(self) -> dict:
+        with self._lock:
+            return dict(self._data)
+
+    def _run(self):
+        while self._running:
+            self._poll_once()
+            time.sleep(self.poll_interval)
+        self._poll_once()
+
+    def _poll_once(self):
+        try:
+            resp = requests.post(
+                HEISENBERG_API,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "agent_id": 556,
+                    "params": {
+                        "proxy_wallet": self.wallet,
+                        "condition_id": "ALL",
+                        "start_time": str(self.window_open),
+                        "end_time": str(self.window_close),
+                    },
+                    "pagination": {"limit": 200, "offset": 0},
+                    "formatter_config": {"format_type": "raw"},
+                },
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                return
+
+            result = resp.json()
+            trades = []
+            if isinstance(result, dict):
+                if "data" in result and isinstance(result["data"], dict):
+                    trades = result["data"].get("results", [])
+                elif "data" in result and isinstance(result["data"], list):
+                    trades = result["data"]
+                elif "results" in result:
+                    trades = result["results"]
+
+            slug_lower = self.slug.lower()
+            window_trades = [t for t in trades
+                           if slug_lower in t.get("slug", "").lower()]
+
+            up_shares = sum(float(t.get("size", 0)) for t in window_trades if t.get("outcome") == "Up")
+            up_cost = sum(float(t.get("size", 0)) * float(t.get("price", 0))
+                        for t in window_trades if t.get("outcome") == "Up")
+            dn_shares = sum(float(t.get("size", 0)) for t in window_trades if t.get("outcome") == "Down")
+            dn_cost = sum(float(t.get("size", 0)) * float(t.get("price", 0))
+                        for t in window_trades if t.get("outcome") == "Down")
+
+            direction = "Down" if dn_cost > up_cost else "Up" if up_cost > dn_cost else None
+            total = up_cost + dn_cost
+            w_avg = (dn_cost / dn_shares if direction == "Down" and dn_shares > 0
+                    else up_cost / up_shares if direction == "Up" and up_shares > 0
+                    else 0)
+
+            with self._lock:
+                self._data = {
+                    "wallet": self.wallet,
+                    "trades_count": len(window_trades),
+                    "direction": direction,
+                    "up_shares": up_shares, "up_cost": round(up_cost, 2),
+                    "down_shares": dn_shares, "down_cost": round(dn_cost, 2),
+                    "total_deployed": round(total, 2),
+                    "w_avg": round(w_avg, 4),
+                    "position": {
+                        "up_shares": up_shares, "up_cost": round(up_cost, 2),
+                        "down_shares": dn_shares, "down_cost": round(dn_cost, 2),
+                    },
+                    "raw_trades": window_trades[:20],
+                }
+        except Exception as e:
+            log.warning(f"Spy poll error: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Placeholder — subsequent tasks will add:
-#   Task 9:  SpyThread
 #   Task 10: main() + CLI entry point
 # ---------------------------------------------------------------------------

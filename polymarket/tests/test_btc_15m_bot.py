@@ -417,3 +417,32 @@ def test_settlement_handler_resolves_winner():
         sh = SettlementHandler()
         winner = sh.resolve(slug="btc-updown-15m-1775140200", condition_id="0xabc")
         assert winner == "Up"
+
+
+def test_spy_thread_populates_data():
+    from btc_15m_bot import SpyThread
+    fake_trades = [
+        {"outcome": "Down", "price": 0.55, "size": 100, "side": "BUY",
+         "timestamp": "2026-04-02T14:30:20Z", "slug": "btc-updown-15m-1775140200"},
+        {"outcome": "Up", "price": 0.05, "size": 50, "side": "BUY",
+         "timestamp": "2026-04-02T14:38:00Z", "slug": "btc-updown-15m-1775140200"},
+    ]
+    with patch("btc_15m_bot.requests.post") as mock_post:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"data": {"results": fake_trades}}
+        mock_post.return_value = mock_resp
+
+        spy = SpyThread(
+            wallet="0xtest",
+            api_key="fake-key",
+            window_open=1775140200,
+            window_close=1775141100,
+            slug="btc-updown-15m-1775140200",
+            poll_interval=999,
+        )
+        spy._poll_once()
+        data = spy.get_data()
+        assert data["direction"] == "Down"
+        assert data["down_cost"] > 0
+        assert data["up_cost"] > 0
