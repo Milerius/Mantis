@@ -3,6 +3,7 @@ import pytest
 import sys
 import os
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -446,3 +447,41 @@ def test_spy_thread_populates_data():
         assert data["direction"] == "Down"
         assert data["down_cost"] > 0
         assert data["up_cost"] > 0
+
+
+def test_run_one_window_paper_mode(tmp_path):
+    from btc_15m_bot import run_one_window, CONFIG, Market
+
+    config = dict(CONFIG)
+    config["mode"] = "paper"
+    config["replay_dir"] = str(tmp_path)
+    config["signal_delay_sec"] = 0
+    config["spy_enabled"] = False
+
+    market = Market(
+        condition_id="0xabc", token_up="tok-up", token_down="tok-down",
+        slug="btc-updown-15m-1775140200",
+        window_open=1775140200, window_close=1775141100,
+    )
+
+    fake_book = {"asks": [{"price": "0.55", "size": "5000"}], "bids": []}
+
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = fake_book
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        result = run_one_window(
+            config=config,
+            market=market,
+            direction="Up",
+            signal_data={"btc_open_price": 84000, "btc_at_signal": 84050,
+                         "delta": 50, "direction": "Up"},
+            winner="Up",
+        )
+
+        assert result["deployed"] > 0
+        assert result["pnl"] != 0
+        replays = list(tmp_path.glob("*.json"))
+        assert len(replays) == 1

@@ -14,9 +14,10 @@ Tasks completed:
   Task 7: OrderManager + Safety Rules          [TODO]
   Task 8: SettlementHandler + WindowRecorder   [TODO]
   Task 9: SpyThread                            [TODO]
-  Task 10: Main Loop + CLI                     [TODO]
+  Task 10: Main Loop + CLI                     [DONE]
 """
 
+import argparse
 import json
 import logging
 import os
@@ -812,6 +813,205 @@ class SpyThread:
 
 
 # ---------------------------------------------------------------------------
-# Placeholder — subsequent tasks will add:
-#   Task 10: main() + CLI entry point
+# Task 10: Main Loop + CLI
 # ---------------------------------------------------------------------------
+
+
+def run_one_window(config: dict, market: Market, direction: str,
+                   signal_data: dict, winner: Optional[str] = None) -> dict:
+    """Execute one full window cycle. Returns result dict."""
+    # Create executor based on mode
+    if config["mode"] == "paper":
+        executor = PaperExecutor()
+    elif config["mode"] == "micro-live":
+        pk = os.environ.get("POLYMARKET_PRIVATE_KEY", "")
+        executor = MicroLiveExecutor(private_key=pk, micro_size=config["micro_live_size"])
+    else:
+        pk = os.environ.get("POLYMARKET_PRIVATE_KEY", "")
+        executor = LiveExecutor(private_key=pk)
+
+    position = Position()
+    om = OrderManager(executor=executor, position=position, config=config)
+    recorder = WindowRecorder(replay_dir=config["replay_dir"])
+
+    # Determine tokens based on direction
+    if direction == "Up":
+        favored_token = market.token_up
+        insurance_token = market.token_down
+    else:
+        favored_token = market.token_down
+        insurance_token = market.token_up
+
+    # Phase 1: Post favored ladder
+    log.info(f"Posting favored ladder: {direction} on {market.slug}")
+    om.post_favored_ladder(favored_token, direction)
+
+    # Phase 2: Wait through window, ticking executor and managing phases
+    wm = WindowManager(config["window_duration"])
+    wm.set_window(market.window_open)
+    insurance_posted = False
+    stop_reached = False
+
+    while True:
+        pct = wm.pct_through()
+
+        # Tick paper executor for fill simulation
+        if isinstance(executor, PaperExecutor):
+            executor.tick()
+        om.update_fills()
+
+        # Post insurance at configured %
+        if not insurance_posted and pct >= config["insurance_start_pct"]:
+            log.info(f"Posting insurance at {pct:.0f}%")
+            om.post_insurance(insurance_token)
+            insurance_posted = True
+
+        # Stop trading at configured %
+        if not stop_reached and pct >= config["stop_trading_pct"]:
+            log.info(f"Stop trading at {pct:.0f}%, cancelling unfilled")
+            om.cancel_all()
+            stop_reached = True
+
+        # Window closed?
+        if pct >= 100:
+            break
+
+        time.sleep(2)
+
+    # Final fill update
+    if isinstance(executor, PaperExecutor):
+        executor.tick()
+    om.update_fills()
+
+    # Resolve winner if not provided (test mode provides it)
+    if winner is None:
+        sh = SettlementHandler()
+        winner = sh.resolve(slug=market.slug, condition_id=market.condition_id)
+
+    # Compute PnL
+    pnl = position.pnl_if(winner) if winner else 0
+    deployed = position.total_deployed
+    roi = pnl / deployed * 100 if deployed > 0 else 0
+
+    log.info(f"Window complete: winner={winner} PnL=${pnl:+,.2f} ({roi:+.1f}%) deployed=${deployed:,.2f}")
+
+    # Record replay
+    spy_data = None  # spy data is injected by main() if spy is enabled
+    recorder.write(market=market, position=position, winner=winner,
+                   signal=signal_data, spy_data=spy_data)
+
+    return {"pnl": pnl, "deployed": deployed, "roi": roi, "winner": winner}
+
+
+def main():
+    parser = argparse.ArgumentParser(description="BTC 15m Up/Down Trading Bot")
+    parser.add_argument("--mode", choices=["paper", "micro-live", "live"], default="paper")
+    parser.add_argument("--spy", type=str, default=None, help="Wallet address to spy on")
+    args = parser.parse_args()
+
+    config = dict(CONFIG)
+    config["mode"] = args.mode
+    if args.spy:
+        config["spy_enabled"] = True
+        config["spy_wallet"] = args.spy
+
+    # Setup logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(config["log_file"]),
+        ],
+    )
+
+    log.info(f"Starting BTC 15m bot | mode={config['mode']} | spy={'ON' if config['spy_enabled'] else 'OFF'}")
+
+    # Start Binance WS
+    signal = SignalEngine(min_delta=config["min_btc_delta_usd"])
+    signal.start_ws()
+    time.sleep(2)  # wait for first price
+
+    discovery = MarketDiscovery(asset=config["asset"])
+    wm = WindowManager(config["window_duration"])
+
+    daily_pnl = 0.0
+    consecutive_losses = 0
+
+    try:
+        while True:
+            # Check daily loss limit
+            if daily_pnl <= -config["max_daily_loss"]:
+                log.error(f"Daily loss limit reached: ${daily_pnl:+,.2f}. Halting.")
+                break
+            if consecutive_losses >= config["max_consecutive_losses"]:
+                log.error(f"Max consecutive losses ({consecutive_losses}). Halting.")
+                break
+
+            # Wait for next window
+            window_open = wm.wait_for_window()
+
+            # Discover market
+            market = discovery.find_market(window_open)
+            if market is None:
+                log.warning(f"No BTC 15m market found for window {window_open}. Skipping.")
+                continue
+
+            log.info(f"Window: {market.slug}")
+
+            # Wait for signal
+            direction = signal.wait_for_signal(config["signal_delay_sec"])
+            if direction is None:
+                log.info("No clear signal. Skipping window.")
+                continue
+
+            signal_data = {
+                "btc_open_price": signal.open_price,
+                "btc_at_signal": signal.current_price,
+                "delta": signal.delta(),
+                "direction": direction,
+            }
+
+            # Start spy if enabled
+            spy = None
+            if config["spy_enabled"]:
+                spy = SpyThread(
+                    wallet=config["spy_wallet"],
+                    api_key=config.get("heisenberg_api_key", ""),
+                    window_open=window_open,
+                    window_close=window_open + config["window_duration"],
+                    slug=market.slug,
+                    poll_interval=config["spy_poll_interval_sec"],
+                )
+                spy.start()
+
+            # Run the window
+            result = run_one_window(config=config, market=market,
+                                    direction=direction, signal_data=signal_data)
+
+            # Get spy data
+            if spy:
+                spy.stop()
+                spy_data = spy.get_data()
+                log.info(f"Spy: {spy_data.get('direction')} | "
+                         f"deployed=${spy_data.get('total_deployed', 0):,.0f}")
+
+            # Track daily PnL
+            daily_pnl += result["pnl"]
+            if result["pnl"] > 0:
+                consecutive_losses = 0
+            else:
+                consecutive_losses += 1
+
+            log.info(f"Daily PnL: ${daily_pnl:+,.2f} | Streak: {consecutive_losses} losses")
+
+    except KeyboardInterrupt:
+        log.info("Shutting down...")
+    finally:
+        signal.stop_ws()
+        log.info(f"Session complete. Daily PnL: ${daily_pnl:+,.2f}")
+
+
+if __name__ == "__main__":
+    main()
