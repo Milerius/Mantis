@@ -225,9 +225,8 @@ class MarketDiscovery:
             )
             resp.raise_for_status()
             events = resp.json()
-        except Exception as e:
+        except (requests.exceptions.RequestException, ValueError) as e:
             log.warning(f"Gamma API error: {e}")
-            self._cache[window_open] = None
             return None
 
         window_close = window_open + CONFIG["window_duration"]
