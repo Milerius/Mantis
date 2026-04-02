@@ -142,6 +142,42 @@ STRATEGIES = {
         "stop_trading_pct": 80,
         "pivot_enabled": False,
     },
+    "H_continuous_momentum": {
+        "name": "H: Continuous Momentum",
+        "description": "Re-checks BTC every 2min, adds to winning side, cuts losing side",
+        "signal_delay_sec": 15,
+        "favored_prices": [0.45, 0.50, 0.55],
+        "favored_shares": 60,
+        "favored_max_price": 0.60,
+        "insurance_prices": [0.02, 0.05],
+        "insurance_shares": 40,
+        "insurance_max_price": 0.10,
+        "insurance_start_pct": 999,  # don't auto-post insurance — dynamic handles it
+        "stop_trading_pct": 85,
+        "pivot_enabled": False,
+        "continuous_enabled": True,
+        "continuous_interval_pct": 15,  # re-check every 15% of window (~2.25min)
+        "continuous_add_prices": [0.50, 0.55, 0.60],
+        "continuous_add_shares": 50,
+    },
+    "I_adaptive_scallops": {
+        "name": "I: Adaptive Scallops",
+        "description": "Start small, monitor BTC continuously, scale into confirmed direction",
+        "signal_delay_sec": 10,
+        "favored_prices": [0.48, 0.50, 0.52],
+        "favored_shares": 40,
+        "favored_max_price": 0.65,
+        "insurance_prices": [0.01, 0.03, 0.05],
+        "insurance_shares": 60,
+        "insurance_max_price": 0.10,
+        "insurance_start_pct": 999,  # dynamic
+        "stop_trading_pct": 85,
+        "pivot_enabled": False,
+        "continuous_enabled": True,
+        "continuous_interval_pct": 10,  # re-check every 10% (~1.5min)
+        "continuous_add_prices": [0.45, 0.50, 0.55, 0.60],
+        "continuous_add_shares": 80,
+    },
 }
 
 
@@ -165,7 +201,11 @@ class StrategyResult:
 
 
 class StrategyRunner:
-    """Runs one strategy config against a window using a shared PaperExecutor."""
+    """Runs one strategy config against a window.
+
+    Tracks position by TOKEN ID (not direction) to avoid the pivot re-attribution bug.
+    When direction changes, fills from before the pivot keep their original side.
+    """
 
     def __init__(self, key: str, strat_config: dict, market: Market,
                  signal: SignalEngine, base_config: dict):
@@ -173,16 +213,49 @@ class StrategyRunner:
         self.strat = strat_config
         self.market = market
         self.signal = signal
-        self.config = {**base_config, **strat_config}  # merge
+        self.config = {**base_config, **strat_config}
         self.executor = PaperExecutor()
-        self.position = Position()
-        self.om = OrderManager(
-            executor=self.executor, position=self.position, config=self.config
-        )
         self.direction: Optional[str] = None
         self.pivoted = False
         self.insurance_posted = False
         self.stopped = False
+
+        # Track position by token_id directly — immune to direction changes
+        self.up_shares: float = 0.0
+        self.up_cost: float = 0.0
+        self.down_shares: float = 0.0
+        self.down_cost: float = 0.0
+        self._processed_fills: set = set()  # (oid, ts) dedup
+        self._order_token_map: Dict[str, str] = {}  # oid -> token_id
+        self._last_continuous_pct: float = 0.0  # for continuous strategies
+
+    def _place_order(self, token_id: str, price: float, shares: float) -> bool:
+        """Place a GTC order and track which token it's for."""
+        if price > self.config.get("favored_max_price", 0.75):
+            return False
+        projected = (self.up_cost + self.down_cost) + (shares * price)
+        if projected > self.config.get("max_deploy_per_window", 500):
+            return False
+        oid = self.executor.place_gtc_order(token_id, "BUY", price, shares)
+        self._order_token_map[oid] = token_id
+        return True
+
+    def _sync_fills(self):
+        """Sync fills from executor into position, using token_id for side."""
+        for oid, price, shares, ts in self.executor.get_fills():
+            key = (oid, ts)
+            if key in self._processed_fills:
+                continue
+            self._processed_fills.add(key)
+
+            token_id = self._order_token_map.get(oid, "")
+            usdc = shares * price
+            if token_id == self.market.token_up:
+                self.up_shares += shares
+                self.up_cost += usdc
+            elif token_id == self.market.token_down:
+                self.down_shares += shares
+                self.down_cost += usdc
 
     def enter(self):
         """Determine direction and post favored ladder."""
@@ -196,7 +269,11 @@ class StrategyRunner:
         else:
             favored_token = self.market.token_down
 
-        self.om.post_favored_ladder(favored_token, self.direction)
+        shares = self.strat["favored_shares"]
+        if self.config.get("mode") == "micro-live":
+            shares = self.config.get("micro_live_size", 1.0)
+        for price in self.strat["favored_prices"]:
+            self._place_order(favored_token, price, shares)
         return True
 
     def tick(self, pct: float):
@@ -204,9 +281,8 @@ class StrategyRunner:
         if self.stopped:
             return
 
-        # Tick the paper executor
         self.executor.tick()
-        self.om.update_fills()
+        self._sync_fills()
 
         # Pivot check (Strategy E)
         if (self.strat.get("pivot_enabled") and not self.pivoted
@@ -214,7 +290,7 @@ class StrategyRunner:
             new_dir = self.signal.compute_direction()
             if new_dir and new_dir != self.direction:
                 log.info(f"  [{self.key}] PIVOT: {self.direction} → {new_dir} at {pct:.0f}%")
-                self.om.cancel_all()
+                self.executor.cancel_all()
                 self.direction = new_dir
                 self.pivoted = True
 
@@ -223,10 +299,32 @@ class StrategyRunner:
                 else:
                     token = self.market.token_down
 
-                # Post pivot ladder with pivot-specific config
                 shares = self.strat.get("pivot_shares", self.strat["favored_shares"])
                 for price in self.strat.get("pivot_prices", self.strat["favored_prices"]):
-                    self.om.place_favored(token, price, shares)
+                    self._place_order(token, price, shares)
+
+        # Continuous momentum check (Strategies H, I)
+        if self.strat.get("continuous_enabled"):
+            interval = self.strat.get("continuous_interval_pct", 15)
+            if pct >= self._last_continuous_pct + interval and pct < self.strat["stop_trading_pct"]:
+                self._last_continuous_pct = pct
+                current_dir = self.signal.compute_direction()
+                if current_dir:
+                    if current_dir == self.direction:
+                        # Confirmed — add more to the favored side
+                        token = self.market.token_up if self.direction == "Up" else self.market.token_down
+                        for price in self.strat.get("continuous_add_prices", []):
+                            self._place_order(token, price, self.strat.get("continuous_add_shares", 50))
+                        log.info(f"  [{self.key}] CONFIRM {current_dir} at {pct:.0f}% — adding more")
+                    else:
+                        # Reversed — cancel favored, post on new direction
+                        self.executor.cancel_all()
+                        self.direction = current_dir
+                        self.pivoted = True
+                        token = self.market.token_up if self.direction == "Up" else self.market.token_down
+                        for price in self.strat.get("continuous_add_prices", []):
+                            self._place_order(token, price, self.strat.get("continuous_add_shares", 50))
+                        log.info(f"  [{self.key}] REVERSE → {current_dir} at {pct:.0f}% — switching sides")
 
         # Insurance
         if (not self.insurance_posted
@@ -235,35 +333,44 @@ class StrategyRunner:
                 ins_token = self.market.token_down
             else:
                 ins_token = self.market.token_up
-            self.om.post_insurance(ins_token)
+
+            ins_shares = self.strat["insurance_shares"]
+            for price in self.strat["insurance_prices"]:
+                if price <= self.strat["insurance_max_price"]:
+                    oid = self.executor.place_gtc_order(ins_token, "BUY", price, ins_shares)
+                    self._order_token_map[oid] = ins_token
             self.insurance_posted = True
 
         # Stop trading
         if not self.stopped and pct >= self.strat["stop_trading_pct"]:
-            self.om.cancel_all()
+            self.executor.cancel_all()
             self.stopped = True
 
     def result(self, winner: Optional[str]) -> StrategyResult:
         """Compute final result."""
-        # Final tick
         self.executor.tick()
-        self.om.update_fills()
+        self._sync_fills()
 
-        pnl = self.position.pnl_if(winner) if winner else 0
-        deployed = self.position.total_deployed
+        deployed = self.up_cost + self.down_cost
+        if winner == "Up":
+            pnl = self.up_shares - deployed
+        elif winner == "Down":
+            pnl = self.down_shares - deployed
+        else:
+            pnl = 0
         roi = pnl / deployed * 100 if deployed > 0 else 0
 
         return StrategyResult(
             name=self.strat["name"],
             direction=self.direction or "None",
-            up_shares=self.position.up_shares,
+            up_shares=self.up_shares,
             up_cost=self.position.up_cost,
             down_shares=self.position.down_shares,
             down_cost=self.position.down_cost,
             total_deployed=deployed,
             pnl=pnl,
             roi_pct=roi,
-            fills_count=len(self.position.fills),
+            fills_count=len(self._processed_fills),
             pivoted=self.pivoted,
         )
 
@@ -453,13 +560,23 @@ def main():
                     break
                 time.sleep(2)
 
-            # Resolve winner
+            # Resolve winner — try settlement API, fall back to BTC price
             sh = SettlementHandler()
             winner = sh.resolve(
                 slug=market.slug, condition_id=market.condition_id,
                 market_id=market.market_id,
                 token_up=market.token_up, token_down=market.token_down,
+                retries=3, delay=5,
             )
+            if winner is None:
+                # Fallback: compare BTC price now vs open price
+                btc_now = signal.current_price
+                btc_open = signal.open_price
+                if btc_now > btc_open:
+                    winner = "Up"
+                elif btc_now < btc_open:
+                    winner = "Down"
+                log.info(f"Settlement fallback: BTC ${btc_open:,.2f} → ${btc_now:,.2f} → {winner}")
             log.info(f"Winner: {winner}")
 
             # Collect results
