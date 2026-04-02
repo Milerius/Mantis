@@ -16,7 +16,7 @@ Tasks completed:
 
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List
 
 # ---------------------------------------------------------------------------
@@ -107,10 +107,10 @@ class Position:
         self.up_cost: float = 0.0
         self.down_shares: float = 0.0
         self.down_cost: float = 0.0
-        self.fills: List[Fill] = field(default_factory=list)
-        self.fills = []
+        self.fills: List[Fill] = []
 
-    def add_fill(self, side: str, shares: float, price: float, usdc: float) -> None:
+    def add_fill(self, side: str, shares: float, price: float, usdc: float,
+                 ts: float = 0.0, order_type: str = "", order_id: str = "") -> None:
         """Record a fill for the given side."""
         if side == "Up":
             self.up_shares += shares
@@ -120,6 +120,8 @@ class Position:
             self.down_cost += usdc
         else:
             raise ValueError(f"Unknown side: {side!r}")
+        self.fills.append(Fill(ts=ts, side=side, price=price, shares=shares, usdc=usdc,
+                               order_type=order_type, order_id=order_id))
 
     @property
     def total_deployed(self) -> float:

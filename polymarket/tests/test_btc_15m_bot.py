@@ -15,6 +15,8 @@ def test_config_has_required_keys():
         "insurance_start_pct", "stop_trading_pct", "max_side_switches",
         "max_deploy_per_window", "max_daily_loss", "max_consecutive_losses",
         "spy_enabled", "replay_dir",
+        "micro_live_size", "spy_wallet", "spy_poll_interval_sec",
+        "heisenberg_api_key", "log_file",
     ]
     for key in required:
         assert key in CONFIG, f"Missing config key: {key}"
