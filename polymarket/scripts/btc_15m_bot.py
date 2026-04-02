@@ -598,6 +598,8 @@ class OrderManager:
                 log.info(f"Fill: {side} {shares:.0f} @ ${price:.4f} = ${usdc:.2f}")
 
     def _side_for_order(self, oid: str) -> str:
+        if self.current_direction is None:
+            log.warning(f"_side_for_order called with no direction for {oid}, defaulting to Up")
         if oid in self._favored_orders:
             return self.current_direction or "Up"
         else:
@@ -622,6 +624,7 @@ class SettlementHandler:
                 )
                 resp.raise_for_status()
                 events = resp.json()
+                resolved = None
                 for event in events:
                     for mkt in event.get("markets", []):
                         if mkt.get("conditionId") != condition_id:
@@ -629,10 +632,17 @@ class SettlementHandler:
                         prices = json.loads(mkt.get("outcomePrices", "[]"))
                         outcomes = json.loads(mkt.get("outcomes", "[]"))
                         if len(prices) == 2 and len(outcomes) == 2:
-                            if float(prices[0]) > float(prices[1]):
-                                return outcomes[0]
+                            p0, p1 = float(prices[0]), float(prices[1])
+                            if abs(p0 - p1) < 0.01:
+                                break  # not settled yet
+                            if p0 > p1:
+                                resolved = outcomes[0]
                             else:
-                                return outcomes[1]
+                                resolved = outcomes[1]
+                    if resolved:
+                        break
+                if resolved:
+                    return resolved
             except Exception as e:
                 log.warning(f"Resolution attempt {attempt+1} failed: {e}")
             if attempt < retries - 1:
@@ -818,7 +828,8 @@ class SpyThread:
 
 
 def run_one_window(config: dict, market: Market, direction: str,
-                   signal_data: dict, winner: Optional[str] = None) -> dict:
+                   signal_data: dict, winner: Optional[str] = None,
+                   spy: Optional["SpyThread"] = None) -> dict:
     """Execute one full window cycle. Returns result dict."""
     # Create executor based on mode
     if config["mode"] == "paper":
@@ -895,8 +906,14 @@ def run_one_window(config: dict, market: Market, direction: str,
 
     log.info(f"Window complete: winner={winner} PnL=${pnl:+,.2f} ({roi:+.1f}%) deployed=${deployed:,.2f}")
 
+    # Collect spy data before writing replay
+    spy_data = None
+    if spy:
+        spy.stop()
+        spy_data = spy.get_data()
+        log.info(f"Spy: {spy_data.get('direction')} | deployed=${spy_data.get('total_deployed', 0):,.0f}")
+
     # Record replay
-    spy_data = None  # spy data is injected by main() if spy is enabled
     recorder.write(market=market, position=position, winner=winner,
                    signal=signal_data, spy_data=spy_data)
 
@@ -986,20 +1003,14 @@ def main():
                 )
                 spy.start()
 
-            # Run the window
+            # Run the window (spy is stopped and data collected inside)
             result = run_one_window(config=config, market=market,
-                                    direction=direction, signal_data=signal_data)
-
-            # Get spy data
-            if spy:
-                spy.stop()
-                spy_data = spy.get_data()
-                log.info(f"Spy: {spy_data.get('direction')} | "
-                         f"deployed=${spy_data.get('total_deployed', 0):,.0f}")
+                                    direction=direction, signal_data=signal_data,
+                                    spy=spy)
 
             # Track daily PnL
             daily_pnl += result["pnl"]
-            if result["pnl"] > 0:
+            if result["pnl"] >= 0:
                 consecutive_losses = 0
             else:
                 consecutive_losses += 1
