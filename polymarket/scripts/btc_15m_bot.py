@@ -24,7 +24,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import requests
 
@@ -346,8 +346,96 @@ class SignalEngine:
 
 
 # ---------------------------------------------------------------------------
+# PaperExecutor
+# ---------------------------------------------------------------------------
+
+CLOB_REST = "https://clob.polymarket.com"
+
+
+class PaperExecutor:
+    def __init__(self):
+        self._orders: Dict[str, dict] = {}
+        self._fills: List[Tuple[str, float, float, float]] = []  # (order_id, price, shares, ts)
+        self._next_id = 0
+
+    def place_gtc_order(self, token_id: str, side: str, price: float, shares: float) -> str:
+        assert token_id, "token_id required"
+        assert shares > 0 and price > 0, f"Invalid order: shares={shares} price={price}"
+
+        oid = f"paper-{self._next_id}"
+        self._next_id += 1
+
+        book = self._fetch_book(token_id)
+        asks = book.get("asks", [])
+
+        if side == "BUY" and asks:
+            best_ask = float(asks[0].get("price", 999))
+            ask_size = float(asks[0].get("size", 0))
+            if price >= best_ask:
+                fill_shares = min(shares, ask_size)
+                fill_price = best_ask
+                self._fills.append((oid, fill_price, fill_shares, time.time()))
+                remaining = shares - fill_shares
+                if remaining > 0:
+                    self._orders[oid] = {
+                        "token_id": token_id, "side": side,
+                        "price": price, "shares": remaining,
+                    }
+                log.info(f"[PAPER] Immediate fill {fill_shares:.0f} @ ${fill_price:.4f} (order {oid})")
+                return oid
+
+        self._orders[oid] = {
+            "token_id": token_id, "side": side,
+            "price": price, "shares": shares,
+        }
+        log.info(f"[PAPER] Resting order {oid}: {side} {shares:.0f} @ ${price:.4f}")
+        return oid
+
+    def tick(self):
+        filled_oids = []
+        for oid, order in list(self._orders.items()):
+            book = self._fetch_book(order["token_id"])
+            asks = book.get("asks", [])
+            if order["side"] == "BUY" and asks:
+                best_ask = float(asks[0].get("price", 999))
+                ask_size = float(asks[0].get("size", 0))
+                if order["price"] >= best_ask:
+                    fill_shares = min(order["shares"], ask_size)
+                    self._fills.append((oid, best_ask, fill_shares, time.time()))
+                    order["shares"] -= fill_shares
+                    log.info(f"[PAPER] Fill {oid}: {fill_shares:.0f} @ ${best_ask:.4f}")
+                    if order["shares"] <= 0:
+                        filled_oids.append(oid)
+        for oid in filled_oids:
+            del self._orders[oid]
+
+    def cancel_order(self, order_id: str):
+        self._orders.pop(order_id, None)
+
+    def cancel_all(self):
+        self._orders.clear()
+
+    def get_fills(self) -> List[Tuple[str, float, float, float]]:
+        return list(self._fills)
+
+    def get_open_orders(self) -> List[str]:
+        return list(self._orders.keys())
+
+    def reset(self):
+        self._orders.clear()
+        self._fills.clear()
+
+    def _fetch_book(self, token_id: str) -> dict:
+        try:
+            resp = requests.get(f"{CLOB_REST}/book", params={"token_id": token_id}, timeout=5)
+            return resp.json()
+        except Exception as e:
+            log.warning(f"Book fetch error: {e}")
+            return {"asks": [], "bids": []}
+
+
+# ---------------------------------------------------------------------------
 # Placeholder — subsequent tasks will add:
-#   Task 5:  PaperExecutor
 #   Task 6:  LiveExecutor / MicroLiveExecutor
 #   Task 7:  OrderManager + safety rules
 #   Task 8:  SettlementHandler + WindowRecorder

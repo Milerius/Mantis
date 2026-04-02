@@ -186,3 +186,61 @@ def test_signal_engine_delta():
     se.open_price = 84000.0
     se.current_price = 84123.45
     assert se.delta() == pytest.approx(123.45)
+
+
+def test_paper_executor_immediate_fill_when_crossing_spread():
+    from btc_15m_bot import PaperExecutor
+    fake_book = {"asks": [{"price": "0.55", "size": "200"}], "bids": []}
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = fake_book
+        mock_get.return_value = mock_resp
+        ex = PaperExecutor()
+        oid = ex.place_gtc_order("token-1", "BUY", 0.60, 100)
+        fills = ex.get_fills()
+        assert len(fills) == 1
+        assert fills[0][1] == 0.55   # filled at ask, not our price
+        assert fills[0][2] == 100    # full fill
+
+
+def test_paper_executor_resting_order_no_fill():
+    from btc_15m_bot import PaperExecutor
+    fake_book = {"asks": [{"price": "0.70", "size": "200"}], "bids": []}
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = fake_book
+        mock_get.return_value = mock_resp
+        ex = PaperExecutor()
+        oid = ex.place_gtc_order("token-1", "BUY", 0.55, 100)
+        fills = ex.get_fills()
+        assert len(fills) == 0
+        assert oid in ex.get_open_orders()
+
+
+def test_paper_executor_cancel():
+    from btc_15m_bot import PaperExecutor
+    fake_book = {"asks": [{"price": "0.70", "size": "200"}], "bids": []}
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = fake_book
+        mock_get.return_value = mock_resp
+        ex = PaperExecutor()
+        oid = ex.place_gtc_order("token-1", "BUY", 0.55, 100)
+        assert oid in ex.get_open_orders()
+        ex.cancel_order(oid)
+        assert oid not in ex.get_open_orders()
+
+
+def test_paper_executor_cancel_all():
+    from btc_15m_bot import PaperExecutor
+    fake_book = {"asks": [{"price": "0.90", "size": "200"}], "bids": []}
+    with patch("btc_15m_bot.requests.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = fake_book
+        mock_get.return_value = mock_resp
+        ex = PaperExecutor()
+        ex.place_gtc_order("token-1", "BUY", 0.50, 100)
+        ex.place_gtc_order("token-1", "BUY", 0.55, 100)
+        assert len(ex.get_open_orders()) == 2
+        ex.cancel_all()
+        assert len(ex.get_open_orders()) == 0
