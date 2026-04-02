@@ -825,13 +825,29 @@ class WindowRecorder:
         }
 
         if spy_data and winner:
-            spy_pnl = spy_data.get("position", {}).get("pnl", 0)
+            # Calculate spy PnL from their position
+            spy_up_sh = spy_data.get("up_shares", 0)
+            spy_up_c = spy_data.get("up_cost", 0)
+            spy_dn_sh = spy_data.get("down_shares", 0)
+            spy_dn_c = spy_data.get("down_cost", 0)
+            spy_total = spy_up_c + spy_dn_c
+            if winner == "Up":
+                spy_pnl = spy_up_sh - spy_up_c - spy_dn_c
+            else:
+                spy_pnl = spy_dn_sh - spy_dn_c - spy_up_c
+            spy_roi = spy_pnl / spy_total * 100 if spy_total > 0 else 0
+
+            spy_w_shares = spy_up_sh if winner == "Up" else spy_dn_sh
+            spy_w_cost = spy_up_c if winner == "Up" else spy_dn_c
+            spy_w_avg = spy_w_cost / spy_w_shares if spy_w_shares > 0 else 0
+
             record["comparison"] = {
                 "our_pnl": round(pnl, 2),
-                "spy_pnl": spy_pnl,
+                "spy_pnl": round(spy_pnl, 2),
+                "spy_roi_pct": round(spy_roi, 1),
                 "same_direction": signal.get("direction") == spy_data.get("direction"),
                 "our_w_avg": round(up_avg if winner == "Up" else dn_avg, 4),
-                "spy_w_avg": spy_data.get("w_avg", 0),
+                "spy_w_avg": round(spy_w_avg, 4),
             }
 
         filepath = self.replay_dir / filename
@@ -1042,7 +1058,18 @@ def run_one_window(config: dict, market: Market, direction: str,
     if spy:
         spy.stop()
         spy_data = spy.get_data()
-        log.info(f"Spy: {spy_data.get('direction')} | deployed=${spy_data.get('total_deployed', 0):,.0f}")
+        # Calculate spy PnL for logging
+        spy_up_sh = spy_data.get("up_shares", 0)
+        spy_dn_sh = spy_data.get("down_shares", 0)
+        spy_total = spy_data.get("total_deployed", 0)
+        if winner == "Up":
+            spy_pnl_val = spy_up_sh - spy_total
+        elif winner == "Down":
+            spy_pnl_val = spy_dn_sh - spy_total
+        else:
+            spy_pnl_val = 0
+        log.info(f"Spy: {spy_data.get('direction')} | deployed=${spy_total:,.0f} | "
+                 f"PnL=${spy_pnl_val:+,.0f} | Up:{spy_up_sh:.0f} Down:{spy_dn_sh:.0f}")
 
     # Record replay
     recorder.write(market=market, position=position, winner=winner,
