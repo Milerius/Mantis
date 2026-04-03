@@ -5,6 +5,7 @@
 
 #![deny(unsafe_code)]
 
+mod fixed_props;
 mod spsc_diff;
 #[cfg(kani)]
 mod spsc_proofs;
