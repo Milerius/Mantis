@@ -27,6 +27,7 @@ pub mod isa_arm64;
 #[cfg(target_arch = "x86_64")]
 pub mod isa_x86;
 pub mod metering;
+pub mod numerics;
 pub mod pad;
 
 // Top-level re-exports for convenience
@@ -55,6 +56,7 @@ pub use metering::PmuCounter;
 #[cfg(all(target_arch = "x86_64", feature = "asm", feature = "std"))]
 pub use metering::RdtscCounter;
 pub use metering::{CycleCounter, Measurement};
+pub use numerics::{pow10_i64, POW10_I64};
 pub use pad::CachePadded;
 // DefaultCounter is available on all platforms where at least one counter is defined.
 #[cfg(feature = "std")]
