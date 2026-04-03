@@ -25,5 +25,7 @@ mod convert;
 mod fixed_i64;
 mod fmt;
 mod mul_div;
+mod parse;
 
 pub use fixed_i64::FixedI64;
+pub use parse::ParseFixedError;
