@@ -144,10 +144,10 @@ mod tests {
     fn price_to_ticks_basic() {
         // tick_size = 0.01 (raw 10_000 at D=6), price = 1.50 (raw 1_500_000)
         // 1.50 / 0.01 = 150 ticks
-        let meta = InstrumentMeta::<6>::new(FixedI64::from_raw(10_000), FixedI64::from_raw(1_000));
-        let meta = match meta {
-            Ok(m) => m,
-            Err(_) => return,
+        let Ok(meta) =
+            InstrumentMeta::<6>::new(FixedI64::from_raw(10_000), FixedI64::from_raw(1_000))
+        else {
+            return;
         };
         let ticks = meta.price_to_ticks(FixedI64::from_raw(1_500_000));
         assert_eq!(ticks.map(Ticks::to_raw), Some(150));
@@ -156,10 +156,10 @@ mod tests {
     #[test]
     fn ticks_to_price_basic() {
         // tick_size = 0.01, 150 ticks -> 1.50
-        let meta = InstrumentMeta::<6>::new(FixedI64::from_raw(10_000), FixedI64::from_raw(1_000));
-        let meta = match meta {
-            Ok(m) => m,
-            Err(_) => return,
+        let Ok(meta) =
+            InstrumentMeta::<6>::new(FixedI64::from_raw(10_000), FixedI64::from_raw(1_000))
+        else {
+            return;
         };
         let price = meta.ticks_to_price(Ticks::from_raw(150));
         assert_eq!(price.map(FixedI64::to_raw), Some(1_500_000));
@@ -167,13 +167,11 @@ mod tests {
 
     #[test]
     fn price_roundtrip() {
-        let meta = InstrumentMeta::<6>::new(
+        let Ok(meta) = InstrumentMeta::<6>::new(
             FixedI64::from_raw(10_000), // tick_size = 0.01
             FixedI64::from_raw(1_000),
-        );
-        let meta = match meta {
-            Ok(m) => m,
-            Err(_) => return,
+        ) else {
+            return;
         };
         let original = FixedI64::<6>::from_raw(1_500_000); // 1.50
         let ticks = meta.price_to_ticks(original);
@@ -186,10 +184,10 @@ mod tests {
     fn qty_to_lots_basic() {
         // lot_size = 0.001 (raw 1_000 at D=6), qty = 2.500 (raw 2_500_000)
         // 2.500 / 0.001 = 2500 lots
-        let meta = InstrumentMeta::<6>::new(FixedI64::from_raw(10_000), FixedI64::from_raw(1_000));
-        let meta = match meta {
-            Ok(m) => m,
-            Err(_) => return,
+        let Ok(meta) =
+            InstrumentMeta::<6>::new(FixedI64::from_raw(10_000), FixedI64::from_raw(1_000))
+        else {
+            return;
         };
         let lots = meta.qty_to_lots(FixedI64::from_raw(2_500_000));
         assert_eq!(lots.map(Lots::to_raw), Some(2_500));
@@ -197,13 +195,11 @@ mod tests {
 
     #[test]
     fn lots_roundtrip() {
-        let meta = InstrumentMeta::<6>::new(
+        let Ok(meta) = InstrumentMeta::<6>::new(
             FixedI64::from_raw(10_000),
             FixedI64::from_raw(1_000), // lot_size = 0.001
-        );
-        let meta = match meta {
-            Ok(m) => m,
-            Err(_) => return,
+        ) else {
+            return;
         };
         let original = FixedI64::<6>::from_raw(2_500_000); // 2.500
         let lots = meta.qty_to_lots(original);

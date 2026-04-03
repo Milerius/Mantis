@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn from_fixed_roundtrip() {
-        let f = FixedI64::<8>::from_raw(42_000_000_00);
+        let f = FixedI64::<8>::from_raw(4_200_000_000);
         let b = BtcQty::from_fixed(f);
         assert_eq!(b.to_fixed(), f);
     }

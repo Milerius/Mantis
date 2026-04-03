@@ -35,6 +35,7 @@ pub const fn pow10_i64(d: u8) -> i64 {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests use expect for clarity")]
 mod tests {
     use super::*;
 

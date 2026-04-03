@@ -14,42 +14,31 @@
 
 use crate::FixedI64;
 
-/// Divide a u128 (given as hi:u64, lo:u64) by a u64 divisor.
-/// Returns (quotient_hi: u64, quotient_lo: u64, remainder: u64).
+/// Divide a `u128` (given as `hi:u64`, `lo:u64`) by a `u64` divisor.
+/// Returns `(quotient_hi, quotient_lo, remainder)`.
 ///
-/// Uses only u64 arithmetic — no i128/u128 division, so LLVM
-/// strength-reduces each `u64 / constant` to multiply-by-reciprocal.
+/// Uses only `u64` arithmetic so LLVM strength-reduces each
+/// `u64 / constant` to multiply-by-reciprocal.
 ///
 /// The algorithm is schoolbook long division on two 64-bit "digits":
-///   value = hi * 2^64 + lo
-///   q_hi  = hi / d
-///   r_hi  = hi % d
-///   (q_lo, rem) = (r_hi * 2^64 + lo) / d   ← this is a 128/64 div
+///   `value = hi * 2^64 + lo`
 ///
-/// For the 128/64 step: since r_hi < d (always true after hi % d),
-/// and d fits in u64, the quotient fits in u64. We further decompose
-/// using the identity: (A * 2^32 + B) / d where A = r_hi * 2^32 + lo_hi,
-/// B = lo_lo, reducing to two u64 divisions.
-#[inline(always)]
+/// The 128/64 step is further decomposed via 32-bit halves so that
+/// LLVM sees only `u128 / u64_const` operations, which it optimizes.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "all u128-to-u64 casts are guarded: quotients and remainders fit by construction"
+)]
+#[inline]
 const fn div_u128_by_u64(hi: u64, lo: u64, d: u64) -> (u64, u64, u64) {
-    // Step 1: divide the high word
     let q_hi = hi / d;
     let r_hi = hi % d;
 
-    // Step 2: divide (r_hi : lo) by d — a 128-bit / 64-bit division.
-    // r_hi < d, so the quotient fits in 64 bits.
-    //
-    // Decompose lo into two 32-bit halves:
-    //   (r_hi : lo_upper : lo_lower)
-    //   First: divide (r_hi : lo_upper) by d → q_mid, r_mid
-    //   Then:  divide (r_mid : lo_lower) by d → q_low, remainder
-    //   q_lo = q_mid * 2^32 + q_low
+    // Decompose lo into two 32-bit halves and divide each with the
+    // running remainder, keeping everything within u64 quotient range.
     let lo_upper = lo >> 32;
     let lo_lower = lo & 0xFFFF_FFFF;
 
-    // (r_hi * 2^32 + lo_upper) fits in u64 when d > 2^32,
-    // but may overflow when d < 2^32. Use u128 for this intermediate.
-    // LLVM optimizes u128 / u64_const into multiply-by-reciprocal.
     let mid_num = ((r_hi as u128) << 32) | (lo_upper as u128);
     let q_mid = (mid_num / (d as u128)) as u64;
     let r_mid = (mid_num % (d as u128)) as u64;
@@ -62,9 +51,17 @@ const fn div_u128_by_u64(hi: u64, lo: u64, d: u64) -> (u64, u64, u64) {
     (q_hi, q_lo, rem)
 }
 
-/// Divide a signed i128 (hi:i64, lo:u64) by a positive i64 constant,
-/// truncating toward zero. Returns (quotient as i128, remainder as i64).
-#[inline(always)]
+/// Divide a signed `i128` (`hi:i64`, `lo:u64`) by a positive `i64` constant,
+/// truncating toward zero. Returns `(quotient, remainder)`.
+#[expect(
+    clippy::cast_sign_loss,
+    reason = "i64-to-u64 casts are intentional: abs value via two's complement negation"
+)]
+#[expect(
+    clippy::cast_possible_wrap,
+    reason = "u128-to-i128 and u64-to-i64 in final result: caller validates range"
+)]
+#[inline]
 const fn div_wide_by_const(hi: i64, lo: u64, d: i64) -> (i128, i64) {
     let negative = hi < 0;
 
@@ -88,10 +85,17 @@ const fn div_wide_by_const(hi: i64, lo: u64, d: i64) -> (i128, i64) {
     }
 }
 
-// All i128-to-i64 narrowing casts in this impl are guarded by explicit range checks.
+// Casts in this impl block:
+// - i128 to i64: guarded by explicit range checks before each cast
+// - i128 to u64: extracting low bits of wide product (intentional truncation)
+// - i64 to i128 / u64 to u128: always safe (widening)
 #[expect(
     clippy::cast_possible_truncation,
     reason = "all i128-to-i64 casts are guarded by range checks"
+)]
+#[expect(
+    clippy::cast_sign_loss,
+    reason = "i128-to-u64 extracts low bits of wide product via bit pattern"
 )]
 impl<const D: u8> FixedI64<D> {
     /// Checked multiplication, truncating toward zero.
@@ -236,6 +240,7 @@ impl<const D: u8> FixedI64<D> {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests use expect for clarity")]
 mod tests {
     use super::*;
 

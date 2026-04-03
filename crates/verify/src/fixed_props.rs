@@ -49,10 +49,10 @@ mod tests {
     fn rescale_widen_then_narrow_preserves() {
         check!().with_type::<i64>().for_each(|raw| {
             let f2 = FixedI64::<2>::from_raw(*raw);
-            if let Some(f6) = f2.rescale_trunc::<6>() {
-                if let Some(back) = f6.rescale_trunc::<2>() {
-                    assert_eq!(back, f2);
-                }
+            if let Some(f6) = f2.rescale_trunc::<6>()
+                && let Some(back) = f6.rescale_trunc::<2>()
+            {
+                assert_eq!(back, f2);
             }
         });
     }
@@ -74,7 +74,7 @@ mod tests {
                     let remainder = raw % 10_000;
                     assert_ne!(remainder, 0);
                 }
-                (None, None) | (Some(_), None) => {}
+                (None | Some(_), None) => {}
             }
         });
     }

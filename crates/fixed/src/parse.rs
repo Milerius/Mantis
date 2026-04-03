@@ -227,6 +227,7 @@ impl<const D: u8> FixedI64<D> {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests use expect for clarity")]
 mod tests {
     extern crate alloc;
     use alloc::format;

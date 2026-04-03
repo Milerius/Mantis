@@ -1,4 +1,9 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+#![allow(missing_docs)]
+#![expect(clippy::expect_used, reason = "benchmark harness uses expect for infallible writes")]
+
+use std::hint::black_box;
+
+use criterion::{Criterion, criterion_group, criterion_main};
 use mantis_fixed::FixedI64;
 
 #[cfg(feature = "bench-fixed-contenders")]
