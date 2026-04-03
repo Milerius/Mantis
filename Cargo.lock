@@ -549,6 +549,7 @@ dependencies = [
  "criterion",
  "crossbeam-queue",
  "mantis-core",
+ "mantis-fixed",
  "mantis-platform",
  "mantis-queue",
  "mantis-types",
@@ -609,6 +610,7 @@ version = "0.1.0"
 dependencies = [
  "bolero",
  "mantis-core",
+ "mantis-fixed",
  "mantis-queue",
  "mantis-types",
 ]
