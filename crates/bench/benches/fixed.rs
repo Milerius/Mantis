@@ -1,5 +1,8 @@
 #![allow(missing_docs)]
-#![expect(clippy::expect_used, reason = "benchmark harness uses expect for infallible writes")]
+#![expect(
+    clippy::expect_used,
+    reason = "benchmark harness uses expect for infallible writes"
+)]
 
 use std::hint::black_box;
 
