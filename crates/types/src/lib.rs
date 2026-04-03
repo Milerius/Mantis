@@ -9,12 +9,16 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+mod lots;
 mod order_id;
 mod side;
+mod ticks;
 mod timestamp;
 
+pub use lots::Lots;
 pub use order_id::OrderId;
 pub use side::Side;
+pub use ticks::Ticks;
 pub use timestamp::Timestamp;
 
 use core::fmt;

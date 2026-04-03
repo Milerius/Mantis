@@ -11,5 +11,8 @@ repository.workspace = true
 default = []
 std = []
 
+[dependencies]
+mantis-fixed = { workspace = true }
+
 [lints]
 workspace = true
