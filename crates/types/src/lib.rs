@@ -9,17 +9,24 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+mod btc_qty;
 mod lots;
 mod order_id;
+mod probability;
 mod side;
 mod ticks;
 mod timestamp;
+mod usdc;
 
+pub use btc_qty::BtcQty;
 pub use lots::Lots;
+pub use mantis_fixed::FixedI64;
 pub use order_id::OrderId;
+pub use probability::Probability;
 pub use side::Side;
 pub use ticks::Ticks;
 pub use timestamp::Timestamp;
+pub use usdc::UsdcAmount;
 
 use core::fmt;
 
