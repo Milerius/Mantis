@@ -44,7 +44,9 @@ mod tests {
         for (i, &val) in POW10_I64.iter().enumerate() {
             assert_eq!(val, expected, "POW10_I64[{i}] wrong");
             if i < 18 {
-                expected = expected.checked_mul(10).expect("overflow building expected");
+                expected = expected
+                    .checked_mul(10)
+                    .expect("overflow building expected");
             }
         }
     }
