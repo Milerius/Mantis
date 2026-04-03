@@ -562,6 +562,13 @@ name = "mantis-core"
 version = "0.1.0"
 
 [[package]]
+name = "mantis-fixed"
+version = "0.1.0"
+dependencies = [
+ "mantis-platform",
+]
+
+[[package]]
 name = "mantis-layout"
 version = "0.1.0"
 dependencies = [
