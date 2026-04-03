@@ -10,6 +10,7 @@
 extern crate std;
 
 mod btc_qty;
+mod instrument;
 mod lots;
 mod order_id;
 mod probability;
@@ -19,6 +20,7 @@ mod timestamp;
 mod usdc;
 
 pub use btc_qty::BtcQty;
+pub use instrument::{InstrumentMeta, InstrumentMetaError};
 pub use lots::Lots;
 pub use mantis_fixed::FixedI64;
 pub use order_id::OrderId;
