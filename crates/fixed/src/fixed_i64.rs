@@ -20,7 +20,7 @@ use mantis_platform::pow10_i64;
 /// | 4 | Sub-cent precision, some CeFi grids | ~922 trillion |
 /// | 6 | USDC, stablecoin math | ~9.2 trillion |
 /// | 8 | BTC quantities (satoshi-scale) | ~92 billion |
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct FixedI64<const D: u8>(i64);
 
