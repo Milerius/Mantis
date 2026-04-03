@@ -20,6 +20,7 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+mod arithmetic;
 mod fixed_i64;
 
 pub use fixed_i64::FixedI64;
