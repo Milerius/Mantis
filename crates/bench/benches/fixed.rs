@@ -1,6 +1,11 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use mantis_fixed::FixedI64;
 
+#[cfg(feature = "bench-fixed-contenders")]
+use fixed::types::I38F26 as FixedCrateI38F26;
+#[cfg(feature = "bench-fixed-contenders")]
+use rust_decimal::Decimal;
+
 type F2 = FixedI64<2>;
 type F4 = FixedI64<4>;
 type F6 = FixedI64<6>;
@@ -114,6 +119,162 @@ fn bench_display(c: &mut Criterion) {
     group.finish();
 }
 
+// --- Contender benchmarks (behind bench-fixed-contenders feature) ---
+
+#[cfg(feature = "bench-fixed-contenders")]
+fn bench_contender_add(c: &mut Criterion) {
+    let mut group = c.benchmark_group("contender_add");
+
+    // Mantis
+    let ma = F6::from_raw(1_500_000);
+    let mb = F6::from_raw(2_500_000);
+    group.bench_function("mantis_FixedI64<6>", |bencher| {
+        bencher.iter(|| black_box(ma).checked_add(black_box(mb)));
+    });
+
+    // rust_decimal
+    let da = Decimal::new(150, 2); // 1.50
+    let db = Decimal::new(250, 2); // 2.50
+    group.bench_function("rust_decimal", |bencher| {
+        bencher.iter(|| black_box(da).checked_add(black_box(db)));
+    });
+
+    // fixed crate (I38F26 — 38 integer bits, 26 fractional)
+    let fa = FixedCrateI38F26::from_num(1.5);
+    let fb = FixedCrateI38F26::from_num(2.5);
+    group.bench_function("fixed_crate_I38F26", |bencher| {
+        bencher.iter(|| black_box(fa).checked_add(black_box(fb)));
+    });
+
+    // raw i64
+    let ra: i64 = 1_500_000;
+    let rb: i64 = 2_500_000;
+    group.bench_function("raw_i64", |bencher| {
+        bencher.iter(|| black_box(ra).checked_add(black_box(rb)));
+    });
+
+    group.finish();
+}
+
+#[cfg(feature = "bench-fixed-contenders")]
+fn bench_contender_mul(c: &mut Criterion) {
+    let mut group = c.benchmark_group("contender_mul");
+
+    // Mantis (truncating)
+    let ma = F6::from_raw(1_500_000); // 1.5
+    let mb = F6::from_raw(2_000_000); // 2.0
+    group.bench_function("mantis_mul_trunc", |bencher| {
+        bencher.iter(|| black_box(ma).checked_mul_trunc(black_box(mb)));
+    });
+
+    // rust_decimal
+    let da = Decimal::new(150, 2);
+    let db = Decimal::new(200, 2);
+    group.bench_function("rust_decimal_mul", |bencher| {
+        bencher.iter(|| black_box(da).checked_mul(black_box(db)));
+    });
+
+    // fixed crate
+    let fa = FixedCrateI38F26::from_num(1.5);
+    let fb = FixedCrateI38F26::from_num(2.0);
+    group.bench_function("fixed_crate_mul", |bencher| {
+        bencher.iter(|| black_box(fa).checked_mul(black_box(fb)));
+    });
+
+    group.finish();
+}
+
+#[cfg(feature = "bench-fixed-contenders")]
+fn bench_contender_div(c: &mut Criterion) {
+    let mut group = c.benchmark_group("contender_div");
+
+    // Mantis
+    let ma = F6::from_raw(4_500_000); // 4.5
+    let mb = F6::from_raw(1_500_000); // 1.5
+    group.bench_function("mantis_div_trunc", |bencher| {
+        bencher.iter(|| black_box(ma).checked_div_trunc(black_box(mb)));
+    });
+
+    // rust_decimal
+    let da = Decimal::new(450, 2);
+    let db = Decimal::new(150, 2);
+    group.bench_function("rust_decimal_div", |bencher| {
+        bencher.iter(|| black_box(da).checked_div(black_box(db)));
+    });
+
+    // fixed crate
+    let fa = FixedCrateI38F26::from_num(4.5);
+    let fb = FixedCrateI38F26::from_num(1.5);
+    group.bench_function("fixed_crate_div", |bencher| {
+        bencher.iter(|| black_box(fa).checked_div(black_box(fb)));
+    });
+
+    group.finish();
+}
+
+#[cfg(feature = "bench-fixed-contenders")]
+fn bench_contender_parse(c: &mut Criterion) {
+    use std::str::FromStr;
+
+    let mut group = c.benchmark_group("contender_parse");
+
+    // Mantis
+    group.bench_function("mantis_parse", |bencher| {
+        bencher.iter(|| F6::from_str_decimal(black_box("1.500000")));
+    });
+
+    // rust_decimal
+    group.bench_function("rust_decimal_parse", |bencher| {
+        bencher.iter(|| Decimal::from_str(black_box("1.500000")));
+    });
+
+    // fixed crate
+    group.bench_function("fixed_crate_parse", |bencher| {
+        bencher.iter(|| FixedCrateI38F26::from_str(black_box("1.500000")));
+    });
+
+    group.finish();
+}
+
+#[cfg(feature = "bench-fixed-contenders")]
+fn bench_contender_display(c: &mut Criterion) {
+    use std::fmt::Write;
+
+    let mut group = c.benchmark_group("contender_display");
+
+    // Mantis
+    let mf = F6::from_raw(1_500_000);
+    group.bench_function("mantis_display", |bencher| {
+        let mut buf = String::with_capacity(32);
+        bencher.iter(|| {
+            buf.clear();
+            write!(&mut buf, "{}", black_box(mf)).expect("infallible");
+        });
+    });
+
+    // rust_decimal
+    let df = Decimal::new(1_500_000, 6);
+    group.bench_function("rust_decimal_display", |bencher| {
+        let mut buf = String::with_capacity(32);
+        bencher.iter(|| {
+            buf.clear();
+            write!(&mut buf, "{}", black_box(df)).expect("infallible");
+        });
+    });
+
+    // fixed crate
+    let ff = FixedCrateI38F26::from_num(1.5);
+    group.bench_function("fixed_crate_display", |bencher| {
+        let mut buf = String::with_capacity(32);
+        bencher.iter(|| {
+            buf.clear();
+            write!(&mut buf, "{}", black_box(ff)).expect("infallible");
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_checked_add,
@@ -124,4 +285,18 @@ criterion_group!(
     bench_parse,
     bench_display,
 );
+
+#[cfg(feature = "bench-fixed-contenders")]
+criterion_group!(
+    contender_benches,
+    bench_contender_add,
+    bench_contender_mul,
+    bench_contender_div,
+    bench_contender_parse,
+    bench_contender_display,
+);
+
+#[cfg(feature = "bench-fixed-contenders")]
+criterion_main!(benches, contender_benches);
+#[cfg(not(feature = "bench-fixed-contenders"))]
 criterion_main!(benches);
