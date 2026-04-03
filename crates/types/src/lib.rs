@@ -9,6 +9,14 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+mod order_id;
+mod side;
+mod timestamp;
+
+pub use order_id::OrderId;
+pub use side::Side;
+pub use timestamp::Timestamp;
+
 use core::fmt;
 
 /// Error returned when pushing to a full queue, preserving the value.
