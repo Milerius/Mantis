@@ -22,5 +22,6 @@ extern crate std;
 
 mod arithmetic;
 mod fixed_i64;
+mod mul_div;
 
 pub use fixed_i64::FixedI64;
