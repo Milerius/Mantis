@@ -5,10 +5,12 @@ set -euo pipefail
 # Usage: bench-report.sh <linux-json> <macos-json>
 # Outputs markdown to stdout.
 
-linux_json="${1:?usage: bench-report.sh <linux-spsc> <macos-spsc> [<linux-fixed> <macos-fixed>]}"
-macos_json="${2:?usage: bench-report.sh <linux-spsc> <macos-spsc> [<linux-fixed> <macos-fixed>]}"
-linux_fixed="${3:-}"
-macos_fixed="${4:-}"
+linux_json="${1:?usage: bench-report.sh <linux-spsc> <macos-spsc> [<linux-seqlock> <macos-seqlock>] [<linux-fixed> <macos-fixed>]}"
+macos_json="${2:?usage: bench-report.sh <linux-spsc> <macos-spsc> [<linux-seqlock> <macos-seqlock>] [<linux-fixed> <macos-fixed>]}"
+linux_seqlock="${3:-}"
+macos_seqlock="${4:-}"
+linux_fixed="${5:-}"
+macos_fixed="${6:-}"
 
 # Normalize workload names into (impl, pattern, element) and extract metrics.
 # Output: JSON array of {impl, pattern, element, ns_per_op, ...}
@@ -273,6 +275,30 @@ echo "<summary><strong>macOS</strong></summary>"
 echo ""
 render_platform "$macos_json" "macOS"
 echo "</details>"
+
+# Seqlock benchmarks (optional)
+if [ -n "$linux_seqlock" ] || [ -n "$macos_seqlock" ]; then
+  echo ""
+  echo "### Sequence Lock (mantis-seqlock)"
+  echo ""
+
+  if [ -n "$linux_seqlock" ]; then
+    echo "<details open>"
+    echo "<summary><strong>Linux</strong></summary>"
+    echo ""
+    render_fixed_platform "$linux_seqlock" "Linux"
+    echo "</details>"
+    echo ""
+  fi
+
+  if [ -n "$macos_seqlock" ]; then
+    echo "<details open>"
+    echo "<summary><strong>macOS</strong></summary>"
+    echo ""
+    render_fixed_platform "$macos_seqlock" "macOS"
+    echo "</details>"
+  fi
+fi
 
 # Fixed-point benchmarks (optional)
 if [ -n "$linux_fixed" ] || [ -n "$macos_fixed" ]; then
