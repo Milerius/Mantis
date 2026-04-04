@@ -1,0 +1,22 @@
+[package]
+name = "mantis-fixed-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mantis-fixed = { path = ".." }
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+doc = false
+
+[[bin]]
+name = "display_roundtrip"
+path = "fuzz_targets/display_roundtrip.rs"
+doc = false

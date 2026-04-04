@@ -11,6 +11,7 @@ repository.workspace = true
 mantis-core = { workspace = true }
 mantis-types = { workspace = true }
 mantis-queue = { workspace = true, features = ["alloc"] }
+mantis-fixed = { workspace = true }
 bolero = { workspace = true }
 
 [lints]

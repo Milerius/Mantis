@@ -91,6 +91,28 @@
 - [x] Migration: mantis-core, mantis-queue, mantis-bench updated to use platform
 - [x] 162 tests, Miri validation, clippy clean
 
+### 1.9 Fixed-Point Numeric Types (`mantis-fixed`, `mantis-types` expansion)
+**Status: Complete** | Completed: 2026-04-03
+
+- [x] `FixedI64<const D: u8>` compile-time-scaled fixed-point decimal backed by `i64`
+- [x] Checked/saturating/wrapping add, sub, neg, abs
+- [x] Explicit-rounding mul/div: `checked_mul_trunc`, `checked_mul_round`, `checked_div_trunc`, `checked_div_round`
+- [x] Scalar integer mul/div: `checked_mul_int`, `checked_div_int`
+- [x] Scale conversion: `rescale_trunc`, `rescale_round`, `checked_rescale_exact`
+- [x] Display (D decimal places), Debug (raw + value), `from_str_decimal` parser
+- [x] `D <= 18` compile-time bound, validated scales: 2, 4, 6, 8
+- [x] `POW10_I64` const table in `mantis-platform`
+- [x] Performance: hand-rolled decomposed division eliminates `__divti3` runtime call
+- [x] Contender benchmarks: faster than `fixed` crate (1.10ns vs 1.20ns mul) and `rust_decimal` (4x faster add)
+- [x] Domain types in `mantis-types`: `Side`, `Timestamp`, `OrderId`
+- [x] Hot-path types: `Ticks(i64)`, `Lots(i64)` — pure integer, no decimal semantics
+- [x] Semantic wrappers: `UsdcAmount(FixedI64<6>)`, `Probability(FixedI64<6>)`, `BtcQty(FixedI64<8>)`
+- [x] `InstrumentMeta<D>` — tick/lot size conversion layer
+- [x] 110 unit tests (mantis-fixed), 65 tests (mantis-types), 7 bolero property tests
+- [x] Miri: 110/110 pass, zero UB
+- [x] 2 fuzz targets (parse, display roundtrip)
+- [x] Criterion benchmarks with contender comparison (rust_decimal, fixed crate)
+
 ### 1.3 Canonical Event Model
 - [ ] `BookDelta`, `Trade`, `Quote` types
 - [ ] `OrderIntent`, `Fill` types
@@ -162,9 +184,10 @@
 | Crate | Status | no_std | Tests | Benchmarks | Verification |
 |---|---|---|---|---|---|
 | `mantis-core` | Active | yes | 1 | — | — |
-| `mantis-types` | Active | yes | 6 | — | — |
+| `mantis-types` | Active | yes | 65 | — | — |
+| `mantis-fixed` | Active | yes | 110 | 7 groups + 2 contenders | miri pass, 7 bolero props, 2 fuzz |
 | `mantis-queue` | Active | yes | 31 | — | miri pass |
-| `mantis-platform` | Active | yes | 162 | — | miri pass |
-| `mantis-bench` | Active | std | 11 | 6 benches + 4 contenders | — |
+| `mantis-platform` | Active | yes | 164 | — | miri pass |
+| `mantis-bench` | Active | std | 11 | 6+7 bench groups, 6 contenders | — |
 | `mantis-layout` | Scaffold | std | 2 | — | — |
-| `mantis-verify` | Active | std | 7 | — | 4 kani proofs, 7 bolero/diff |
+| `mantis-verify` | Active | std | 10 | — | 4 kani proofs, 10 bolero/diff |

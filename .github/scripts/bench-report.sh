@@ -5,8 +5,10 @@ set -euo pipefail
 # Usage: bench-report.sh <linux-json> <macos-json>
 # Outputs markdown to stdout.
 
-linux_json="${1:?usage: bench-report.sh <linux-json> <macos-json>}"
-macos_json="${2:?usage: bench-report.sh <linux-json> <macos-json>}"
+linux_json="${1:?usage: bench-report.sh <linux-spsc> <macos-spsc> [<linux-fixed> <macos-fixed>]}"
+macos_json="${2:?usage: bench-report.sh <linux-spsc> <macos-spsc> [<linux-fixed> <macos-fixed>]}"
+linux_fixed="${3:-}"
+macos_fixed="${4:-}"
 
 # Normalize workload names into (impl, pattern, element) and extract metrics.
 # Output: JSON array of {impl, pattern, element, ns_per_op, ...}
@@ -210,6 +212,46 @@ render_platform() {
   echo "</details>"
 }
 
+# Render fixed-point benchmark results from Criterion JSON report.
+render_fixed_platform() {
+  local json="$1" label="$2"
+
+  if [ ! -f "$json" ]; then
+    echo "*${label} fixed-point benchmark results not available.*"
+    echo ""
+    return
+  fi
+
+  local cpu arch compiler
+  cpu=$(jq -r '.cpu' "$json")
+  arch=$(jq -r '.arch' "$json")
+  compiler=$(jq -r '.compiler' "$json")
+
+  echo "**CPU:** \`${cpu}\` | **Arch:** \`${arch}\` | **Compiler:** \`${compiler}\`"
+  echo ""
+
+  # Group by benchmark category (first path component)
+  local groups
+  groups=$(jq -r '[.results[].workload | split("/")[0]] | unique | .[]' "$json")
+
+  for group in $groups; do
+    echo "#### ${group}"
+    echo ""
+    echo "| Variant | ns/op |"
+    echo "|:--------|------:|"
+
+    jq -r --arg g "$group" '
+      .results
+      | map(select(.workload | startswith($g + "/")))
+      | sort_by(.ns_per_op)
+      | .[]
+      | "| `" + (.workload | split("/")[1:] | join("/")) + "` | " + (.ns_per_op | tostring) + " |"
+    ' "$json"
+
+    echo ""
+  done
+}
+
 commit_sha="${GITHUB_SHA:-$(git rev-parse --short HEAD)}"
 
 cat <<HEADER
@@ -231,3 +273,27 @@ echo "<summary><strong>macOS</strong></summary>"
 echo ""
 render_platform "$macos_json" "macOS"
 echo "</details>"
+
+# Fixed-point benchmarks (optional)
+if [ -n "$linux_fixed" ] || [ -n "$macos_fixed" ]; then
+  echo ""
+  echo "### Fixed-Point Arithmetic (mantis-fixed)"
+  echo ""
+
+  if [ -n "$linux_fixed" ]; then
+    echo "<details open>"
+    echo "<summary><strong>Linux</strong></summary>"
+    echo ""
+    render_fixed_platform "$linux_fixed" "Linux"
+    echo "</details>"
+    echo ""
+  fi
+
+  if [ -n "$macos_fixed" ]; then
+    echo "<details open>"
+    echo "<summary><strong>macOS</strong></summary>"
+    echo ""
+    render_fixed_platform "$macos_fixed" "macOS"
+    echo "</details>"
+  fi
+fi

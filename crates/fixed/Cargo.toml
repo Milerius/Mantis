@@ -1,6 +1,6 @@
 [package]
-name = "mantis-types"
-description = "Core type definitions for the Mantis low-latency financial SDK"
+name = "mantis-fixed"
+description = "Compile-time-scaled fixed-point decimal arithmetic for the Mantis SDK"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,7 @@ default = []
 std = []
 
 [dependencies]
-mantis-fixed = { workspace = true }
+mantis-platform = { workspace = true }
 
 [lints]
 workspace = true

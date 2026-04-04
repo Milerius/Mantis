@@ -9,15 +9,17 @@ Build:          cargo +nightly build --features alloc,std
 Build nightly:  cargo +nightly build --all-features
 Test:           cargo +nightly test --features alloc,std
 Test nightly:   cargo +nightly test --all-features
-Test no_std:    cargo +nightly test -p mantis-core -p mantis-types -p mantis-queue --no-default-features
+Test no_std:    cargo +nightly test -p mantis-core -p mantis-types -p mantis-fixed -p mantis-queue --no-default-features
 Lint:           cargo +nightly clippy --all-targets --features alloc,std -- -D warnings
 Lint all:       cargo +nightly clippy --all-targets --all-features -- -D warnings
 Format:         cargo +nightly fmt --all
 Format check:   cargo +nightly fmt --all --check
 Deny:           cargo deny check
-Miri:           cargo +nightly miri test -p mantis-queue
+Miri:           cargo +nightly miri test -p mantis-queue -p mantis-fixed
 Careful:        cargo +nightly careful test
-Bench:          cargo bench --bench spsc
+Bench SPSC:     cargo bench --bench spsc
+Bench fixed:    cargo +nightly bench --bench fixed
+Bench fixed+:   cargo +nightly bench --bench fixed --features bench-fixed-contenders
 Bench native:   RUSTFLAGS='-C target-cpu=native' cargo bench --bench spsc
 Bench + ext:    cargo bench --bench spsc --features bench-contenders
 Fuzz:           cargo +nightly fuzz run <target>
@@ -44,6 +46,7 @@ See `docs/PROGRESS.md` for current project status and phase tracking.
 ```
 crates/core/     mantis-core      Traits, strategy definitions           (no_std)
 crates/types/    mantis-types     IDs, newtypes, error types             (no_std)
+crates/fixed/    mantis-fixed     Fixed-point decimal arithmetic         (no_std)
 crates/queue/    mantis-queue     SPSC ring + queue primitives           (no_std)
 crates/platform/ mantis-platform  Platform abstractions, CT types, SIMD, counters  (no_std)
 crates/bench/    mantis-bench     Criterion + custom perf harness        (std)
@@ -53,7 +56,7 @@ crates/verify/   mantis-verify    Kani proofs, bolero property tests     (std)
 
 ## no_std Rules
 
-- core, types, queue: `#![no_std]` by default, optional `std` feature
+- core, types, fixed, queue: `#![no_std]` by default, optional `std` feature
 - No heap allocation in hot paths after init
 - No panics in hot paths — use `Result` or error enum returns
 - bench, layout, verify: `std`-only, never depended on by core crates
