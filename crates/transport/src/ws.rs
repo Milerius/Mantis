@@ -15,8 +15,9 @@ pub struct WsConfig {
     pub url: String,
     /// Subscription message to send after connecting (JSON string).
     pub subscribe_msg: Option<String>,
-    /// Heartbeat interval. Server disconnects if no PING within timeout.
-    pub ping_interval: Duration,
+    /// Text heartbeat interval. `Some(10s)` sends `"PING"` every 10s (Polymarket).
+    /// `None` disables text pings (Binance — uses WS-level ping/pong automatically).
+    pub ping_interval: Option<Duration>,
     /// TCP read timeout. `None` means block indefinitely.
     pub read_timeout: Option<Duration>,
 }
@@ -28,7 +29,7 @@ impl WsConfig {
         Self {
             url: url.to_owned(),
             subscribe_msg: None,
-            ping_interval: Duration::from_secs(10),
+            ping_interval: Some(Duration::from_secs(10)),
             read_timeout: Some(Duration::from_secs(15)),
         }
     }
@@ -39,7 +40,7 @@ impl WsConfig {
         Self {
             url: url.to_owned(),
             subscribe_msg: None,
-            ping_interval: Duration::from_secs(30),
+            ping_interval: None,
             read_timeout: Some(Duration::from_secs(35)),
         }
     }
@@ -141,8 +142,10 @@ impl WsConnection {
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut =>
             {
-                // Read timeout — send ping and retry
-                self.send_ping()?;
+                // Read timeout — send text ping if venue requires it
+                if self.config.ping_interval.is_some() {
+                    self.send_ping()?;
+                }
                 Ok(None)
             }
             Err(e) => Err(WsError::Read(format!("{e}"))),
@@ -157,7 +160,9 @@ impl WsConnection {
     }
 
     fn maybe_send_ping(&mut self) -> Result<(), WsError> {
-        if self.last_ping.elapsed() >= self.config.ping_interval {
+        if let Some(interval) = self.config.ping_interval
+            && self.last_ping.elapsed() >= interval
+        {
             self.send_ping()?;
         }
         Ok(())

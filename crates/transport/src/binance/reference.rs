@@ -12,15 +12,19 @@ use crate::ws::WsConfig;
 ///
 /// Uses `fstream.binance.com` (futures) which is accessible from more
 /// regions than `stream.binance.com` (spot, geo-restricted in some locations).
-const WS_BASE_URL: &str = "wss://fstream.binance.com/ws";
+const WS_BASE: &str = "wss://fstream.binance.com";
 
 /// Build a Binance bookTicker stream URL for the given symbols.
 ///
-/// Example: `["btcusdt"]` → `wss://fstream.binance.com/ws/btcusdt@bookTicker`
-/// Example: `["btcusdt", "ethusdt"]` → `.../ws/btcusdt@bookTicker/ethusdt@bookTicker`
+/// Single symbol uses raw stream: `/ws/btcusdt@bookTicker`
+/// Multiple symbols use combined stream: `/stream?streams=btcusdt@bookTicker/ethusdt@bookTicker`
 fn book_ticker_url(symbols: &[&str]) -> String {
     let streams: Vec<String> = symbols.iter().map(|s| format!("{s}@bookTicker")).collect();
-    format!("{WS_BASE_URL}/{}", streams.join("/"))
+    if streams.len() == 1 {
+        format!("{WS_BASE}/ws/{}", streams[0])
+    } else {
+        format!("{WS_BASE}/stream?streams={}", streams.join("/"))
+    }
 }
 
 /// Configuration for a Binance reference price feed.
@@ -62,6 +66,13 @@ pub fn spawn_reference_feed<F>(
 where
     F: FnMut(&str) -> bool + Send + 'static,
 {
+    if config.symbols.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "at least one symbol is required",
+        ));
+    }
+
     let symbol_refs: Vec<&str> = config.symbols.iter().map(String::as_str).collect();
     let url = book_ticker_url(&symbol_refs);
 
@@ -94,7 +105,7 @@ mod tests {
         let url = book_ticker_url(&["btcusdt", "ethusdt", "solusdt"]);
         assert_eq!(
             url,
-            "wss://fstream.binance.com/ws/btcusdt@bookTicker/ethusdt@bookTicker/solusdt@bookTicker"
+            "wss://fstream.binance.com/stream?streams=btcusdt@bookTicker/ethusdt@bookTicker/solusdt@bookTicker"
         );
     }
 }

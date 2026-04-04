@@ -113,5 +113,4 @@ cargo test -p mantis-transport --features live-tests -- --nocapture
 
 ## Safety
 
-No `unsafe` code in the crate itself. `#![deny(unsafe_code)]` on the crate root.
-The `tuning` feature gates a single `unsafe` block for `setsockopt(SO_BUSY_POLL)`.
+`#![deny(unsafe_code)]` on the crate root. The default build has zero `unsafe` blocks. The `tuning` feature enables one audited `unsafe` call (`setsockopt(SO_BUSY_POLL)`) in `tuning.rs`, gated behind `#[expect(unsafe_code)]`.

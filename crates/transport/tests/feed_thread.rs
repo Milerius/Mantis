@@ -94,7 +94,7 @@ fn make_config(url: String) -> FeedConfig {
         ws: WsConfig {
             url,
             subscribe_msg: None,
-            ping_interval: Duration::from_secs(30),
+            ping_interval: None,
             read_timeout: Some(Duration::from_secs(5)),
         },
         tuning: SocketTuning::default(),
@@ -164,7 +164,7 @@ async fn feed_thread_reconnects_on_server_close() {
         ws: WsConfig {
             url,
             subscribe_msg: None,
-            ping_interval: Duration::from_secs(30),
+            ping_interval: None,
             read_timeout: Some(Duration::from_secs(2)),
         },
         tuning: SocketTuning::default(),
@@ -223,7 +223,7 @@ async fn feed_thread_subscription_message() {
         ws: WsConfig {
             url: format!("ws://{addr}"),
             subscribe_msg: Some(r#"{"type":"subscribe","channel":"test"}"#.to_owned()),
-            ping_interval: Duration::from_secs(30),
+            ping_interval: None,
             read_timeout: Some(Duration::from_secs(2)),
         },
         tuning: SocketTuning::default(),

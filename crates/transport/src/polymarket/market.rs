@@ -27,16 +27,12 @@ pub struct PolymarketMarketConfig {
 impl PolymarketMarketConfig {
     /// Build the JSON subscription message.
     fn subscribe_msg(&self) -> String {
-        // serde_json would be cleaner but this avoids a dep on the hot path
-        let ids: Vec<String> = self
-            .token_ids
-            .iter()
-            .map(|id| format!("\"{id}\""))
-            .collect();
-        format!(
-            r#"{{"assets_ids":[{}],"type":"market","custom_feature_enabled":true}}"#,
-            ids.join(",")
-        )
+        serde_json::json!({
+            "assets_ids": self.token_ids,
+            "type": "market",
+            "custom_feature_enabled": true,
+        })
+        .to_string()
     }
 }
 
@@ -57,12 +53,19 @@ pub fn spawn_market_feed<F>(
 where
     F: FnMut(&str) -> bool + Send + 'static,
 {
+    if config.token_ids.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "at least one token ID is required",
+        ));
+    }
+
     let feed_config = FeedConfig {
         name: "polymarket-market".to_owned(),
         ws: WsConfig {
             url: WS_MARKET_URL.to_owned(),
             subscribe_msg: Some(config.subscribe_msg()),
-            ping_interval: Duration::from_secs(10),
+            ping_interval: Some(Duration::from_secs(10)),
             read_timeout: Some(Duration::from_secs(15)),
         },
         tuning: SocketTuning {

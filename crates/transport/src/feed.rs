@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tracing::{error, info, warn};
 
@@ -65,7 +65,9 @@ impl BackoffConfig {
             return capped;
         }
 
-        let nanos = Instant::now().elapsed().subsec_nanos();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos());
         let jitter_range = capped.as_millis() as f64 * self.jitter_factor;
         let jitter_ms = f64::from(nanos % 1000) / 1000.0 * jitter_range * 2.0 - jitter_range;
         let ms = capped.as_millis() as f64 + jitter_ms;
@@ -160,6 +162,21 @@ impl FeedThread {
     }
 }
 
+/// Sleep for `duration`, checking the shutdown flag every 100ms.
+/// Returns `true` if shutdown was requested during the sleep.
+fn interruptible_sleep(duration: Duration, shutdown: &AtomicBool) -> bool {
+    let deadline = std::time::Instant::now() + duration;
+    let chunk = Duration::from_millis(100);
+    while std::time::Instant::now() < deadline {
+        if shutdown.load(Ordering::Acquire) {
+            return true;
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        thread::sleep(remaining.min(chunk));
+    }
+    shutdown.load(Ordering::Acquire)
+}
+
 fn feed_loop<F>(
     config: &FeedConfig,
     mut on_message: F,
@@ -199,7 +216,9 @@ fn feed_loop<F>(
                     "connection failed, backing off"
                 );
                 attempt = attempt.saturating_add(1);
-                thread::sleep(delay);
+                if interruptible_sleep(delay, shutdown) {
+                    return;
+                }
                 continue;
             }
         };
@@ -243,7 +262,9 @@ fn feed_loop<F>(
             "reconnecting after delay"
         );
         attempt = attempt.saturating_add(1);
-        thread::sleep(delay);
+        if interruptible_sleep(delay, shutdown) {
+            break;
+        }
     }
 
     info!(feed = %config.name, "feed thread exiting");
