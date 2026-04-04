@@ -126,10 +126,13 @@ async fn feed_thread_receives_messages() {
 async fn feed_thread_shutdown_graceful() {
     let (url, _shutdown) = start_echo_server().await;
     let mut config = make_config(url);
-    config.ws.read_timeout = Some(Duration::from_secs(1));
+    config.ws.read_timeout = Some(Duration::from_millis(200));
 
     let handle = FeedThread::spawn(config, |_msg| true).unwrap();
+    // Let the thread enter the read loop
+    tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(handle.is_running());
+    // shutdown() waits for read_timeout to expire (200ms), then thread checks flag
     handle.shutdown();
 }
 

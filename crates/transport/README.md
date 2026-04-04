@@ -79,7 +79,7 @@ spawn() → connect → subscribe → read loop ──> callback
                                     │
                           on error: reconnect with backoff (1s → 30s, ±12.5% jitter)
                                     │
-                        shutdown() → thread joins
+                        shutdown() → responds within 100ms, thread joins
 ```
 
 Monitoring counters (lock-free `AtomicU64`):

@@ -142,10 +142,8 @@ impl WsConnection {
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut =>
             {
-                // Read timeout — send text ping if venue requires it
-                if self.config.ping_interval.is_some() {
-                    self.send_ping()?;
-                }
+                // Read timeout — send heartbeat if due (checks elapsed time, won't double-ping)
+                self.maybe_send_ping()?;
                 Ok(None)
             }
             Err(e) => Err(WsError::Read(format!("{e}"))),
