@@ -42,7 +42,11 @@ mod tests {
             for v in vals {
                 lock.store(*v);
                 let cur = lock.version();
-                assert_eq!(cur, prev.wrapping_add(2), "version must increase by 2 per store");
+                assert_eq!(
+                    cur,
+                    prev.wrapping_add(2),
+                    "version must increase by 2 per store"
+                );
                 prev = cur;
             }
         });
