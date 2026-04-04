@@ -1,0 +1,21 @@
+[package]
+name = "mantis-seqlock"
+description = "Lock-free sequence lock for the Mantis low-latency financial SDK"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+std = ["mantis-platform/std"]
+nightly = ["mantis-platform/nightly"]
+
+[dependencies]
+mantis-platform = { workspace = true }
+
+[dev-dependencies]
+
+[lints]
+workspace = true
