@@ -1,0 +1,15 @@
+[package]
+name = "mantis-registry"
+description = "Instrument registry with venue bindings for the Mantis SDK"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+mantis-types = { workspace = true, features = ["std"] }
+mantis-fixed = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true

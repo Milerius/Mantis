@@ -5,7 +5,8 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85.0"
+# clippy.toml already uses 1.95, keep consistent
+rust-version = "1.95.0"
 license = "Apache-2.0"
 repository = "https://github.com/Milerius/Mantis"
 
@@ -49,6 +50,8 @@ mantis-verify = { path = "crates/verify", version = "0.1.0" }
 mantis-platform = { path = "crates/platform", version = "0.1.0" }
 mantis-fixed = { path = "crates/fixed", version = "0.1.0" }
 mantis-events = { path = "crates/events", version = "0.1.0" }
+mantis-transport = { path = "crates/transport", version = "0.1.0" }
+mantis-registry = { path = "crates/registry", version = "0.1.0" }
 cfg-if = "1"
 criterion = { version = "0.8", features = ["html_reports"] }
 bolero = "0.11"

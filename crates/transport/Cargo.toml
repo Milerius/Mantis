@@ -1,0 +1,47 @@
+[package]
+name = "mantis-transport"
+description = "WebSocket transport ingest layer for the Mantis SDK"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["simd-json", "tuning"]
+simd-json = ["dep:simd-json"]
+tuning = []
+live-tests = []
+
+[dependencies]
+mantis-queue = { workspace = true, features = ["alloc"] }
+mantis-types = { workspace = true, features = ["std"] }
+mantis-events = { workspace = true }
+mantis-fixed = { workspace = true, features = ["std"] }
+mantis-platform = { workspace = true, features = ["std"] }
+
+# WebSocket + TLS
+tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+
+# JSON parsing
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+simd-json = { version = "0.17", optional = true }
+
+# System
+core_affinity = "0.8"
+tracing = "0.1"
+
+# Platform-specific
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros", "net", "time", "sync"] }
+tokio-tungstenite = "0.29"
+futures-util = "0.3"
+tracing-subscriber = "0.3"
+
+[lints]
+workspace = true
