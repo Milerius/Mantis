@@ -198,10 +198,9 @@ fn bench_contender_amanieu(c: &mut Criterion) {
 #[cfg(feature = "bench-seqlock-contenders-cpp")]
 fn bench_contender_rigtorp(c: &mut Criterion) {
     use mantis_bench::seqlock_ffi::{
-        BenchMsg64, BenchMsg128,
-        rigtorp_seqlock_write_u64, rigtorp_seqlock_read_u64,
-        rigtorp_seqlock_write_64, rigtorp_seqlock_read_64,
-        rigtorp_seqlock_write_128, rigtorp_seqlock_read_128,
+        BenchMsg64, BenchMsg128, rigtorp_seqlock_read_64, rigtorp_seqlock_read_128,
+        rigtorp_seqlock_read_u64, rigtorp_seqlock_write_64, rigtorp_seqlock_write_128,
+        rigtorp_seqlock_write_u64,
     };
 
     let mut group = c.benchmark_group("seqlock/contender/rigtorp");

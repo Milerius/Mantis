@@ -1,11 +1,25 @@
 //! Core `SeqLock` implementation.
+//!
+//! Three optimizations over the baseline seqlock:
+//!
+//! 1. **SIMD copy via `CopyPolicy`** — reader uses 128-bit NEON/SSE2 loads
+//!    instead of byte-at-a-time `read_volatile`. Shorter copy window = fewer retries.
+//!
+//! 2. **Platform-specific fence** — `compiler_fence` on `x86_64` (TSO gives us
+//!    hardware ordering for free), `fence` on ARM64 (weak memory needs it).
+//!    Matches rigtorp's approach on x86, stays correct on ARM.
+//!
+//! 3. **Prefetch** — data cache line is prefetched before reading the sequence
+//!    counter, so the copy hits L1 instead of L2/L3.
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::sync::atomic::AtomicUsize;
 
-use mantis_platform::{CachePadded, CopyPolicy, DefaultCopyPolicy};
+use mantis_platform::{
+    CachePadded, CopyPolicy, DefaultCopyPolicy, PrefetchLocality, PrefetchRW, prefetch,
+};
 
 /// Lock-free sequence lock. Single writer, multiple readers.
 ///
@@ -25,7 +39,34 @@ pub struct SeqLock<T: Copy, C: CopyPolicy<T> = DefaultCopyPolicy> {
 unsafe impl<T: Copy + Send, C: CopyPolicy<T>> Sync for SeqLock<T, C> {}
 unsafe impl<T: Copy + Send, C: CopyPolicy<T>> Send for SeqLock<T, C> {}
 
-use core::sync::atomic::{Ordering, fence};
+use core::sync::atomic::Ordering;
+
+/// Platform-specific read barrier for the seqlock protocol.
+///
+/// On `x86_64` (TSO): compiler fence only — hardware provides store-load ordering.
+/// On ARM64 (weak memory): full acquire fence — required for correctness.
+///
+/// This matches rigtorp's approach on x86 while staying correct on ARM.
+#[expect(
+    clippy::inline_always,
+    reason = "hot-path fence must inline — function call overhead defeats the purpose"
+)]
+#[inline(always)]
+fn seqlock_read_barrier() {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: On x86_64, TSO guarantees that loads are not reordered with
+        // other loads. A compiler fence is sufficient to prevent the compiler
+        // from reordering the data copy past the seq2 load.
+        core::sync::atomic::compiler_fence(Ordering::Acquire);
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        // On weak-memory architectures (ARM64), a hardware fence is required
+        // to ensure the data copy completes before we read seq2.
+        core::sync::atomic::fence(Ordering::Acquire);
+    }
+}
 
 impl<T: Copy, C: CopyPolicy<T>> SeqLock<T, C> {
     /// Create a new seqlock with an initial value.
@@ -78,30 +119,49 @@ impl<T: Copy, C: CopyPolicy<T>> SeqLock<T, C> {
     ///
     /// Multiple readers can call this concurrently on `&self`.
     ///
+    /// # Optimizations
+    ///
+    /// - **Prefetch**: data cache line brought into L1 before the copy
+    /// - **SIMD copy**: `CopyPolicy` enables 128-bit NEON/SSE2 loads
+    /// - **Platform fence**: `compiler_fence` on x86 (TSO), `fence` on ARM
+    ///
     /// # Ordering
     ///
-    /// 1. `Acquire` load of seq1 — ensures we see latest sequence
-    /// 2. Volatile read of data — may be torn if writer is active
-    /// 3. `Acquire` fence — prevents seq2 load from reordering before data copy
-    /// 4. `Relaxed` load of seq2 — fence provides the ordering
-    /// 5. If seq1 == seq2 and even, data is consistent — return it
+    /// 1. Prefetch data cache line
+    /// 2. `Acquire` load of seq1 — ensures we see latest sequence
+    /// 3. Copy data via `CopyPolicy` — may be torn if writer is active
+    /// 4. Platform-specific read barrier
+    /// 5. `Relaxed` load of seq2 — barrier provides the ordering
+    /// 6. If seq1 == seq2 and even, data is consistent — return it
     #[inline]
     pub fn load(&self) -> T {
         loop {
+            // Prefetch data into L1 — by the time we pass the seq1 check,
+            // the cache line is ready for the copy.
+            prefetch(
+                self.data.get().cast_const().cast::<u8>(),
+                PrefetchRW::Read,
+                PrefetchLocality::High,
+            );
             let seq1 = self.seq.load(Ordering::Acquire);
             if seq1 & 1 != 0 {
                 // Writer active — don't waste time copying, spin immediately
                 core::hint::spin_loop();
                 continue;
             }
-            // SAFETY: We read through UnsafeCell via volatile read.
+            // SAFETY: We copy through UnsafeCell into a local MaybeUninit.
             // The data may be torn if a writer is concurrent — that's OK,
             // we check the sequence after and discard torn reads.
-            // read_volatile prevents the compiler from eliding this read.
-            let val = unsafe { core::ptr::read_volatile(self.data.get() as *const T) };
-            // Prevent the CPU/compiler from reordering the seq2 load
-            // before the data copy completes.
-            fence(Ordering::Acquire);
+            // CopyPolicy::copy_out is used instead of read_volatile to enable
+            // SIMD-accelerated wide loads (128-bit NEON/SSE2).
+            let val = unsafe {
+                let mut dst = MaybeUninit::<T>::uninit();
+                C::copy_out(dst.as_mut_ptr(), self.data.get().cast::<T>());
+                dst.assume_init()
+            };
+            // Platform-specific barrier: compiler_fence on x86 (TSO),
+            // hardware fence on ARM (weak memory).
+            seqlock_read_barrier();
             let seq2 = self.seq.load(Ordering::Relaxed);
             if seq1 == seq2 {
                 return val;

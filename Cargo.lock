@@ -767,6 +767,7 @@ dependencies = [
  "mantis-core",
  "mantis-fixed",
  "mantis-queue",
+ "mantis-seqlock",
  "mantis-types",
 ]
 
