@@ -1,0 +1,20 @@
+[package]
+name = "mantis-events"
+description = "Hot event language for the Mantis low-latency financial SDK"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+std = ["mantis-types/std"]
+
+[dependencies]
+mantis-types = { workspace = true }
+# NOTE: no mantis-fixed dependency. This is intentional.
+# FixedI64 must not appear in hot event payloads.
+
+[lints]
+workspace = true
