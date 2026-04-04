@@ -71,7 +71,7 @@ jobs:
       - name: Test with ASM feature
         run: cargo +nightly test --features asm
       - name: Test without ASM (portable fallback)
-        run: cargo +nightly test --no-default-features -p mantis-queue -p mantis-core -p mantis-types
+        run: cargo +nightly test --no-default-features -p mantis-queue -p mantis-core -p mantis-types -p mantis-seqlock
 
   test-no-std:
     name: Test no_std (${{ matrix.os }})
@@ -85,7 +85,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f # nightly
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: cargo +nightly test -p mantis-core -p mantis-types -p mantis-queue --no-default-features
+      - run: cargo +nightly test -p mantis-core -p mantis-types -p mantis-queue -p mantis-seqlock --no-default-features
 
   doc:
     name: Documentation
@@ -124,6 +124,9 @@ jobs:
           components: miri
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: cargo +nightly miri test -p mantis-queue --all-features
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check
+      - run: cargo +nightly miri test -p mantis-seqlock --lib
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check
 

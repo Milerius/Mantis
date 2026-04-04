@@ -50,6 +50,7 @@ mantis-verify = { path = "crates/verify", version = "0.1.0" }
 mantis-platform = { path = "crates/platform", version = "0.1.0" }
 mantis-fixed = { path = "crates/fixed", version = "0.1.0" }
 mantis-events = { path = "crates/events", version = "0.1.0" }
+mantis-seqlock = { path = "crates/seqlock", version = "0.1.0" }
 mantis-transport = { path = "crates/transport", version = "0.1.0" }
 mantis-registry = { path = "crates/registry", version = "0.1.0" }
 cfg-if = "1"

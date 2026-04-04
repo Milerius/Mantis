@@ -131,6 +131,18 @@
 - [x] Prerequisites: `InstrumentId(u32)`, `SourceId(u16)` in `mantis-types`, `SeqNum` hygiene fix
 - [x] 57 tests, Miri validation (57/57 pass, zero UB), no_std clean
 
+### 1.10 Sequence Lock (`mantis-seqlock`)
+**Status: Complete**
+
+- [x] Core SeqLock<T, C> with CopyPolicy strategy pattern
+- [x] Lock-free store (single-writer via &mut self)
+- [x] Lock-free load (multiple readers via &self, retry on contention)
+- [x] Cache-line padded sequence counter (128B alignment)
+- [x] Hardware fences for ARM64 portability
+- [x] Multi-threaded torn-read detection test (4 readers × 500K writes)
+- [x] Layout assertions
+- [x] Type aliases: SeqLockDefault, SeqLockSimd (nightly)
+
 ### 1.4 Snapshot Publication
 - [ ] Single-writer publication primitive
 - [ ] Lock-free reader access
@@ -200,6 +212,7 @@
 | `mantis-events` | Active | yes | 57 | — | miri pass |
 | `mantis-queue` | Active | yes | 31 | — | miri pass |
 | `mantis-platform` | Active | yes | 164 | — | miri pass |
+| `mantis-seqlock` | Active | yes | 1 | — | miri pass |
 | `mantis-bench` | Active | std | 11 | 6+7 bench groups, 6 contenders | — |
 | `mantis-layout` | Active | std | 5 | — | — |
 | `mantis-verify` | Active | std | 10 | — | 4 kani proofs, 10 bolero/diff |

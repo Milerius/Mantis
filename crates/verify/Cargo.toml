@@ -12,6 +12,7 @@ mantis-core = { workspace = true }
 mantis-types = { workspace = true }
 mantis-queue = { workspace = true, features = ["alloc"] }
 mantis-fixed = { workspace = true }
+mantis-seqlock = { workspace = true }
 bolero = { workspace = true }
 
 [lints]

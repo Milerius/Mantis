@@ -12,6 +12,7 @@ mantis-core = { workspace = true }
 mantis-types = { workspace = true }
 mantis-queue = { workspace = true }
 mantis-events = { workspace = true }
+mantis-seqlock = { workspace = true }
 
 [lints]
 workspace = true

@@ -73,6 +73,7 @@
 | [`mantis-types`](crates/types/) | Domain types: `Ticks`, `Lots`, `Side`, `Timestamp`, `InstrumentMeta` | yes |
 | [`mantis-events`](crates/events/) | Hot event language: 64B `HotEvent` envelope for SPSC transport | yes |
 | [`mantis-queue`](crates/queue/) | Lock-free SPSC ring buffer with modular strategies | yes |
+| [`mantis-seqlock`](crates/seqlock/) | Lock-free sequence lock primitive | yes |
 | [`mantis-core`](crates/core/) | Strategy traits (`IndexStrategy`, `PushPolicy`, `Instrumentation`) | yes |
 | [`mantis-bench`](crates/bench/) | Criterion benchmarks + platform cycle counters + JSON reports | no |
 | [`mantis-layout`](crates/layout/) | Struct layout and cache-line inspector | no |

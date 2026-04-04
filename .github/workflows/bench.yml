@@ -43,6 +43,12 @@ jobs:
         run: cargo +nightly bench --bench spsc --all-features
         env:
           RUSTFLAGS: "-C target-cpu=native"
+      - name: Clear Criterion cache before seqlock bench
+        run: rm -rf target/criterion
+      - name: Run seqlock benchmarks
+        run: cargo +nightly bench --bench seqlock
+        env:
+          RUSTFLAGS: "-C target-cpu=native"
       - name: Clear Criterion cache before fixed-point bench
         run: rm -rf target/criterion
       - name: Run fixed-point benchmarks
@@ -53,6 +59,12 @@ jobs:
         run: |
           jq '[.results[] | {name: .workload, unit: "ns/op", value: .ns_per_op}]' \
             target/bench-report-spsc.json > bench-output-spsc.json
+      - name: Convert seqlock Criterion results to JSON report
+        run: bash .github/scripts/criterion-to-json.sh seqlock
+      - name: Convert seqlock report for CI tracking
+        run: |
+          jq '[.results[] | {name: ("seqlock/" + .workload), unit: "ns/op", value: .ns_per_op}]' \
+            target/bench-report-seqlock.json > bench-output-seqlock.json
       - name: Convert fixed-point Criterion results to JSON report
         run: bash .github/scripts/criterion-to-json.sh fixed
       - name: Convert fixed-point report for CI tracking
@@ -61,7 +73,7 @@ jobs:
             target/bench-report-fixed.json > bench-output-fixed.json
       - name: Merge benchmark outputs
         run: |
-          jq -s 'add' bench-output-spsc.json bench-output-fixed.json > bench-output.json
+          jq -s 'add' bench-output-spsc.json bench-output-seqlock.json bench-output-fixed.json > bench-output.json
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@a7bc2366eda11037936ea57d811a43b3418d3073 # v1.21.0
         with:
@@ -80,6 +92,7 @@ jobs:
           name: benchmark-results-${{ matrix.os }}
           path: |
             target/bench-report-spsc.json
+            target/bench-report-seqlock.json
             target/bench-report-fixed.json
             bench-output.json
 
@@ -111,9 +124,11 @@ jobs:
         run: |
           linux_spsc="results/linux/target/bench-report-spsc.json"
           macos_spsc="results/macos/target/bench-report-spsc.json"
+          linux_seqlock="results/linux/target/bench-report-seqlock.json"
+          macos_seqlock="results/macos/target/bench-report-seqlock.json"
           linux_fixed="results/linux/target/bench-report-fixed.json"
           macos_fixed="results/macos/target/bench-report-fixed.json"
-          bash .github/scripts/bench-report.sh "$linux_spsc" "$macos_spsc" "$linux_fixed" "$macos_fixed" > report.md
+          bash .github/scripts/bench-report.sh "$linux_spsc" "$macos_spsc" "$linux_seqlock" "$macos_seqlock" "$linux_fixed" "$macos_fixed" > report.md
       - name: Post PR comment
         uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2.9.1
         with:
