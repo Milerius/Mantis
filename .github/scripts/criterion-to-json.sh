@@ -19,7 +19,23 @@ fi
 # Collect all estimates into a JSON array
 results="[]"
 
-for est in "$criterion_dir"/*/new/estimates.json "$criterion_dir"/*/*/new/estimates.json; do
+# Search for estimates matching the bench name prefix (e.g. "seqlock_*" for seqlock bench,
+# "checked_*" for fixed bench). If no prefix match is found, fall back to all estimates.
+# This prevents cross-contamination between bench runs that share target/criterion/.
+shopt -s nullglob
+matched_ests=()
+for est in "$criterion_dir"/${bench_name}*/new/estimates.json "$criterion_dir"/${bench_name}*/*/*/new/estimates.json; do
+  matched_ests+=("$est")
+done
+# Fallback: if no prefix-matched results, read everything (backwards compatibility)
+if [ ${#matched_ests[@]} -eq 0 ]; then
+  for est in "$criterion_dir"/*/new/estimates.json "$criterion_dir"/*/*/new/estimates.json; do
+    matched_ests+=("$est")
+  done
+fi
+shopt -u nullglob
+
+for est in "${matched_ests[@]}"; do
   [ -f "$est" ] || continue
 
   # Extract group/bench name from path:
