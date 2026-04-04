@@ -151,22 +151,45 @@ fn bench_read_contended(c: &mut Criterion) {
 #[cfg(feature = "bench-seqlock-contenders")]
 fn bench_contender_amanieu(c: &mut Criterion) {
     use ::seqlock::SeqLock as AmanieuSeqLock;
+
     let mut group = c.benchmark_group("seqlock/contender/amanieu");
 
-    group.bench_function("read_u64", |b| {
-        let lock = AmanieuSeqLock::new(42u64);
-        b.iter(|| {
-            std::hint::black_box(lock.read());
-        });
-    });
-
+    // u64
     group.bench_function("write_u64", |b| {
         let lock = AmanieuSeqLock::new(0u64);
         let mut i = 0u64;
         b.iter(|| {
             i = i.wrapping_add(1);
-            *lock.lock_write() = std::hint::black_box(i);
+            *lock.lock_write() = black_box(i);
         });
+    });
+    group.bench_function("read_u64", |b| {
+        let lock = AmanieuSeqLock::new(42u64);
+        b.iter(|| black_box(lock.read()));
+    });
+
+    // msg64
+    group.bench_function("write_msg64", |b| {
+        let lock = AmanieuSeqLock::new(Msg64([0; 64]));
+        b.iter(|| {
+            *lock.lock_write() = black_box(Msg64([0xAB; 64]));
+        });
+    });
+    group.bench_function("read_msg64", |b| {
+        let lock = AmanieuSeqLock::new(Msg64([0xAB; 64]));
+        b.iter(|| black_box(lock.read()));
+    });
+
+    // msg128
+    group.bench_function("write_msg128", |b| {
+        let lock = AmanieuSeqLock::new(Msg128([0; 128]));
+        b.iter(|| {
+            *lock.lock_write() = black_box(Msg128([0xCD; 128]));
+        });
+    });
+    group.bench_function("read_msg128", |b| {
+        let lock = AmanieuSeqLock::new(Msg128([0xCD; 128]));
+        b.iter(|| black_box(lock.read()));
     });
 
     group.finish();
@@ -175,23 +198,44 @@ fn bench_contender_amanieu(c: &mut Criterion) {
 #[cfg(feature = "bench-seqlock-contenders-cpp")]
 fn bench_contender_rigtorp(c: &mut Criterion) {
     use mantis_bench::seqlock_ffi::{
-        BenchMsg64, rigtorp_seqlock_read_64, rigtorp_seqlock_write_64,
+        BenchMsg64, BenchMsg128,
+        rigtorp_seqlock_write_u64, rigtorp_seqlock_read_u64,
+        rigtorp_seqlock_write_64, rigtorp_seqlock_read_64,
+        rigtorp_seqlock_write_128, rigtorp_seqlock_read_128,
     };
 
     let mut group = c.benchmark_group("seqlock/contender/rigtorp");
 
-    group.bench_function("write_msg64", |b| {
-        let val = BenchMsg64 { data: [0xAB; 64] };
+    // u64
+    group.bench_function("write_u64", |b| {
+        let mut i = 0u64;
         b.iter(|| {
-            unsafe { rigtorp_seqlock_write_64(std::hint::black_box(core::ptr::addr_of!(val))) };
+            i = i.wrapping_add(1);
+            unsafe { rigtorp_seqlock_write_u64(black_box(i)) };
         });
     });
+    group.bench_function("read_u64", |b| {
+        b.iter(|| black_box(unsafe { rigtorp_seqlock_read_u64() }));
+    });
 
+    // msg64
+    group.bench_function("write_msg64", |b| {
+        let val = BenchMsg64 { data: [0xAB; 64] };
+        b.iter(|| unsafe { rigtorp_seqlock_write_64(black_box(core::ptr::addr_of!(val))) });
+    });
     group.bench_function("read_msg64", |b| {
         let mut out = BenchMsg64 { data: [0; 64] };
-        b.iter(|| unsafe {
-            rigtorp_seqlock_read_64(std::hint::black_box(core::ptr::addr_of_mut!(out)));
-        });
+        b.iter(|| unsafe { rigtorp_seqlock_read_64(black_box(core::ptr::addr_of_mut!(out))) });
+    });
+
+    // msg128
+    group.bench_function("write_msg128", |b| {
+        let val = BenchMsg128 { data: [0xCD; 128] };
+        b.iter(|| unsafe { rigtorp_seqlock_write_128(black_box(core::ptr::addr_of!(val))) });
+    });
+    group.bench_function("read_msg128", |b| {
+        let mut out = BenchMsg128 { data: [0; 128] };
+        b.iter(|| unsafe { rigtorp_seqlock_read_128(black_box(core::ptr::addr_of_mut!(out))) });
     });
 
     group.finish();
