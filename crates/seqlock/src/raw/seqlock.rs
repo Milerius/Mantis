@@ -24,3 +24,43 @@ pub struct SeqLock<T: Copy, C: CopyPolicy<T> = DefaultCopyPolicy> {
 // T: Send is required because the value crosses thread boundaries.
 unsafe impl<T: Copy + Send, C: CopyPolicy<T>> Sync for SeqLock<T, C> {}
 unsafe impl<T: Copy + Send, C: CopyPolicy<T>> Send for SeqLock<T, C> {}
+
+use core::sync::atomic::Ordering;
+
+impl<T: Copy, C: CopyPolicy<T>> SeqLock<T, C> {
+    /// Create a new seqlock with an initial value.
+    /// Sequence starts at 0 (even = consistent).
+    #[inline]
+    pub fn new(initial: T) -> Self {
+        Self {
+            seq: CachePadded::new(AtomicUsize::new(0)),
+            data: UnsafeCell::new(MaybeUninit::new(initial)),
+            _copy: PhantomData,
+        }
+    }
+
+    /// Read the current sequence number.
+    /// Even = consistent state. Odd = write in progress.
+    /// Useful for "has it changed since last check?" patterns.
+    #[inline]
+    pub fn version(&self) -> usize {
+        self.seq.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_initializes_with_value() {
+        let lock = SeqLock::<u64>::new(42);
+        assert_eq!(lock.version(), 0);
+    }
+
+    #[test]
+    fn new_initializes_with_array() {
+        let lock = SeqLock::<[u64; 4]>::new([1, 2, 3, 4]);
+        assert_eq!(lock.version(), 0);
+    }
+}
