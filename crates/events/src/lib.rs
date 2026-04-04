@@ -15,3 +15,15 @@
 
 #[cfg(feature = "std")]
 extern crate std;
+
+mod control;
+mod execution;
+mod flags;
+mod header;
+mod market;
+
+pub use control::{HeartbeatPayload, TimerKind, TimerPayload};
+pub use execution::{FillPayload, OrderAckPayload, OrderRejectPayload, OrderStatus, RejectReason};
+pub use flags::EventFlags;
+pub use header::EventHeader;
+pub use market::{BookDeltaPayload, TopOfBookPayload, TradePayload, UpdateAction};
