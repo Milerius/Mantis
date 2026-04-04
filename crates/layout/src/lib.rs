@@ -69,7 +69,11 @@ mod tests {
 
         // HotEvent envelope
         assert_eq!(inspect::<HotEvent>("HotEvent").size, 64);
-        assert_eq!(core::mem::offset_of!(HotEvent, header), 0, "header must be at offset 0");
+        assert_eq!(
+            core::mem::offset_of!(HotEvent, header),
+            0,
+            "header must be at offset 0"
+        );
 
         // Header
         assert_eq!(inspect::<EventHeader>("EventHeader").size, 24);
@@ -89,6 +93,10 @@ mod tests {
         assert_eq!(inspect::<HeartbeatPayload>("HeartbeatPayload").size, 4);
 
         // Cache line occupancy
-        assert_eq!(inspect::<HotEvent>("HotEvent").cache_lines, 1, "HotEvent must fit in one 64B cache line");
+        assert_eq!(
+            inspect::<HotEvent>("HotEvent").cache_lines,
+            1,
+            "HotEvent must fit in one 64B cache line"
+        );
     }
 }
