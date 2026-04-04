@@ -113,12 +113,23 @@
 - [x] 2 fuzz targets (parse, display roundtrip)
 - [x] Criterion benchmarks with contender comparison (rust_decimal, fixed crate)
 
-### 1.3 Canonical Event Model
-- [ ] `BookDelta`, `Trade`, `Quote` types
-- [ ] `OrderIntent`, `Fill` types
-- [ ] `OracleUpdate`, funding types
-- [ ] Event enum with discriminant
-- [ ] no_std compatible serialization
+### 1.3 Canonical Event Model (`mantis-events`)
+**Status: Complete** | Completed: 2026-04-04
+
+- [x] `HotEvent` — 64-byte, `Copy`, `repr(C)` envelope with header at offset 0
+- [x] `EventHeader` — 24 bytes: recv_ts, seq, instrument_id, source_id, flags
+- [x] `EventBody` — `repr(C, u16)` discriminated enum with 8 variants
+- [x] `EventKind` — standalone `u16` discriminant with 1:1 exhaustive mapping
+- [x] `EventFlags` — `u16` bitflags (IS_SNAPSHOT, LAST_IN_BATCH)
+- [x] Market payloads: `BookDeltaPayload` (24B), `TradePayload` (24B), `TopOfBookPayload` (32B)
+- [x] Execution payloads: `OrderAckPayload` (24B), `FillPayload` (32B), `OrderRejectPayload` (24B)
+- [x] Control payloads: `TimerPayload` (8B), `HeartbeatPayload` (4B)
+- [x] Supporting enums: `UpdateAction`, `OrderStatus`, `RejectReason`, `TimerKind` (all `repr(u8)`)
+- [x] Constructor helpers on `HotEvent` (const fn, `#[must_use]`)
+- [x] Const size assertions + authoritative layout tests in `mantis-layout`
+- [x] Dependency firewall: depends on `mantis-types` only, NOT `mantis-fixed`
+- [x] Prerequisites: `InstrumentId(u32)`, `SourceId(u16)` in `mantis-types`, `SeqNum` hygiene fix
+- [x] 57 tests, Miri validation (57/57 pass, zero UB), no_std clean
 
 ### 1.4 Snapshot Publication
 - [ ] Single-writer publication primitive
@@ -184,10 +195,11 @@
 | Crate | Status | no_std | Tests | Benchmarks | Verification |
 |---|---|---|---|---|---|
 | `mantis-core` | Active | yes | 1 | — | — |
-| `mantis-types` | Active | yes | 65 | — | — |
+| `mantis-types` | Active | yes | 76 | — | — |
 | `mantis-fixed` | Active | yes | 110 | 7 groups + 2 contenders | miri pass, 7 bolero props, 2 fuzz |
+| `mantis-events` | Active | yes | 57 | — | miri pass |
 | `mantis-queue` | Active | yes | 31 | — | miri pass |
 | `mantis-platform` | Active | yes | 164 | — | miri pass |
 | `mantis-bench` | Active | std | 11 | 6+7 bench groups, 6 contenders | — |
-| `mantis-layout` | Scaffold | std | 2 | — | — |
+| `mantis-layout` | Active | std | 5 | — | — |
 | `mantis-verify` | Active | std | 10 | — | 4 kani proofs, 10 bolero/diff |
