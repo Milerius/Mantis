@@ -43,6 +43,8 @@ jobs:
         run: cargo +nightly bench --bench spsc --all-features
         env:
           RUSTFLAGS: "-C target-cpu=native"
+      - name: Clear Criterion cache before fixed-point bench
+        run: rm -rf target/criterion
       - name: Run fixed-point benchmarks
         run: cargo +nightly bench --bench fixed
         env:

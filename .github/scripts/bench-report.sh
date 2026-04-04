@@ -229,14 +229,27 @@ render_fixed_platform() {
 
   echo "**CPU:** \`${cpu}\` | **Arch:** \`${arch}\` | **Compiler:** \`${compiler}\`"
   echo ""
-  echo "| Benchmark | ns/op |"
-  echo "|:----------|------:|"
 
-  jq -r '.results | sort_by(.workload) | .[] |
-    "| `" + .workload + "` | " + (.ns_per_op | tostring) + " |"
-  ' "$json"
+  # Group by benchmark category (first path component)
+  local groups
+  groups=$(jq -r '[.results[].workload | split("/")[0]] | unique | .[]' "$json")
 
-  echo ""
+  for group in $groups; do
+    echo "#### ${group}"
+    echo ""
+    echo "| Variant | ns/op |"
+    echo "|:--------|------:|"
+
+    jq -r --arg g "$group" '
+      .results
+      | map(select(.workload | startswith($g + "/")))
+      | sort_by(.ns_per_op)
+      | .[]
+      | "| `" + (.workload | split("/")[1:] | join("/")) + "` | " + (.ns_per_op | tostring) + " |"
+    ' "$json"
+
+    echo ""
+  done
 }
 
 commit_sha="${GITHUB_SHA:-$(git rev-parse --short HEAD)}"
@@ -264,7 +277,7 @@ echo "</details>"
 # Fixed-point benchmarks (optional)
 if [ -n "$linux_fixed" ] || [ -n "$macos_fixed" ]; then
   echo ""
-  echo "### Fixed-Point Arithmetic (`mantis-fixed`)"
+  echo "### Fixed-Point Arithmetic (mantis-fixed)"
   echo ""
 
   if [ -n "$linux_fixed" ]; then
