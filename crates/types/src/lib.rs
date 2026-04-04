@@ -69,9 +69,39 @@ impl fmt::Display for QueueError {
     }
 }
 
-/// Sequence number for tracking event ordering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SeqNum(pub u64);
+/// Per-queue monotonic sequence number. Not globally unique across queues.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct SeqNum(u64);
+
+impl SeqNum {
+    /// Zero sequence number (start of a sequence).
+    pub const ZERO: Self = Self(0);
+
+    /// Construct from a raw `u64` value.
+    #[must_use]
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    /// Extract the raw `u64` value.
+    #[must_use]
+    pub const fn to_raw(self) -> u64 {
+        self.0
+    }
+}
+
+impl fmt::Debug for SeqNum {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SeqNum({})", self.0)
+    }
+}
+
+impl fmt::Display for SeqNum {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// Index into a ring buffer slot array.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -106,9 +136,23 @@ mod tests {
     }
 
     #[test]
+    fn seq_num_construction() {
+        let s = SeqNum::from_raw(7);
+        assert_eq!(s.to_raw(), 7);
+        assert_eq!(SeqNum::ZERO.to_raw(), 0);
+    }
+
+    #[test]
     fn seq_num_ordering() {
-        assert!(SeqNum(1) < SeqNum(2));
-        assert_eq!(SeqNum(42), SeqNum(42));
+        assert!(SeqNum::from_raw(1) < SeqNum::from_raw(2));
+        assert_eq!(SeqNum::from_raw(42), SeqNum::from_raw(42));
+    }
+
+    #[test]
+    fn seq_num_display_and_debug() {
+        let s = SeqNum::from_raw(99);
+        assert_eq!(s.to_string(), "99");
+        assert_eq!(alloc::format!("{s:?}"), "SeqNum(99)");
     }
 
     #[test]
