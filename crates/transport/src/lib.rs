@@ -20,10 +20,12 @@
 
 #![deny(unsafe_code)]
 
+pub mod binance;
 mod feed;
+pub mod polymarket;
 mod tuning;
 mod ws;
 
 pub use feed::{BackoffConfig, FeedConfig, FeedHandle, FeedThread};
 pub use tuning::SocketTuning;
-pub use ws::{WsConfig, WsConnection};
+pub use ws::{WsConfig, WsConnection, WsError};

@@ -75,8 +75,13 @@ impl WsConnection {
             "WebSocket connected"
         );
 
-        // Set TCP read timeout
-        if let MaybeTlsStream::Plain(tcp) = ws.get_ref() {
+        // Set TCP read timeout and nodelay on the underlying TCP stream
+        let tcp_result = match ws.get_ref() {
+            MaybeTlsStream::Plain(tcp) => Some(tcp),
+            MaybeTlsStream::Rustls(tls) => Some(tls.get_ref()),
+            _ => None,
+        };
+        if let Some(tcp) = tcp_result {
             tcp.set_read_timeout(config.read_timeout)
                 .map_err(|e| WsError::Connect(format!("set_read_timeout: {e}")))?;
             tcp.set_nodelay(true)
