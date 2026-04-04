@@ -11,8 +11,8 @@ use mantis_types::{InstrumentId, SeqNum, SourceId, Timestamp};
 /// offset  0: recv_ts       (8 bytes) — nanosecond receive timestamp
 /// offset  8: seq           (8 bytes) — per-source sequence number
 /// offset 16: instrument_id (4 bytes) — instrument identifier
-/// offset 18: source_id     (2 bytes) — feed/venue source identifier
-/// offset 20: flags         (2 bytes) — cross-cutting event flags
+/// offset 20: source_id     (2 bytes) — feed/venue source identifier
+/// offset 22: flags         (2 bytes) — cross-cutting event flags
 /// ```
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
