@@ -33,3 +33,4 @@ pub use header::EventHeader;
 pub use market::{BookDeltaPayload, TopOfBookPayload, TradePayload, UpdateAction};
 
 const _: () = assert!(core::mem::size_of::<EventHeader>() == 24);
+const _: () = assert!(core::mem::size_of::<EventBody>() == 40);

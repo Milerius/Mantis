@@ -9,7 +9,7 @@ use mantis_types::{InstrumentId, SeqNum, SourceId, Timestamp};
 ///
 /// ```text
 /// offset  0: recv_ts       (8 bytes) — nanosecond receive timestamp
-/// offset  8: seq           (8 bytes) — per-source sequence number
+/// offset  8: seq           (8 bytes) — per-queue monotonic sequence number
 /// offset 16: instrument_id (4 bytes) — instrument identifier
 /// offset 20: source_id     (2 bytes) — feed/venue source identifier
 /// offset 22: flags         (2 bytes) — cross-cutting event flags
@@ -19,7 +19,9 @@ use mantis_types::{InstrumentId, SeqNum, SourceId, Timestamp};
 pub struct EventHeader {
     /// Nanosecond wall-clock timestamp at which the event was received.
     pub recv_ts: Timestamp,
-    /// Monotonically increasing sequence number assigned by the source.
+    /// Per-queue monotonic sequence number. Not globally unique across queues.
+    /// Suitable for intra-queue ordering only. Cross-queue merge ordering
+    /// uses `recv_ts` with `seq` as tiebreaker.
     pub seq: SeqNum,
     /// Identifies the financial instrument this event relates to.
     pub instrument_id: InstrumentId,

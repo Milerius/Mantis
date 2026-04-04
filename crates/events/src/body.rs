@@ -61,7 +61,8 @@ impl EventBody {
 /// Standalone discriminant for [`EventBody`].
 ///
 /// Must stay in strict 1:1 correspondence with `EventBody` variants.
-/// The numeric values are stable across releases — do not reorder or remove.
+/// Numeric values are assigned for testing and diagnostics but are not a
+/// long-term ABI commitment. Stability is verified by layout tests, not assumed.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
 pub enum EventKind {

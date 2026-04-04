@@ -75,8 +75,9 @@ mod tests {
             "header must be at offset 0"
         );
 
-        // Header
+        // Header + Body (envelope contract)
         assert_eq!(inspect::<EventHeader>("EventHeader").size, 24);
+        assert_eq!(inspect::<EventBody>("EventBody").size, 40);
 
         // Market payloads
         assert_eq!(inspect::<BookDeltaPayload>("BookDeltaPayload").size, 24);
