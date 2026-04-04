@@ -214,12 +214,13 @@ render_platform() {
   echo "</details>"
 }
 
-# Render fixed-point benchmark results from Criterion JSON report.
-render_fixed_platform() {
-  local json="$1" label="$2"
+# Render grouped benchmark results from Criterion JSON report.
+# Args: $1=json_file $2=label $3=suite_name (e.g. "fixed-point", "seqlock")
+render_grouped_platform() {
+  local json="$1" label="$2" suite="${3:-benchmark}"
 
   if [ ! -f "$json" ]; then
-    echo "*${label} fixed-point benchmark results not available.*"
+    echo "*${label} ${suite} benchmark results not available.*"
     echo ""
     return
   fi
@@ -286,7 +287,7 @@ if [ -n "$linux_seqlock" ] || [ -n "$macos_seqlock" ]; then
     echo "<details open>"
     echo "<summary><strong>Linux</strong></summary>"
     echo ""
-    render_fixed_platform "$linux_seqlock" "Linux"
+    render_grouped_platform "$linux_seqlock" "Linux" "seqlock"
     echo "</details>"
     echo ""
   fi
@@ -295,7 +296,7 @@ if [ -n "$linux_seqlock" ] || [ -n "$macos_seqlock" ]; then
     echo "<details open>"
     echo "<summary><strong>macOS</strong></summary>"
     echo ""
-    render_fixed_platform "$macos_seqlock" "macOS"
+    render_grouped_platform "$macos_seqlock" "macOS" "seqlock"
     echo "</details>"
   fi
 fi
@@ -310,7 +311,7 @@ if [ -n "$linux_fixed" ] || [ -n "$macos_fixed" ]; then
     echo "<details open>"
     echo "<summary><strong>Linux</strong></summary>"
     echo ""
-    render_fixed_platform "$linux_fixed" "Linux"
+    render_grouped_platform "$linux_fixed" "Linux" "fixed-point"
     echo "</details>"
     echo ""
   fi
@@ -319,7 +320,7 @@ if [ -n "$linux_fixed" ] || [ -n "$macos_fixed" ]; then
     echo "<details open>"
     echo "<summary><strong>macOS</strong></summary>"
     echo ""
-    render_fixed_platform "$macos_fixed" "macOS"
+    render_grouped_platform "$macos_fixed" "macOS" "fixed-point"
     echo "</details>"
   fi
 fi

@@ -126,6 +126,9 @@ jobs:
       - run: cargo +nightly miri test -p mantis-queue --all-features
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check
+      - run: cargo +nightly miri test -p mantis-seqlock --lib
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check
 
   careful:
     name: Cargo Careful

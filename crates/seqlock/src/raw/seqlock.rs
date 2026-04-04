@@ -164,8 +164,15 @@ impl<T: Copy, C: CopyPolicy<T>> SeqLock<T, C> {
             // SAFETY: We copy through UnsafeCell into a local MaybeUninit.
             // The data may be torn if a writer is concurrent — that's OK,
             // we check the sequence after and discard torn reads.
-            // CopyPolicy::copy_out is used instead of read_volatile to enable
-            // SIMD-accelerated wide loads (128-bit NEON/SSE2).
+            //
+            // assume_init() is called before seq validation. This is safe because
+            // T: Copy guarantees no validity invariants — any bit pattern is valid.
+            // Users MUST NOT use SeqLock with types that have validity constraints
+            // (bool, char, NonZero*, enums with gaps). The T: Copy bound prevents
+            // most problematic types, but exotic Copy+validity types should be
+            // wrapped in a repr(C) struct of plain integers.
+            //
+            // CopyPolicy::copy_out enables SIMD-accelerated wide loads (NEON/SSE2).
             let val = unsafe {
                 let mut dst = MaybeUninit::<T>::uninit();
                 C::copy_out(dst.as_mut_ptr(), self.data.get().cast::<T>());
