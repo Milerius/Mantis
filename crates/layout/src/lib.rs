@@ -64,6 +64,16 @@ mod tests {
     }
 
     #[test]
+    fn seqlock_layout_assertions() {
+        use mantis_seqlock::SeqLock;
+
+        // Sequence counter is cache-line padded (128 bytes alignment)
+        assert!(core::mem::align_of::<SeqLock<u64>>() >= 128);
+        // SeqLock<u64> = 128 (padded seq) + 8 (data) + padding
+        assert!(core::mem::size_of::<SeqLock<u64>>() >= 136);
+    }
+
+    #[test]
     fn event_layout_assertions() {
         use mantis_events::*;
 
