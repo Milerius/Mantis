@@ -51,6 +51,7 @@ impl Payload {
 }
 
 #[test]
+#[expect(clippy::expect_used, reason = "test code: panicking on thread join failure is correct")]
 fn no_torn_reads_under_contention() {
     const WRITE_ITERS: u64 = 500_000;
     const NUM_READERS: usize = 4;
@@ -101,7 +102,7 @@ fn no_torn_reads_under_contention() {
 
     let mut total_reads = 0u64;
     for r in readers {
-        total_reads += r.join().unwrap();
+        total_reads += r.join().expect("reader thread panicked");
     }
 
     // Cleanup
@@ -110,9 +111,5 @@ fn no_torn_reads_under_contention() {
         drop(Box::from_raw(running));
     }
 
-    eprintln!("Torn read test: {WRITE_ITERS} writes, {total_reads} reads across {NUM_READERS} readers — zero torn reads");
-    assert!(
-        total_reads > 0,
-        "readers should have completed some reads"
-    );
+    assert!(total_reads > 0, "readers should have completed some reads");
 }
