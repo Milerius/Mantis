@@ -2,7 +2,7 @@
 
 Hot event language for the Mantis low-latency financial SDK.
 
-`no_std` by default. `Copy`. `repr(C)`. 64 bytes per event.
+`no_std` by default. `Copy`. `repr(C)`. Targets 64 bytes per event, verified by layout tests.
 
 ## Architecture
 
