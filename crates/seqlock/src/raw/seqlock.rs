@@ -92,6 +92,12 @@ impl<T: Copy, C: CopyPolicy<T>> SeqLock<T, C> {
     ///
     /// Lock-free, wait-free. Never blocks. O(1).
     ///
+    /// # Optimizations
+    ///
+    /// - **Write-prefetch**: brings data cache line into Modified state before
+    ///   the write, avoiding the RFO (Read For Ownership) stall.
+    /// - **SIMD copy**: uses `CopyPolicy::copy_in` for wide stores on larger types.
+    ///
     /// # Ordering
     ///
     /// Two `Release` stores on the sequence counter bracket the data write:
@@ -99,16 +105,22 @@ impl<T: Copy, C: CopyPolicy<T>> SeqLock<T, C> {
     /// - Second store (even) makes the completed data visible to readers
     #[inline]
     pub fn store(&mut self, val: T) {
+        // Write-prefetch: bring data cache line into Modified (exclusive) state.
+        // Eliminates the RFO stall on the actual write.
+        prefetch(
+            self.data.get().cast_const().cast::<u8>(),
+            PrefetchRW::Write,
+            PrefetchLocality::High,
+        );
         let seq = self.seq.load(Ordering::Relaxed);
         // Odd sequence signals "write in progress" to readers.
         // SAFETY: Release ordering ensures this store is visible before
         // the data write that follows.
         self.seq.store(seq.wrapping_add(1), Ordering::Release);
-        // SAFETY: Single-writer guaranteed by &mut self. No concurrent writes.
-        // UnsafeCell allows interior mutation. MaybeUninit accepts any bit pattern.
-        unsafe {
-            core::ptr::write(self.data.get().cast::<T>(), val);
-        }
+        // Single-writer guaranteed by &mut self. No concurrent writes.
+        // UnsafeCell::get() provides raw pointer access for interior mutation.
+        // CopyPolicy::copy_in enables SIMD-accelerated wide stores.
+        C::copy_in(self.data.get().cast::<T>(), core::ptr::addr_of!(val));
         // Even sequence signals "write complete, data consistent".
         // SAFETY: Release ordering ensures the data write above is visible
         // before this sequence update.
