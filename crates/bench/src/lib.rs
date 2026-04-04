@@ -21,5 +21,7 @@ pub mod workloads;
 pub mod drogalis_ffi;
 #[cfg(feature = "bench-contenders-cpp")]
 pub mod rigtorp_ffi;
+#[cfg(feature = "bench-seqlock-contenders-cpp")]
+pub mod seqlock_ffi;
 
 pub use mantis_platform::metering::{CycleCounter, DefaultCounter, InstantCounter, Measurement};

@@ -51,7 +51,10 @@ impl Payload {
 }
 
 #[test]
-#[expect(clippy::expect_used, reason = "test code: panicking on thread join failure is correct")]
+#[expect(
+    clippy::expect_used,
+    reason = "test code: panicking on thread join failure is correct"
+)]
 fn no_torn_reads_under_contention() {
     const WRITE_ITERS: u64 = 500_000;
     const NUM_READERS: usize = 4;

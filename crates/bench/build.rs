@@ -21,4 +21,15 @@ fn main() {
             .file("cpp/drogalis_ffi.cpp")
             .compile("drogalis_ffi");
     }
+
+    #[cfg(feature = "bench-seqlock-contenders-cpp")]
+    {
+        cc::Build::new()
+            .cpp(true)
+            .flag("-std=c++17")
+            .flag("-O3")
+            .file("cpp/seqlock_bench_contender.cpp")
+            .include("cpp")
+            .compile("seqlock_contender");
+    }
 }

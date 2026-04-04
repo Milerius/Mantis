@@ -14,6 +14,8 @@ perf-counters = ["mantis-platform/perf-counters"]
 bench-contenders = ["dep:rtrb", "dep:crossbeam-queue"]
 bench-contenders-cpp = ["dep:cc"]
 bench-fixed-contenders = ["dep:rust_decimal", "dep:fixed"]
+bench-seqlock-contenders = ["dep:seqlock"]
+bench-seqlock-contenders-cpp = ["dep:cc"]
 
 [dependencies]
 mantis-core = { workspace = true }
@@ -29,6 +31,7 @@ rtrb = { version = "0.3", optional = true }
 crossbeam-queue = { version = "0.3", optional = true }
 rust_decimal = { version = "1", optional = true }
 fixed = { version = "1", optional = true }
+seqlock = { version = "0.2", optional = true }
 
 [build-dependencies]
 cc = { version = "1", optional = true }
