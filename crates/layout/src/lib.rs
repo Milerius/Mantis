@@ -62,4 +62,42 @@ mod tests {
         assert_eq!(info.size, 128);
         assert_eq!(info.cache_lines, 2);
     }
+
+    #[test]
+    fn event_layout_assertions() {
+        use mantis_events::*;
+
+        // HotEvent envelope
+        assert_eq!(inspect::<HotEvent>("HotEvent").size, 64);
+        assert_eq!(
+            core::mem::offset_of!(HotEvent, header),
+            0,
+            "header must be at offset 0"
+        );
+
+        // Header + Body (envelope contract)
+        assert_eq!(inspect::<EventHeader>("EventHeader").size, 24);
+        assert_eq!(inspect::<EventBody>("EventBody").size, 40);
+
+        // Market payloads
+        assert_eq!(inspect::<BookDeltaPayload>("BookDeltaPayload").size, 24);
+        assert_eq!(inspect::<TradePayload>("TradePayload").size, 24);
+        assert_eq!(inspect::<TopOfBookPayload>("TopOfBookPayload").size, 32);
+
+        // Execution payloads
+        assert_eq!(inspect::<OrderAckPayload>("OrderAckPayload").size, 24);
+        assert_eq!(inspect::<FillPayload>("FillPayload").size, 32);
+        assert_eq!(inspect::<OrderRejectPayload>("OrderRejectPayload").size, 24);
+
+        // Control payloads
+        assert_eq!(inspect::<TimerPayload>("TimerPayload").size, 8);
+        assert_eq!(inspect::<HeartbeatPayload>("HeartbeatPayload").size, 4);
+
+        // Cache line occupancy
+        assert_eq!(
+            inspect::<HotEvent>("HotEvent").cache_lines,
+            1,
+            "HotEvent must fit in one 64B cache line"
+        );
+    }
 }

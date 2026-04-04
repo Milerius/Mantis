@@ -691,6 +691,13 @@ name = "mantis-core"
 version = "0.1.0"
 
 [[package]]
+name = "mantis-events"
+version = "0.1.0"
+dependencies = [
+ "mantis-types",
+]
+
+[[package]]
 name = "mantis-fixed"
 version = "0.1.0"
 dependencies = [
@@ -702,6 +709,7 @@ name = "mantis-layout"
 version = "0.1.0"
 dependencies = [
  "mantis-core",
+ "mantis-events",
  "mantis-queue",
  "mantis-types",
 ]

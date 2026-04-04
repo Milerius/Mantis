@@ -10,7 +10,7 @@ Core newtypes, domain types, and semantic wrappers for the Mantis SDK.
 
 | Type | Purpose |
 |---|---|
-| `SeqNum(u64)` | Sequence number for event ordering |
+| `SeqNum(u64)` | Per-queue monotonic sequence number |
 | `SlotIndex(usize)` | Index into a ring buffer slot array |
 | `PushError<T>` | Error preserving the value that failed to push |
 | `QueueError` | `Full` / `Empty` error enum |
@@ -23,6 +23,8 @@ Core newtypes, domain types, and semantic wrappers for the Mantis SDK.
 | `Side` | `Bid` / `Ask` enum with `opposite()` |
 | `Timestamp(u64)` | Nanosecond-precision epoch timestamp |
 | `OrderId(u64)` | Order identifier |
+| `InstrumentId(u32)` | Instrument identifier (`NONE = 0` sentinel reserved) |
+| `SourceId(u16)` | Feed/source identifier |
 
 ### Hot-Path Types (integer domain)
 

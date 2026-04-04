@@ -22,27 +22,37 @@
 ```
                         ┌─────────────────────────────┐
                         │         Application          │
+                        │  (bot, engine, venue adapter) │
                         └──────────┬──────────────────┘
-                                   │
+                                   │  wires SpscRingCopy<HotEvent, N>
               ┌────────────────────┼────────────────────┐
               │                    │                     │
      ┌────────▼───────┐  ┌────────▼────────┐  ┌────────▼────────┐
-     │  mantis-queue   │  │  (future crates) │  │  mantis-layout  │
-     │  SPSC ring buf  │  │  order book, AMM │  │  struct layout   │
-     │  lock-free I/O  │  │  event model ... │  │  cache inspector │
+     │  mantis-queue   │  │  mantis-events  │  │  mantis-layout  │
+     │  SPSC ring buf  │  │  HotEvent 64B   │  │  struct layout   │
+     │  lock-free I/O  │  │  event language │  │  cache inspector │
      └───────┬─────────┘  └────────┬────────┘  └─────────────────┘
              │                     │
-     ┌───────▼─────────────────────▼────────┐
-     │            mantis-core               │
-     │   IndexStrategy · PushPolicy         │
-     │   Instrumentation · CountingInstr    │
-     └───────────────┬──────────────────────┘
-                     │
-             ┌───────▼─────────┐
-             │  mantis-types   │
-             │  SeqNum · Slot  │
-             │  PushError etc  │
-             └─────────────────┘
+             │          ┌──────────▼──────────┐
+             │          │    mantis-types      │
+             ├─────────►│  Ticks · Lots · Side │
+             │          │  Timestamp · OrderId │
+             │          │  InstrumentId · etc  │
+             │          └──────────┬───────────┘
+             │                     │
+     ┌───────▼─────────┐  ┌───────▼──────────┐
+     │   mantis-core   │  │   mantis-fixed   │
+     │  IndexStrategy   │  │  FixedI64<D>     │
+     │  PushPolicy      │  │  decimal engine  │
+     │  Instrumentation │  │  (boundary only) │
+     └───────┬─────────┘  └──────────────────┘
+             │
+     ┌───────▼──────────┐
+     │ mantis-platform  │
+     │  CachePadded     │
+     │  cycle counters  │
+     │  CT types, SIMD  │
+     └──────────────────┘
 
      ── Tooling (std-only, not depended on by core crates) ──
 
@@ -58,10 +68,12 @@
 
 | Crate | Purpose | `no_std` |
 |---|---|---|
-| [`mantis-core`](crates/core/) | Strategy traits (`IndexStrategy`, `PushPolicy`, `Instrumentation`) | yes |
-| [`mantis-types`](crates/types/) | Newtypes and error types (`SeqNum`, `PushError`, `QueueError`) | yes |
+| [`mantis-platform`](crates/platform/) | Platform abstractions: cache padding, CT types, cycle counters, SIMD | yes |
+| [`mantis-fixed`](crates/fixed/) | `FixedI64<D>` compile-time fixed-point decimal engine | yes |
+| [`mantis-types`](crates/types/) | Domain types: `Ticks`, `Lots`, `Side`, `Timestamp`, `InstrumentMeta` | yes |
+| [`mantis-events`](crates/events/) | Hot event language: 64B `HotEvent` envelope for SPSC transport | yes |
 | [`mantis-queue`](crates/queue/) | Lock-free SPSC ring buffer with modular strategies | yes |
-| [`mantis-platform`](crates/platform/) | Platform abstractions: CT types, cycle counters, ISA primitives | yes |
+| [`mantis-core`](crates/core/) | Strategy traits (`IndexStrategy`, `PushPolicy`, `Instrumentation`) | yes |
 | [`mantis-bench`](crates/bench/) | Criterion benchmarks + platform cycle counters + JSON reports | no |
 | [`mantis-layout`](crates/layout/) | Struct layout and cache-line inspector | no |
 | [`mantis-verify`](crates/verify/) | Kani proofs, Bolero property tests, differential testing | no |
