@@ -16,14 +16,20 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+mod body;
 mod control;
+mod event;
 mod execution;
 mod flags;
 mod header;
 mod market;
 
+pub use body::{EventBody, EventKind};
 pub use control::{HeartbeatPayload, TimerKind, TimerPayload};
+pub use event::HotEvent;
 pub use execution::{FillPayload, OrderAckPayload, OrderRejectPayload, OrderStatus, RejectReason};
 pub use flags::EventFlags;
 pub use header::EventHeader;
 pub use market::{BookDeltaPayload, TopOfBookPayload, TradePayload, UpdateAction};
+
+const _: () = assert!(core::mem::size_of::<EventHeader>() == 24);
