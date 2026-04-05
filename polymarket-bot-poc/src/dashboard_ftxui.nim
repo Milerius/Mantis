@@ -364,11 +364,11 @@ var resetPos {.threadvar.}: string
 
 proc renderDashboard*(snap: DashboardSnapshot) {.gcsafe.} =
   let doc = buildLayout(snap)
-  var screen = screenCreate(dimensionFull(), dimensionFit(doc))
+  var screen = screenCreate(dimensionFull(), dimensionFull())
   render(screen, doc)
-  stdout.write(resetPos)
+  stdout.write("\e[H")  # cursor home — simpler than resetPosition
   screen.print()
-  resetPos = screen.resetPositionStr()
+  stdout.flushFile()
 
 # Compat API for main.nim
 type
