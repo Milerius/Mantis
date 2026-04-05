@@ -516,7 +516,8 @@ struct FtxuiDashboard {
         }
         auto table = Table(rows);
         table.SelectAll().Border(LIGHT);
-        table.SelectRow(0).Decorate(bold | dim);
+        table.SelectRow(0).Decorate(bold);
+        table.SelectRow(0).Decorate(dim);
         // Color BUY green, SELL red
         for (size_t r = 1; r < rows.size(); r++) {
             auto col = (rows[r][1] == "BUY") ? Color::Green : Color::Red;
