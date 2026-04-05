@@ -93,12 +93,12 @@ proc pmIngestThread(ss: ptr SharedState) {.thread.} =
     while ss.running.load(moRelaxed) and epochTime() < ss.captureEnd.float:
       # Keepalive
       if epochTime() - lastPing > PingIntervalSec:
-        try: await pmWs.send("PING") except: break
+        try: await pmWs.send("PING") except: log("[pm_ingest] PING failed"); break
         lastPing = epochTime()
 
       var raw: string
       try: raw = await pmWs.receiveStrPacket()
-      except WebSocketClosedError: break
+      except WebSocketClosedError: log("[WS] connection closed"); break
       except: continue
       if raw.len == 0 or raw == "PONG": continue
 
@@ -237,7 +237,7 @@ proc bnIngestThread(ss: ptr SharedState) {.thread.} =
           while ss.running.load(moRelaxed) and epochTime() < ss.captureEnd.float:
             var raw: string
             try: raw = await bboWs.receiveStrPacket()
-            except WebSocketClosedError: break
+            except WebSocketClosedError: log("[WS] connection closed"); break
             except: continue
             discard ss.bnBytesTotal.fetchAdd(int64(raw.len), moRelaxed)
             ss.bnLastMsgNs[mktIdx].store(getMonoTime().ticks, moRelaxed)
@@ -266,7 +266,7 @@ proc bnIngestThread(ss: ptr SharedState) {.thread.} =
           while ss.running.load(moRelaxed) and epochTime() < ss.captureEnd.float:
             var raw: string
             try: raw = await tradeWs.receiveStrPacket()
-            except WebSocketClosedError: break
+            except WebSocketClosedError: log("[WS] connection closed"); break
             except: continue
             discard ss.bnBytesTotal.fetchAdd(int64(raw.len), moRelaxed)
             ss.bnLastMsgNs[mktIdx].store(getMonoTime().ticks, moRelaxed)
@@ -296,7 +296,7 @@ proc bnIngestThread(ss: ptr SharedState) {.thread.} =
           while ss.running.load(moRelaxed) and epochTime() < ss.captureEnd.float:
             var raw: string
             try: raw = await depthWs.receiveStrPacket()
-            except WebSocketClosedError: break
+            except WebSocketClosedError: log("[WS] connection closed"); break
             except: continue
             discard ss.bnBytesTotal.fetchAdd(int64(raw.len), moRelaxed)
             ss.bnLastMsgNs[mktIdx].store(getMonoTime().ticks, moRelaxed)
