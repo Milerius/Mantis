@@ -29,7 +29,7 @@ proc tryPush*[T](ring: ptr SpscRing[T], item: T): bool {.inline.} =
   let h = ring.head.load(moRelaxed)
   let next = (h + 1) and RingMask
   if next == ring.tail.load(moAcquire):
-    ring.drops.fetchAdd(1, moRelaxed)
+    discard ring.drops.fetchAdd(1, moRelaxed)
     return false
   ring.buf[h] = item
   ring.head.store(next, moRelease)
@@ -73,7 +73,7 @@ proc tryPush*[T](ring: ptr SmallSpscRing[T], item: T): bool {.inline.} =
   let h = ring.head.load(moRelaxed)
   let next = (h + 1) and DashRingMask
   if next == ring.tail.load(moAcquire):
-    ring.drops.fetchAdd(1, moRelaxed)
+    discard ring.drops.fetchAdd(1, moRelaxed)
     return false
   ring.buf[h] = item
   ring.head.store(next, moRelease)
