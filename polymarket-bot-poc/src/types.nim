@@ -169,6 +169,15 @@ type
     size*: float64
     side*: uint8
 
+  DepthLevel* = object
+    price*: float64
+    size*: float64
+
+  DepthLadder* = object
+    bids*: array[20, DepthLevel]
+    asks*: array[20, DepthLevel]
+    bidCount*, askCount*: int32
+
   DashboardSnapshot* = object
     epochMs*: int64
     elapsed*: float64
@@ -209,6 +218,13 @@ type
     trades*: array[MaxTrades, TradeTick]
     tradeWriteIdx*: int32
     reserved*: array[128, byte]
+    # FTXUI depth ladder data
+    upDepth*: DepthLadder
+    downDepth*: DepthLadder
+    # Probability history
+    probHistory*: array[120, float32]
+    probHistoryIdx*: int32
+    probHistoryCount*: int32
 
   CaptureSummary* = object
     tapeEvents*: int

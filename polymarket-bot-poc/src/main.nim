@@ -14,7 +14,11 @@ import std/[asyncdispatch, atomics, httpclient, json, monotimes, net,
             os, algorithm, sequtils, strformat, strutils, sugar, tables, times,
             parseopt]
 import ws
-import types, spsc, engine_book, stats, system_metrics, dashboard, tape_format
+import types, spsc, engine_book, stats, system_metrics, tape_format
+when defined(ftxui):
+  import dashboard_ftxui
+else:
+  import dashboard
 import constantine/threadpool/crossthread/backoff  # Eventcount
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -949,15 +953,19 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
 
 proc dashboardThread(ss: ptr SharedState) {.thread.} =
   let dashQ = cast[ptr SmallSpscRing[DashboardSnapshot]](ss.dashQ)
-  enableRawMode()
-  defer: disableRawMode()
-  hideCursor()
-  defer: showCursor()
-  clearScreen()
 
+  when defined(ftxui):
+    initFtxuiDashboard()
+    defer: destroyFtxuiDashboard()
+  else:
+    enableRawMode()
+    defer: disableRawMode()
+    hideCursor()
+    defer: showCursor()
+    clearScreen()
+
+  var snap: DashboardSnapshot
   while ss.running.load(moRelaxed):
-    # Drain to latest snapshot
-    var snap: DashboardSnapshot
     var got = false
     while dashQ.tryPop(snap): got = true
     if not got:
@@ -965,11 +973,14 @@ proc dashboardThread(ss: ptr SharedState) {.thread.} =
       sleep(10)
       continue
 
-    cursorHome()
-    renderDashboard(snap)
-    flushStdout()
+    when defined(ftxui):
+      let key = renderDashboardFtxui(snap)
+    else:
+      cursorHome()
+      renderDashboard(snap)
+      flushStdout()
+      let key = readKeyNonBlocking()
 
-    let key = readKeyNonBlocking()
     case key
     of 'q', 'Q':
       ss.running.store(false, moRelaxed)
