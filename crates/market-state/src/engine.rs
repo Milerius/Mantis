@@ -1,7 +1,7 @@
 //! Market-state engine — passive deterministic state machine.
 
 use mantis_events::{EventBody, EventFlags, HotEvent, UpdateAction};
-use mantis_types::{InstrumentId, Side, Ticks};
+use mantis_types::{InstrumentId, Side, Ticks, Timestamp};
 
 use crate::book::OrderBook;
 use crate::state::{InstrumentState, TopOfBook, TradeInfo};
@@ -13,7 +13,6 @@ use crate::state::{InstrumentState, TopOfBook, TradeInfo};
 pub struct MarketStateEngine<B: OrderBook, const MAX: usize> {
     pub(crate) instruments: [InstrumentState<B>; MAX],
     pub(crate) active_count: usize,
-    #[expect(dead_code, reason = "used by is_stale() in Task 5")]
     pub(crate) stale_timeout_ns: u64,
     pub(crate) tob_changed: bool,
     pub(crate) last_tob: Option<TopOfBook>,
@@ -138,6 +137,109 @@ impl<B: OrderBook, const MAX: usize> MarketStateEngine<B, MAX> {
         }
     }
 
+    /// Micro price — volume-weighted fair value between best bid and ask.
+    ///
+    /// Returns `None` if the instrument ID is invalid or either side is empty.
+    pub fn micro_price(&self, inst: InstrumentId) -> Option<Ticks> {
+        let slot = inst.to_raw() as usize;
+        if slot == 0 || slot > self.active_count {
+            return None;
+        }
+        let state = &self.instruments[slot - 1];
+        let (bp, bq) = state.book.best_bid()?;
+        let (ap, aq) = state.book.best_ask()?;
+        let total = bq.to_raw() + aq.to_raw();
+        if total == 0 {
+            return None;
+        }
+        Some(Ticks::from_raw(
+            (bp.to_raw() * aq.to_raw() + ap.to_raw() * bq.to_raw()) / total,
+        ))
+    }
+
+    /// Book imbalance at top `levels` levels.
+    ///
+    /// Returns a value in `[-1.0, +1.0]`: positive = bid-heavy, negative = ask-heavy.
+    /// Returns `None` if the instrument ID is invalid or both sides are empty.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "quantity values fit comfortably in f64 mantissa at market scales"
+    )]
+    pub fn book_imbalance(&self, inst: InstrumentId, levels: usize) -> Option<f64> {
+        let slot = inst.to_raw() as usize;
+        if slot == 0 || slot > self.active_count {
+            return None;
+        }
+        let state = &self.instruments[slot - 1];
+        let bd = state.book.total_depth(Side::Bid, levels).to_raw() as f64;
+        let ad = state.book.total_depth(Side::Ask, levels).to_raw() as f64;
+        if bd + ad == 0.0 {
+            return None;
+        }
+        Some((bd - ad) / (bd + ad))
+    }
+
+    /// Spread in ticks: `ask_price - bid_price`.
+    ///
+    /// Returns `None` if the instrument ID is invalid or either side is empty.
+    pub fn spread(&self, inst: InstrumentId) -> Option<Ticks> {
+        let slot = inst.to_raw() as usize;
+        if slot == 0 || slot > self.active_count {
+            return None;
+        }
+        let state = &self.instruments[slot - 1];
+        let (bp, _) = state.book.best_bid()?;
+        let (ap, _) = state.book.best_ask()?;
+        Some(Ticks::from_raw(ap.to_raw() - bp.to_raw()))
+    }
+
+    /// Last trade info for an instrument, or `None` if no trade seen yet.
+    pub fn last_trade(&self, inst: InstrumentId) -> Option<&TradeInfo> {
+        let slot = inst.to_raw() as usize;
+        if slot == 0 || slot > self.active_count {
+            return None;
+        }
+        self.instruments[slot - 1].last_trade.as_ref()
+    }
+
+    /// Returns `true` if no event has been received within `stale_timeout_ns` nanoseconds.
+    ///
+    /// An instrument with no events at all (`last_event_ts == 0`) is always considered stale.
+    /// An invalid instrument ID is also considered stale.
+    pub fn is_stale(&self, inst: InstrumentId, now: Timestamp) -> bool {
+        let slot = inst.to_raw() as usize;
+        if slot == 0 || slot > self.active_count {
+            return true;
+        }
+        let last = self.instruments[slot - 1].last_event_ts.as_nanos();
+        if last == 0 {
+            return true;
+        }
+        now.as_nanos() - last > self.stale_timeout_ns
+    }
+
+    /// Returns `true` if the initial snapshot has been received for this instrument.
+    ///
+    /// Returns `false` for invalid instrument IDs.
+    pub fn is_ready(&self, inst: InstrumentId) -> bool {
+        let slot = inst.to_raw() as usize;
+        if slot == 0 || slot > self.active_count {
+            return false;
+        }
+        self.instruments[slot - 1].snapshot_received
+    }
+
+    /// Direct read-only access to the underlying order book.
+    ///
+    /// Returns `None` if the instrument ID is invalid.
+    pub fn book(&self, inst: InstrumentId) -> Option<&B> {
+        let slot = inst.to_raw() as usize;
+        if slot == 0 || slot > self.active_count {
+            return None;
+        }
+        Some(&self.instruments[slot - 1].book)
+    }
+
     /// Take the last `TopOfBook` if a BBO price change was detected.
     ///
     /// Clears the flag so subsequent calls return `None` until the next change.
@@ -250,5 +352,46 @@ mod tests {
             .expect("expected TopOfBook after snapshot");
         assert_eq!(tob.bid_price, Ticks::from_raw(45));
         assert_eq!(tob.ask_price, Ticks::from_raw(55));
+    }
+
+    #[test]
+    #[expect(clippy::expect_used, reason = "test assertion")]
+    fn micro_price_between_bid_ask() {
+        let mut engine = MarketStateEngine::<ArrayBook<100>, 2>::new(2, 1_000_000_000);
+        let snap1 = make_delta(1, 45, 100, Side::Bid, EventFlags::IS_SNAPSHOT);
+        let snap2 = make_delta(1, 55, 200, Side::Ask, EventFlags::LAST_IN_BATCH);
+        engine.process(&snap1);
+        engine.process(&snap2);
+        let mp = engine
+            .micro_price(InstrumentId::from_raw(1))
+            .expect("expected micro_price");
+        assert!(mp.to_raw() >= 45 && mp.to_raw() <= 55);
+    }
+
+    #[test]
+    #[expect(clippy::expect_used, reason = "test assertion")]
+    fn book_imbalance_range() {
+        let mut engine = MarketStateEngine::<ArrayBook<100>, 2>::new(2, 1_000_000_000);
+        let snap1 = make_delta(1, 45, 1000, Side::Bid, EventFlags::IS_SNAPSHOT);
+        let snap2 = make_delta(1, 55, 100, Side::Ask, EventFlags::LAST_IN_BATCH);
+        engine.process(&snap1);
+        engine.process(&snap2);
+        let imb = engine
+            .book_imbalance(InstrumentId::from_raw(1), 5)
+            .expect("expected book_imbalance");
+        assert!(imb > 0.0); // bid heavy
+        assert!(imb <= 1.0);
+    }
+
+    #[test]
+    fn is_stale_after_timeout() {
+        let mut engine = MarketStateEngine::<ArrayBook<100>, 2>::new(2, 100);
+        let snap =
+            make_delta(1, 45, 100, Side::Bid, EventFlags::IS_SNAPSHOT.with(EventFlags::LAST_IN_BATCH));
+        engine.process(&snap);
+        // Within timeout: ts=1000, now=1050, delta=50 <= 100
+        assert!(!engine.is_stale(InstrumentId::from_raw(1), Timestamp::from_nanos(1050)));
+        // Beyond timeout: ts=1000, now=1200, delta=200 > 100
+        assert!(engine.is_stale(InstrumentId::from_raw(1), Timestamp::from_nanos(1200)));
     }
 }
