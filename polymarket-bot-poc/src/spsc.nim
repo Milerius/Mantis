@@ -11,7 +11,7 @@ import constantine/platforms/intrinsics/compiler_optim_hints  # prefetch
 type
   SpscRing*[T] = object
     head* {.align(CacheLineBytes).}: Atomic[int]
-    drops*: int
+    drops*: Atomic[int]
     tail* {.align(CacheLineBytes).}: Atomic[int]
     notify*: ptr Eventcount
     buf*: array[RingSize, T]
@@ -29,7 +29,7 @@ proc tryPush*[T](ring: ptr SpscRing[T], item: T): bool {.inline.} =
   let h = ring.head.load(moRelaxed)
   let next = (h + 1) and RingMask
   if next == ring.tail.load(moAcquire):
-    ring.drops += 1
+    ring.drops.fetchAdd(1, moRelaxed)
     return false
   ring.buf[h] = item
   ring.head.store(next, moRelease)
@@ -57,7 +57,7 @@ proc len*[T](ring: ptr SpscRing[T]): int =
 type
   SmallSpscRing*[T] = object
     head* {.align(CacheLineBytes).}: Atomic[int]
-    drops*: int
+    drops*: Atomic[int]
     tail* {.align(CacheLineBytes).}: Atomic[int]
     buf*: array[DashRingSize, T]
 
@@ -73,7 +73,7 @@ proc tryPush*[T](ring: ptr SmallSpscRing[T], item: T): bool {.inline.} =
   let h = ring.head.load(moRelaxed)
   let next = (h + 1) and DashRingMask
   if next == ring.tail.load(moAcquire):
-    ring.drops += 1
+    ring.drops.fetchAdd(1, moRelaxed)
     return false
   ring.buf[h] = item
   ring.head.store(next, moRelease)

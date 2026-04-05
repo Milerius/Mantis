@@ -6,7 +6,7 @@ Built with Nim, using the Mantis architecture: lock-free SPSC rings, zero-alloc 
 
 ## Architecture
 
-```
+```text
 PM Ingest (1 thread)     BN Ingest (1 thread, 9 WS)
   Polymarket WS            Binance bookTicker/trade/depth20
   JSON parse               per symbol: BTC, SOL, ETH
@@ -115,7 +115,7 @@ Binary tapes are written to `data/tapes/`:
 
 ## Project Structure
 
-```
+```text
 src/
   main.nim              Entry point, 6-thread orchestration
   types.nim             All shared types (single source of truth)

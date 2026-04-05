@@ -1,17 +1,21 @@
 .PHONY: all ftxui nim clean
 
 FTXUI_BUILD_DIR = src/ftxui/build
-FTXUI_DOM_LIB = $(FTXUI_BUILD_DIR)/_deps/ftxui-build/libftxui-dom.a
+FTXUI_LIBS = $(FTXUI_BUILD_DIR)/_deps/ftxui-build/libftxui-dom.a \
+             $(FTXUI_BUILD_DIR)/_deps/ftxui-build/libftxui-screen.a \
+             $(FTXUI_BUILD_DIR)/_deps/ftxui-build/libftxui-component.a
+
+NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 all: ftxui nim
 
-ftxui: $(FTXUI_DOM_LIB)
+ftxui: $(FTXUI_LIBS)
 
-$(FTXUI_DOM_LIB): src/ftxui/CMakeLists.txt
+$(FTXUI_LIBS): src/ftxui/CMakeLists.txt
 	cmake -B $(FTXUI_BUILD_DIR) -S src/ftxui -DCMAKE_BUILD_TYPE=Release
-	cmake --build $(FTXUI_BUILD_DIR) -j$$(sysctl -n hw.ncpu)
+	cmake --build $(FTXUI_BUILD_DIR) -j$(NPROC)
 
-nim: $(FTXUI_DOM_LIB)
+nim: $(FTXUI_LIBS)
 	nim cpp -d:ftxui src/main.nim
 
 nim-fallback:

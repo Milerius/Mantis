@@ -4,6 +4,7 @@
 # Linux: /proc/self/stat, /proc/self/status
 
 import std/posix
+import std/strutils
 from std/times import epochTime
 
 # macOS mach APIs used via {.emit.} in sampleMemory to avoid C/C++ type conflicts
@@ -29,8 +30,9 @@ proc init*(sm: var SystemMetrics; threadCount: int32) =
     sm.lastSysUs  = int64(usage.ru_stime.tv_sec) * 1_000_000'i64 +
                     int64(usage.ru_stime.tv_usec)
 
-{.compile: "mach_helper.c".}
-proc c_sample_memory(rss: ptr int64, vm: ptr int64) {.importc: "sample_memory_mach", cdecl.}
+when defined(macosx):
+  {.compile: "mach_helper.c".}
+  proc c_sample_memory(rss: ptr int64, vm: ptr int64) {.importc: "sample_memory_mach", cdecl.}
 
 proc sampleMemory(sm: var SystemMetrics) =
   when defined(macosx):

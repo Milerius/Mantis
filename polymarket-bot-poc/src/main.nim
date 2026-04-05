@@ -936,9 +936,9 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
       snap.pmQDepth = int32(pmQLen)
       snap.refQDepth = int32(refQLen)
       snap.telemQDepth = int32(telemQ.len)
-      snap.pmQDrops = int64(cast[ptr SpscRing[FeedEvent]](ss.pmQ).drops)
-      snap.refQDrops = int64(cast[ptr SpscRing[FeedEvent]](ss.refQ).drops)
-      snap.telemQDrops = int64(telemQ.drops)
+      snap.pmQDrops = int64(cast[ptr SpscRing[FeedEvent]](ss.pmQ).drops.load(moRelaxed))
+      snap.refQDrops = int64(cast[ptr SpscRing[FeedEvent]](ss.refQ).drops.load(moRelaxed))
+      snap.telemQDrops = int64(telemQ.drops.load(moRelaxed))
 
       # PM last message
       let pmLastNs = ss.pmLastMsgNs.load(moRelaxed)
@@ -1199,9 +1199,9 @@ proc printReport(ss: ptr SharedState) =
   echo "  WINDOW REPORT: " & slug
   echo "  Outcome: " & outcome & "  BTC: $" & fmtCommaMain(s.btcOpen) & " -> $" & fmtCommaMain(s.btcClose) & &" ({btcMv:+.4f}%)"
   echo &"  Tape: {$ss.tapeDir}/tape_{slug} ({s.tapeEvents} events)"
-  let pmDrops = cast[ptr SpscRing[FeedEvent]](ss.pmQ).drops
-  let refDrops = cast[ptr SpscRing[FeedEvent]](ss.refQ).drops
-  let telemDrops = cast[ptr SpscRing[TelemetryEvent]](ss.telemQ).drops
+  let pmDrops = cast[ptr SpscRing[FeedEvent]](ss.pmQ).drops.load(moRelaxed)
+  let refDrops = cast[ptr SpscRing[FeedEvent]](ss.refQ).drops.load(moRelaxed)
+  let telemDrops = cast[ptr SpscRing[TelemetryEvent]](ss.telemQ).drops.load(moRelaxed)
   echo &"  Ring drops -- pm: {pmDrops}  ref: {refDrops}  telem: {telemDrops}"
   echo sep
 

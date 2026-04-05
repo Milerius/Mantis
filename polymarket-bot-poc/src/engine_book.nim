@@ -32,7 +32,7 @@ type
 
 proc clearSide*(bs: var EngineBookSide) =
   for i in 0..1000: bs.levels[i] = 0
-  bs.bestPrice = 0; bs.dirty = true
+  bs.bestPrice = -1; bs.dirty = true
 
 proc applyLevel*(bs: var EngineBookSide, pm: PriceMilli, size: float, isBid: bool) =
   if pm < 0 or pm > 1000: return
@@ -43,18 +43,18 @@ proc applyLevel*(bs: var EngineBookSide, pm: PriceMilli, size: float, isBid: boo
 
 proc recalcBest*(bs: var EngineBookSide, isBid: bool) =
   if isBid:
-    bs.bestPrice = 0
+    bs.bestPrice = -1
     for i in countdown(1000'i16, 0'i16):
       if bs.levels[i] > 0: bs.bestPrice = i; break
   else:
-    bs.bestPrice = 0
+    bs.bestPrice = -1
     for i in 0'i16..1000'i16:
       if bs.levels[i] > 0: bs.bestPrice = i; break
   bs.dirty = false
 
 proc bestPriceF*(bs: var EngineBookSide, isBid: bool): (float, float) =
   if bs.dirty: bs.recalcBest(isBid)
-  if bs.bestPrice == 0: (0.0, 0.0)
+  if bs.bestPrice < 0: (0.0, 0.0)
   else: (bs.bestPrice.float / 1000.0, bs.levels[bs.bestPrice])
 
 proc mid*(b: var EngineBook): float =
