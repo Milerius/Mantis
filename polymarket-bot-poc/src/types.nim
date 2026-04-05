@@ -272,7 +272,7 @@ type
     # Depth data (written by engine, read by telemetry — tearing OK for display)
     upDepthShared*: DepthLadder
     downDepthShared*: DepthLadder
-    refDepthShared*: DepthLadder  # BN depth20
+    refDepthShared*: array[MaxMarkets, DepthLadder]  # BN depth20, per market
     # Output
     summary*: CaptureSummary
     tapeDir*: FixedStr
