@@ -5,29 +5,8 @@
 #         books (up/down), reference, microstructure, trade tape, rates.
 
 import std/[strformat, strutils, times, posix]
+import posix/termios as ptermios
 import types
-
-# ── Raw termios bindings (not in std/posix on all platforms) ──
-
-type
-  Termios {.importc: "struct termios", header: "<termios.h>".} = object
-    c_iflag: cuint
-    c_oflag: cuint
-    c_cflag: cuint
-    c_lflag: cuint
-    c_cc: array[20, uint8]
-
-const
-  ECHO_FLAG {.importc: "ECHO", header: "<termios.h>".}: cuint = 0
-  ICANON_FLAG {.importc: "ICANON", header: "<termios.h>".}: cuint = 0
-  TCSANOW_VAL {.importc: "TCSANOW", header: "<termios.h>".}: cint = 0
-  VMIN_IDX {.importc: "VMIN", header: "<termios.h>".}: cint = 0
-  VTIME_IDX {.importc: "VTIME", header: "<termios.h>".}: cint = 0
-
-proc tcGetAttrC(fd: cint, t: ptr Termios): cint
-  {.importc: "tcgetattr", header: "<termios.h>".}
-proc tcSetAttrC(fd: cint, action: cint, t: ptr Termios): cint
-  {.importc: "tcsetattr", header: "<termios.h>".}
 
 # ── ANSI Helpers ──
 
@@ -334,26 +313,30 @@ proc renderDashboard*(snap: DashboardSnapshot) =
 
 # ── Non-blocking keyboard input ──
 
-var origTermios: Termios
+var origTermios: ptermios.Termios
 
 proc enableRawMode*() =
-  discard tcGetAttrC(0, addr origTermios)
+  discard tcGetAttr(0.cint, addr origTermios)
   var raw = origTermios
-  raw.c_lflag = raw.c_lflag and not (ECHO_FLAG or ICANON_FLAG)
-  raw.c_cc[VMIN_IDX] = 0'u8
-  raw.c_cc[VTIME_IDX] = 0'u8
-  discard tcSetAttrC(0, TCSANOW_VAL, addr raw)
+  raw.c_lflag = raw.c_lflag and not (ptermios.ECHO or ptermios.ICANON)
+  raw.c_cc[ptermios.VMIN] = 0.char
+  raw.c_cc[ptermios.VTIME] = 0.char
+  discard tcSetAttr(0.cint, ptermios.TCSANOW, addr raw)
 
 proc disableRawMode*() =
-  discard tcSetAttrC(0, TCSANOW_VAL, addr origTermios)
+  discard tcSetAttr(0.cint, ptermios.TCSANOW, addr origTermios)
 
 proc readKeyNonBlocking*(): char =
-  var fds: array[1, TPollfd]
-  fds[0].fd = 0  # stdin
-  fds[0].events = POLLIN
-  let ready = poll(addr fds[0], 1, 0)  # 0ms timeout
-  if ready > 0:
-    var c: char
-    discard stdin.readBuffer(addr c, 1)
-    return c
-  '\0'
+  # Use POSIX select with zero timeout instead of poll
+  var readfds: TFdSet
+  FD_ZERO(readfds)
+  FD_SET(0.cint, readfds)
+  var timeout: Timeval
+  timeout.tv_sec = posix.Time(0)
+  timeout.tv_usec = 0
+  let ready = select(1.cint, addr readfds, nil, nil, addr timeout)
+  if ready > 0 and FD_ISSET(0.cint, readfds) != 0:
+    var buf: array[1, char]
+    let n = read(0.cint, addr buf[0], 1)
+    if n == 1: return buf[0]
+  return '\0'

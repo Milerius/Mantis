@@ -356,11 +356,35 @@ proc engineThread(ss: ptr SharedState) {.thread.} =
   template emitTelemetry(ev: FeedEvent, telKind: TelemetryKind, latNs: int64) =
     let idx = ev.instrumentId.int
     let bookIdx = if idx < MaxInstruments: idx else: 0
-    let (bp, bs) = books[bookIdx].bids.bestPriceF(true)
-    let (ap, az) = books[bookIdx].asks.bestPriceF(false)
-    let um = if bp > 0 and ap > 0: (bp + ap) / 2.0 else: 0.0
-    let us = if bp > 0 and ap > 0: ap - bp else: 0.0
-    let wm = books[bookIdx].weightedMid()
+    var bp, bs, ap, az, um, us, wm: float64
+    var bl, al: int32
+    var tbd, tad: float64
+
+    # Check if this is a reference instrument — use refBooks for BN data
+    let isRef = idx < ss.registry.count.int and
+                ss.registry.instruments[idx].kind == ikReference
+    if isRef:
+      let (rbid, rbidq) = refBooks[bookIdx].bnBestBid()
+      let (rask, raskq) = refBooks[bookIdx].bnBestAsk()
+      bp = rbid; bs = rbidq; ap = rask; az = raskq
+      um = if bp > 0 and ap > 0: (bp + ap) / 2.0 else: 0.0
+      us = if bp > 0 and ap > 0: ap - bp else: 0.0
+      wm = um  # no weighted mid for BN
+      bl = int32(refBooks[bookIdx].bidCount)
+      al = int32(refBooks[bookIdx].askCount)
+      tbd = 0.0; tad = 0.0
+    else:
+      let (b, s) = books[bookIdx].bids.bestPriceF(true)
+      let (a, z) = books[bookIdx].asks.bestPriceF(false)
+      bp = b; bs = s; ap = a; az = z
+      um = if bp > 0 and ap > 0: (bp + ap) / 2.0 else: 0.0
+      us = if bp > 0 and ap > 0: ap - bp else: 0.0
+      wm = books[bookIdx].weightedMid()
+      bl = int32(books[bookIdx].bidLevelCount())
+      al = int32(books[bookIdx].askLevelCount())
+      tbd = books[bookIdx].totalBidDepth()
+      tad = books[bookIdx].totalAskDepth()
+
     let elapsed = float(ev.localEpochMs - int64(ss.windowStart) * 1000) / 1000.0
     engineEvCount += 1
     discard telemQ.tryPush(TelemetryEvent(
@@ -371,10 +395,8 @@ proc engineThread(ss: ptr SharedState) {.thread.} =
       bidPrice: bp, askPrice: ap,
       bidSize: bs, askSize: az,
       mid: um, spread: us, weightedMid: wm,
-      bidLevels: int32(books[bookIdx].bidLevelCount()),
-      askLevels: int32(books[bookIdx].askLevelCount()),
-      totalBidDepth: books[bookIdx].totalBidDepth(),
-      totalAskDepth: books[bookIdx].totalAskDepth(),
+      bidLevels: bl, askLevels: al,
+      totalBidDepth: tbd, totalAskDepth: tad,
       btcMid: btcMid, btcBid: btcBid, btcAsk: btcAsk,
       evKind: ev.kind, instId: ev.instrumentId,
       tradePrice: ev.price, tradeSize: ev.size,

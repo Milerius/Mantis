@@ -21,12 +21,12 @@ when defined(macosx):
 
   const
     # mach_task_basic_info_count from <mach/task_info.h>: always 10 on macOS
-    MACH_TASK_BASIC_INFO_FLAVOR: cint = 20
-    MACH_TASK_BASIC_INFO_COUNT: cint  = 10
+    MACH_TASK_BASIC_INFO_FLAVOR: cuint = 20
+    MACH_TASK_BASIC_INFO_COUNT: cuint  = 10
 
-  proc mach_task_self(): cint {.importc, header: "<mach/mach.h>".}
-  proc task_info(target_task: cint; flavor: cint; task_info_out: pointer;
-                 task_info_outCnt: ptr cint): cint {.importc, header: "<mach/task_info.h>".}
+  proc mach_task_self(): cuint {.importc, header: "<mach/mach.h>".}
+  proc task_info(target_task: cuint; flavor: cuint; task_info_out: pointer;
+                 task_info_outCnt: ptr cuint): cint {.importc, header: "<mach/task_info.h>".}
 
 type
   SystemMetrics* = object
@@ -52,7 +52,7 @@ proc init*(sm: var SystemMetrics; threadCount: int32) =
 proc sampleMemory(sm: var SystemMetrics) =
   when defined(macosx):
     var info: MachTaskBasicInfo
-    var count = MACH_TASK_BASIC_INFO_COUNT
+    var count: cuint = MACH_TASK_BASIC_INFO_COUNT
     if task_info(mach_task_self(), MACH_TASK_BASIC_INFO_FLAVOR,
                  addr info, addr count) == 0:
       sm.rssBytes = int64(info.resident_size)
