@@ -595,188 +595,181 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
 
   var ev: TelemetryEvent
   var spinCount = 0
+  var wallMs: int64 = initMs
   while ss.running.load(moRelaxed) or telemQ.len > 0:
+    wallMs = int64(epochTime() * 1000)
     if not telemQ.tryPop(ev):
       spinCount += 1
       if spinCount > 64:
         cpuRelax()
         spinCount = 0
-      # Still build dashboard snapshots even when idle
-      let wallMs = int64(epochTime() * 1000)
-      if wallMs - lastDashPushMs >= 100:
-        lastDashPushMs = wallMs
-        # Build and push snapshot (below, after the event processing block)
-        # We need to jump to the snapshot builder - use a flag
-      continue
-    spinCount = 0
-    count += 1
+    else:
+      spinCount = 0
+      count += 1
 
-    let wallMs = int64(epochTime() * 1000)
-
-    # ── Binary input tape ──
-    globalSeq += 1
-    inputTape.appendInput(InputRecord(
-      kind: ev.evKind.uint8,
-      instrumentId: uint8(ev.instId),
-      side: ev.tradeSide,
-      flags: ev.flags,
-      seqNo: ev.seqNo,
-      wallNs: ev.localNs,
-      epochMs: ev.localEpochMs,
-      price: ev.tradePrice,
-      size: ev.tradeSize,
-      priceMilli: (if ev.tradePrice > 0 and ev.tradePrice < 1: int16(ev.tradePrice * 1000 + 0.5) else: 0),
-      bnEventTimeMs: ev.bnEventTimeMs,
-      bnTradeTimeMs: ev.bnTradeTimeMs,
-      bnBid: ev.btcBid,
-      bnAsk: ev.btcAsk,
-      bnBidQty: ev.bnBidQty,
-      bnAskQty: ev.bnAskQty,
-      globalSeq: globalSeq,
-    ))
-
-    # ── Binary state tape ──
-    if ev.kind == tkTopOfBook and ev.bidPrice > 0:
-      let imb5 = if ev.bidSize + ev.askSize > 0:
-                   float32((ev.bidSize - ev.askSize) / (ev.bidSize + ev.askSize))
-                 else: 0'f32
-      stateTape.appendState(StateRecord(
-        bidPrice: ev.bidPrice,
-        askPrice: ev.askPrice,
-        bidSize: ev.bidSize,
-        askSize: ev.askSize,
-        microPrice: ev.weightedMid,
-        spread: ev.spread,
+      globalSeq += 1
+      inputTape.appendInput(InputRecord(
+        kind: ev.evKind.uint8,
         instrumentId: uint8(ev.instId),
-        phase: ev.phase.uint8,
+        side: ev.tradeSide,
+        flags: ev.flags,
         seqNo: ev.seqNo,
         wallNs: ev.localNs,
         epochMs: ev.localEpochMs,
-        imbalance5: imb5,
-        bidLevels: ev.bidLevels.uint16,
-        askLevels: ev.askLevels.uint16,
-        btcMid: ev.btcMid,
+        price: ev.tradePrice,
+        size: ev.tradeSize,
+        priceMilli: (if ev.tradePrice > 0 and ev.tradePrice < 1: int16(ev.tradePrice * 1000 + 0.5) else: 0),
+        bnEventTimeMs: ev.bnEventTimeMs,
+        bnTradeTimeMs: ev.bnTradeTimeMs,
+        bnBid: ev.btcBid,
+        bnAsk: ev.btcAsk,
+        bnBidQty: ev.bnBidQty,
+        bnAskQty: ev.bnAskQty,
         globalSeq: globalSeq,
       ))
 
-    # ── Engine latency ──
-    if ev.engineLatencyNs > 0:
-      latHist.add(ev.engineLatencyNs)
-
-    # ── Per-instrument state update ──
-    let iid = ev.instId.int
-    if iid < MaxInstruments:
-      instState[iid].instrumentId = ev.instId
-      instState[iid].active = true
-      instState[iid].bidPrice = ev.bidPrice
-      instState[iid].askPrice = ev.askPrice
-      instState[iid].bidSize = ev.bidSize
-      instState[iid].askSize = ev.askSize
-      instState[iid].spread = ev.spread
-      instState[iid].mid = ev.mid
-      instState[iid].wmid = ev.weightedMid
-      instState[iid].bidLevels = ev.bidLevels
-      instState[iid].askLevels = ev.askLevels
-      instState[iid].totalBidDepth = ev.totalBidDepth
-      instState[iid].totalAskDepth = ev.totalAskDepth
-      if ev.bidSize + ev.askSize > 0:
-        instState[iid].imbalance = float32((ev.bidSize - ev.askSize) / (ev.bidSize + ev.askSize))
-
-    # ── Accumulate stats ──
-    case ev.kind
-    of tkBookUpdate:
-      pmEvents += 1; pmRate.increment(wallMs)
-      totalRate.increment(wallMs)
-      if ev.mid > 0:
-        lastUpMid = ev.mid
-        if ev.mid > probPeak: probPeak = ev.mid
-        let dd = probPeak - ev.mid
-        if dd > maxDD: maxDD = dd
-
-    of tkTrade:
-      pmEvents += 1; pmTrades += 1; pmRate.increment(wallMs)
-      totalRate.increment(wallMs)
-      if ev.tradeSize > largestTrade: largestTrade = ev.tradeSize
-      tradeTimestamps.add(ev.elapsed)
-      if lastTradeMs > 0:
-        interTradeTimes.add(float(ev.localEpochMs - lastTradeMs))
-      lastTradeMs = ev.localEpochMs
-      if iid < MaxInstruments:
-        instTradeCount[iid] += 1
-        instState[iid].tradeCount = instTradeCount[iid]
-        instTradeRate[iid].increment(wallMs)
-        instState[iid].tradesPerSec = instTradeRate[iid].rate(wallMs)
-        instState[iid].lastTradePrice = ev.tradePrice
-        instState[iid].lastTradeSide = ev.tradeSide
-        instState[iid].lastTradeSize = ev.tradeSize
-        # Trade tape
-        tradeTape[tradeWriteIdx mod MaxTrades] = TradeTick(
+      # ── Binary state tape ──
+      if ev.kind == tkTopOfBook and ev.bidPrice > 0:
+        let imb5 = if ev.bidSize + ev.askSize > 0:
+                     float32((ev.bidSize - ev.askSize) / (ev.bidSize + ev.askSize))
+                   else: 0'f32
+        stateTape.appendState(StateRecord(
+          bidPrice: ev.bidPrice,
+          askPrice: ev.askPrice,
+          bidSize: ev.bidSize,
+          askSize: ev.askSize,
+          microPrice: ev.weightedMid,
+          spread: ev.spread,
+          instrumentId: uint8(ev.instId),
+          phase: ev.phase.uint8,
+          seqNo: ev.seqNo,
+          wallNs: ev.localNs,
           epochMs: ev.localEpochMs,
-          instrumentId: ev.instId,
-          price: ev.tradePrice,
-          size: ev.tradeSize,
-          side: ev.tradeSide)
-        tradeWriteIdx += 1
+          imbalance5: imb5,
+          bidLevels: ev.bidLevels.uint16,
+          askLevels: ev.askLevels.uint16,
+          btcMid: ev.btcMid,
+          globalSeq: globalSeq,
+        ))
 
-    of tkBnBbo:
-      bnBboEvents += 1; bnBboRate.increment(wallMs)
-      totalRate.increment(wallMs)
-      if ev.btcMid > 0:
-        lastBtcMid = ev.btcMid
-        if btcOpen == 0 and ev.elapsed >= 0:
-          btcOpen = ev.btcMid
-      if ev.btcBid > 0 and ev.btcAsk > 0:
-        bnSpreads.add(ev.btcAsk - ev.btcBid)
+      # ── Engine latency ──
+      if ev.engineLatencyNs > 0:
+        latHist.add(ev.engineLatencyNs)
 
-    of tkBnTrade:
-      bnTradeEvents += 1; bnTradeRate.increment(wallMs)
-      totalRate.increment(wallMs)
-      if ev.bnEventTimeMs > 0 and ev.bnTradeTimeMs > 0:
-        bnTradeLatencies.add(float(ev.bnEventTimeMs - ev.bnTradeTimeMs))
-      if ev.tradePrice > 0:
-        if lastBnPrice > 0 and abs(ev.tradePrice - lastBnPrice) > 0.001:
-          bnPriceSteps.add(abs(ev.tradePrice - lastBnPrice))
-        lastBnPrice = ev.tradePrice
-
-    of tkBnDepth:
-      bnDepthEvents += 1; bnDepthRate.increment(wallMs)
-      totalRate.increment(wallMs)
-
-    of tkTopOfBook:
-      pmEvents += 1
-      totalRate.increment(wallMs)
-      if ev.mid > 0:
-        lastUpMid = ev.mid
+      # ── Per-instrument state update ──
+      let iid = ev.instId.int
       if iid < MaxInstruments:
-        instBboCount[iid] += 1
-        instState[iid].bboChanges = instBboCount[iid]
-        instBboRate[iid].increment(wallMs)
-        instState[iid].bboChangesPerSec = instBboRate[iid].rate(wallMs)
-        # Microstructure: track price reversals and consecutive moves
-        if ev.mid > 0 and instLastMid[iid] > 0:
-          let diff = ev.mid - instLastMid[iid]
-          if diff > 0:
-            if instState[iid].moveDirection < 0:
-              instState[iid].priceReversals += 1
-              instState[iid].consecutiveMoves = 1
-            elif instState[iid].moveDirection > 0:
-              instState[iid].consecutiveMoves += 1
-            else:
-              instState[iid].consecutiveMoves = 1
-            instState[iid].moveDirection = 1
-          elif diff < 0:
-            if instState[iid].moveDirection > 0:
-              instState[iid].priceReversals += 1
-              instState[iid].consecutiveMoves = 1
-            elif instState[iid].moveDirection < 0:
-              instState[iid].consecutiveMoves += 1
-            else:
-              instState[iid].consecutiveMoves = 1
-            instState[iid].moveDirection = -1
-        if ev.mid > 0:
-          instLastMid[iid] = ev.mid
+        instState[iid].instrumentId = ev.instId
+        instState[iid].active = true
+        instState[iid].bidPrice = ev.bidPrice
+        instState[iid].askPrice = ev.askPrice
+        instState[iid].bidSize = ev.bidSize
+        instState[iid].askSize = ev.askSize
+        instState[iid].spread = ev.spread
+        instState[iid].mid = ev.mid
+        instState[iid].wmid = ev.weightedMid
+        instState[iid].bidLevels = ev.bidLevels
+        instState[iid].askLevels = ev.askLevels
+        instState[iid].totalBidDepth = ev.totalBidDepth
+        instState[iid].totalAskDepth = ev.totalAskDepth
+        if ev.bidSize + ev.askSize > 0:
+          instState[iid].imbalance = float32((ev.bidSize - ev.askSize) / (ev.bidSize + ev.askSize))
 
-    # ── Dashboard snapshot every 100ms ──
+      # ── Accumulate stats ──
+      case ev.kind
+      of tkBookUpdate:
+        pmEvents += 1; pmRate.increment(wallMs)
+        totalRate.increment(wallMs)
+        if ev.mid > 0:
+          lastUpMid = ev.mid
+          if ev.mid > probPeak: probPeak = ev.mid
+          let dd = probPeak - ev.mid
+          if dd > maxDD: maxDD = dd
+
+      of tkTrade:
+        pmEvents += 1; pmTrades += 1; pmRate.increment(wallMs)
+        totalRate.increment(wallMs)
+        if ev.tradeSize > largestTrade: largestTrade = ev.tradeSize
+        tradeTimestamps.add(ev.elapsed)
+        if lastTradeMs > 0:
+          interTradeTimes.add(float(ev.localEpochMs - lastTradeMs))
+        lastTradeMs = ev.localEpochMs
+        if iid < MaxInstruments:
+          instTradeCount[iid] += 1
+          instState[iid].tradeCount = instTradeCount[iid]
+          instTradeRate[iid].increment(wallMs)
+          instState[iid].tradesPerSec = instTradeRate[iid].rate(wallMs)
+          instState[iid].lastTradePrice = ev.tradePrice
+          instState[iid].lastTradeSide = ev.tradeSide
+          instState[iid].lastTradeSize = ev.tradeSize
+          # Trade tape
+          tradeTape[tradeWriteIdx mod MaxTrades] = TradeTick(
+            epochMs: ev.localEpochMs,
+            instrumentId: ev.instId,
+            price: ev.tradePrice,
+            size: ev.tradeSize,
+            side: ev.tradeSide)
+          tradeWriteIdx += 1
+
+      of tkBnBbo:
+        bnBboEvents += 1; bnBboRate.increment(wallMs)
+        totalRate.increment(wallMs)
+        if ev.btcMid > 0:
+          lastBtcMid = ev.btcMid
+          if btcOpen == 0 and ev.elapsed >= 0:
+            btcOpen = ev.btcMid
+        if ev.btcBid > 0 and ev.btcAsk > 0:
+          bnSpreads.add(ev.btcAsk - ev.btcBid)
+
+      of tkBnTrade:
+        bnTradeEvents += 1; bnTradeRate.increment(wallMs)
+        totalRate.increment(wallMs)
+        if ev.bnEventTimeMs > 0 and ev.bnTradeTimeMs > 0:
+          bnTradeLatencies.add(float(ev.bnEventTimeMs - ev.bnTradeTimeMs))
+        if ev.tradePrice > 0:
+          if lastBnPrice > 0 and abs(ev.tradePrice - lastBnPrice) > 0.001:
+            bnPriceSteps.add(abs(ev.tradePrice - lastBnPrice))
+          lastBnPrice = ev.tradePrice
+
+      of tkBnDepth:
+        bnDepthEvents += 1; bnDepthRate.increment(wallMs)
+        totalRate.increment(wallMs)
+
+      of tkTopOfBook:
+        pmEvents += 1
+        totalRate.increment(wallMs)
+        if ev.mid > 0:
+          lastUpMid = ev.mid
+        if iid < MaxInstruments:
+          instBboCount[iid] += 1
+          instState[iid].bboChanges = instBboCount[iid]
+          instBboRate[iid].increment(wallMs)
+          instState[iid].bboChangesPerSec = instBboRate[iid].rate(wallMs)
+          # Microstructure: track price reversals and consecutive moves
+          if ev.mid > 0 and instLastMid[iid] > 0:
+            let diff = ev.mid - instLastMid[iid]
+            if diff > 0:
+              if instState[iid].moveDirection < 0:
+                instState[iid].priceReversals += 1
+                instState[iid].consecutiveMoves = 1
+              elif instState[iid].moveDirection > 0:
+                instState[iid].consecutiveMoves += 1
+              else:
+                instState[iid].consecutiveMoves = 1
+              instState[iid].moveDirection = 1
+            elif diff < 0:
+              if instState[iid].moveDirection > 0:
+                instState[iid].priceReversals += 1
+                instState[iid].consecutiveMoves = 1
+              elif instState[iid].moveDirection < 0:
+                instState[iid].consecutiveMoves += 1
+              else:
+                instState[iid].consecutiveMoves = 1
+              instState[iid].moveDirection = -1
+          if ev.mid > 0:
+            instLastMid[iid] = ev.mid
+
+    # ── Dashboard snapshot every 100ms (runs regardless of events) ──
     if wallMs - lastDashPushMs >= 100:
       lastDashPushMs = wallMs
 
