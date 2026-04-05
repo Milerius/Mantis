@@ -80,6 +80,12 @@ impl Div<i64> for Ticks {
     }
 }
 
+impl Default for Ticks {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
 impl fmt::Debug for Ticks {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Ticks({})", self.0)

@@ -893,6 +893,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mantis-market-state"
+version = "0.1.0"
+dependencies = [
+ "mantis-events",
+ "mantis-platform",
+ "mantis-types",
+]
+
+[[package]]
 name = "mantis-platform"
 version = "0.1.0"
 dependencies = [

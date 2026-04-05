@@ -80,6 +80,12 @@ impl Div<i64> for Lots {
     }
 }
 
+impl Default for Lots {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
 impl fmt::Debug for Lots {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Lots({})", self.0)

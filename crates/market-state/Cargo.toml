@@ -1,0 +1,22 @@
+[package]
+name = "mantis-market-state"
+description = "Venue-agnostic market-state engine for the Mantis low-latency financial SDK"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+std = ["mantis-types/std", "mantis-events/std"]
+
+[dependencies]
+mantis-events = { workspace = true }
+mantis-types = { workspace = true }
+mantis-platform = { workspace = true }
+
+[dev-dependencies]
+
+[lints]
+workspace = true
