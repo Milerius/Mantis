@@ -201,7 +201,10 @@ proc renderFeedPanel*(snap: DashboardSnapshot, row: int): int =
 
 proc renderBookPanel*(snap: DashboardSnapshot, inst: InstrumentSnapshot,
                       label: string, row: int): int =
-  stdout.write moveTo(row, 1) & clearLine() & Bold & &" {label}" & Reset
+  # Show weighted mid as primary probability (this is what Polymarket displays)
+  let probStr = if inst.wmid > 0: &"{inst.wmid * 100:.2f}%" else: "---"
+  stdout.write moveTo(row, 1) & clearLine() & Bold & &" {label}" & Reset &
+    &"  {FgCyan}{Bold}{probStr}{Reset}"
   let bidStr = fmtPrice(inst.bidPrice)
   let askStr = fmtPrice(inst.askPrice)
   let bar = bboBar(inst.bidSize, inst.askSize, 20)
@@ -210,11 +213,10 @@ proc renderBookPanel*(snap: DashboardSnapshot, inst: InstrumentSnapshot,
     &"{FgGreen}{bidStr}{Reset} | {FgRed}{askStr}{Reset} {FgRed}{inst.askSize:>8.0f}{Reset}"
   let imbC = colorByThreshold(abs(inst.imbalance).float, 0.3, 0.6)
   stdout.write moveTo(row+2, 1) & clearLine() &
-    &"  sp:{inst.spread:.3f}  wmid:{inst.wmid:.4f}  " &
-    imbC & &"imb:{inst.imbalance:+.2f}" & Reset &
-    &"  lvl:{inst.bidLevels}/{inst.askLevels}"
+    &"  sp:{inst.spread:.3f}  mid:{inst.mid:.4f}  wmid:{inst.wmid:.4f}  " &
+    imbC & &"imb:{inst.imbalance:+.2f}" & Reset
   stdout.write moveTo(row+3, 1) & clearLine() &
-    &"  depth: {inst.totalBidDepth:.0f}/{inst.totalAskDepth:.0f}  " &
+    &"  lvl:{inst.bidLevels}/{inst.askLevels}  depth:{inst.totalBidDepth:.0f}/{inst.totalAskDepth:.0f}  " &
     &"bbo/s:{inst.bboChangesPerSec:.1f}  rev:{inst.priceReversals}"
   row + 4
 
