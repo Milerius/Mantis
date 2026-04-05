@@ -75,7 +75,13 @@ fn high_throughput_stress() {
     // Snapshot all 4 instruments
     for i in 1..=4u32 {
         engine.process(&make_delta(i, 40, 100, Side::Bid, EventFlags::IS_SNAPSHOT));
-        engine.process(&make_delta(i, 60, 100, Side::Ask, EventFlags::LAST_IN_BATCH));
+        engine.process(&make_delta(
+            i,
+            60,
+            100,
+            Side::Ask,
+            EventFlags::LAST_IN_BATCH,
+        ));
     }
 
     // Process 100K interleaved deltas

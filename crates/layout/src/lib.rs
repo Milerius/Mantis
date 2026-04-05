@@ -92,10 +92,7 @@ mod tests {
         // ArrayBook<100> is the primary Polymarket shape; bounded size is acceptable
         let book_info = inspect::<ArrayBook<100>>("ArrayBook<100>");
         // Each side is 100 × 8 bytes = 800 bytes; two sides = 1600 bytes + header
-        assert!(
-            book_info.size > 0,
-            "ArrayBook<100> must have positive size"
-        );
+        assert!(book_info.size > 0, "ArrayBook<100> must have positive size");
         // Sanity: two sides (bids + asks) at 8 bytes per Lots entry
         assert_eq!(
             book_info.size,

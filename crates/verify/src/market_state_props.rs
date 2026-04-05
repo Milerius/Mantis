@@ -71,37 +71,35 @@ mod tests {
     #[test]
     fn prop_best_bid_is_highest() {
         // Generate a list of u8 prices (0-99) and u8 quantities (1-255)
-        check!()
-            .with_type::<Vec<(u8, u8)>>()
-            .for_each(|pairs| {
-                let mut book = ArrayBook::<100>::default();
-                let mut max_price: Option<i64> = None;
+        check!().with_type::<Vec<(u8, u8)>>().for_each(|pairs| {
+            let mut book = ArrayBook::<100>::default();
+            let mut max_price: Option<i64> = None;
 
-                for (price_u8, qty_u8) in pairs {
-                    // Skip zero-quantity inserts since they clear a level
-                    let qty = i64::from(*qty_u8).saturating_add(1); // 1..=256
-                    let price = i64::from(*price_u8);
-                    book.apply_delta(
-                        Ticks::from_raw(price),
-                        Lots::from_raw(qty),
-                        Side::Bid,
-                        UpdateAction::New,
-                    );
-                    max_price = Some(match max_price {
-                        None => price,
-                        Some(prev) => prev.max(price),
-                    });
-                }
+            for (price_u8, qty_u8) in pairs {
+                // Skip zero-quantity inserts since they clear a level
+                let qty = i64::from(*qty_u8).saturating_add(1); // 1..=256
+                let price = i64::from(*price_u8);
+                book.apply_delta(
+                    Ticks::from_raw(price),
+                    Lots::from_raw(qty),
+                    Side::Bid,
+                    UpdateAction::New,
+                );
+                max_price = Some(match max_price {
+                    None => price,
+                    Some(prev) => prev.max(price),
+                });
+            }
 
-                if let (Some(expected_max), Some((best, _))) = (max_price, book.best_bid()) {
-                    assert!(
-                        best.to_raw() <= expected_max,
-                        "best_bid {} exceeds max inserted price {}",
-                        best.to_raw(),
-                        expected_max
-                    );
-                }
-            });
+            if let (Some(expected_max), Some((best, _))) = (max_price, book.best_bid()) {
+                assert!(
+                    best.to_raw() <= expected_max,
+                    "best_bid {} exceeds max inserted price {}",
+                    best.to_raw(),
+                    expected_max
+                );
+            }
+        });
     }
 
     // -----------------------------------------------------------------------

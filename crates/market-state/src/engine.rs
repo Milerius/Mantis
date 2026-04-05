@@ -386,8 +386,13 @@ mod tests {
     #[test]
     fn is_stale_after_timeout() {
         let mut engine = MarketStateEngine::<ArrayBook<100>, 2>::new(2, 100);
-        let snap =
-            make_delta(1, 45, 100, Side::Bid, EventFlags::IS_SNAPSHOT.with(EventFlags::LAST_IN_BATCH));
+        let snap = make_delta(
+            1,
+            45,
+            100,
+            Side::Bid,
+            EventFlags::IS_SNAPSHOT.with(EventFlags::LAST_IN_BATCH),
+        );
         engine.process(&snap);
         // Within timeout: ts=1000, now=1050, delta=50 <= 100
         assert!(!engine.is_stale(InstrumentId::from_raw(1), Timestamp::from_nanos(1050)));

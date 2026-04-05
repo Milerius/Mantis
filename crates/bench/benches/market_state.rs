@@ -67,8 +67,18 @@ fn bench_array_book_apply_delta(c: &mut Criterion) {
         use mantis_market_state::book::OrderBook;
 
         let mut book = ArrayBook::<100>::default();
-        book.apply_delta(Ticks::from_raw(45), Lots::from_raw(100), Side::Bid, UpdateAction::New);
-        book.apply_delta(Ticks::from_raw(40), Lots::from_raw(200), Side::Bid, UpdateAction::New);
+        book.apply_delta(
+            Ticks::from_raw(45),
+            Lots::from_raw(100),
+            Side::Bid,
+            UpdateAction::New,
+        );
+        book.apply_delta(
+            Ticks::from_raw(40),
+            Lots::from_raw(200),
+            Side::Bid,
+            UpdateAction::New,
+        );
         b.iter(|| {
             black_box(book.best_bid());
         });
