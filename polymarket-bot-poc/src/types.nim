@@ -4,6 +4,7 @@
 # Imported by: polymarket_capture, dashboard, stats, engine_book
 
 import std/[atomics, monotimes]
+import constantine/threadpool/crossthread/backoff  # Eventcount
 
 const
   CacheLineBytes* = 128
@@ -223,6 +224,36 @@ type
     pmAvgInterTradeMs*, pmMedianInterTradeMs*: float64
     bnBookUpdates*: int
     bnBboMatches*, bnBboMismatches*: int
+
+  SharedState* = object
+    # Rings (typed as pointer — actual ring types resolved at use site)
+    pmQ*: pointer
+    refQ*: pointer
+    telemQ*: pointer
+    dashQ*: pointer
+    # Engine parking
+    engineEc*: Eventcount
+    # Timing
+    monoBase*: int64
+    windowStart*: int
+    captureEnd*: int
+    duration*: int
+    # Instrument registry
+    registry*: InstrumentRegistry
+    # Lifecycle
+    running*: Atomic[bool]
+    # Network metrics (written by ingest, read by telemetry)
+    pmRttUs*: Atomic[int32]
+    bnRttUs*: Atomic[int32]
+    pmBytesTotal*: Atomic[int64]
+    bnBytesTotal*: Atomic[int64]
+    pmLastMsgNs*: Atomic[int64]
+    bnLastMsgNs*: array[MaxMarkets, Atomic[int64]]
+    # Dashboard control
+    selectedMarket*: Atomic[int32]
+    # Output
+    summary*: CaptureSummary
+    tapeDir*: FixedStr
 
 proc toFixedStr*(s: string): FixedStr =
   for i in 0..<min(s.len, 127): result[i] = s[i]
