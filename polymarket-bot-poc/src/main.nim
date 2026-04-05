@@ -11,7 +11,7 @@
 # Compile: cd polymarket-bot-poc && nim c src/main.nim
 
 import std/[asyncdispatch, atomics, httpclient, json, monotimes, net,
-            os, algorithm, sequtils, strformat, strutils, tables, times,
+            os, algorithm, sequtils, strformat, strutils, sugar, tables, times,
             parseopt]
 import ws
 import types, spsc, engine_book, stats, system_metrics, dashboard, tape_format
@@ -24,15 +24,8 @@ import constantine/threadpool/crossthread/backoff  # Eventcount
 const
   GammaApi = "https://gamma-api.polymarket.com"
   WsMarketUrl = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
-  BnBookTickerUrl = "wss://stream.binance.com:9443/ws/btcusdt@bookTicker"
-  BnTradeUrl = "wss://stream.binance.com:9443/ws/btcusdt@trade"
-  BnDepth20Url = "wss://stream.binance.com:9443/ws/btcusdt@depth20@100ms"
-  BnRestBbo = "https://api.binance.com/api/v3/ticker/bookTicker?symbol=BTCUSDT"
-
-  # Instrument IDs (no strings in hot path)
-  InstUp: uint32 = 0
-  InstDown: uint32 = 1
-  InstRef: uint32 = 0xFFFF
+  BnStreamBase = "wss://stream.binance.com:9443/ws/"
+  BnRestBboBase = "https://api.binance.com/api/v3/ticker/bookTicker?symbol="
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  PM INGEST THREAD
@@ -42,13 +35,23 @@ proc pmIngestThread(ss: ptr SharedState) {.thread.} =
   let pmQ = cast[ptr SpscRing[FeedEvent]](ss.pmQ)
 
   proc run() {.async.} =
-    let tokenUp = $ss.registry.markets[0].tokenUp
-    let tokenDown = $ss.registry.markets[0].tokenDown
+    # Build token -> instrumentId mapping from registry
+    var tokenToInst: Table[string, uint32]
+    var allTokens: seq[string]
+    for i in 0..<ss.registry.marketCount:
+      let mkt = ss.registry.markets[i]
+      let upToken = $mkt.tokenUp
+      let dnToken = $mkt.tokenDown
+      tokenToInst[upToken] = uint32(mkt.upIdx)
+      tokenToInst[dnToken] = uint32(mkt.downIdx)
+      allTokens.add(upToken)
+      allTokens.add(dnToken)
+
     let pmWs = await newWebSocket(WsMarketUrl)
     defer: pmWs.close()
 
     await pmWs.send($ %*{
-      "assets_ids": [tokenUp, tokenDown],
+      "assets_ids": allTokens,
       "type": "market", "custom_feature_enabled": true
     })
 
@@ -83,10 +86,9 @@ proc pmIngestThread(ss: ptr SharedState) {.thread.} =
         if msg.kind != JObject: continue
         let et = msg.getOrDefault("event_type").getStr("")
         let aid = msg.getOrDefault("asset_id").getStr("")
-        let isUp = aid == tokenUp
-        let isDown = aid == tokenDown
-        if not isUp and not isDown and et != "price_change": continue
-        let instId = if isUp: InstUp elif isDown: InstDown else: InstUp
+        let known = aid in tokenToInst
+        if not known and et != "price_change": continue
+        let instId = if known: tokenToInst[aid] else: 0'u32
 
         if et == "book":
           pmSeqNo += 1
@@ -121,14 +123,12 @@ proc pmIngestThread(ss: ptr SharedState) {.thread.} =
               flags: (if isLast: FlagLastInBatch else: 0)))
 
         elif et == "price_change":
-          var relevantChanges: seq[JsonNode] = @[]
+          var relevantChanges: seq[(JsonNode, uint32)] = @[]
           for ch in msg.getOrDefault("price_changes"):
             let caid = ch.getOrDefault("asset_id").getStr("")
-            if caid == tokenUp or caid == tokenDown:
-              relevantChanges.add(ch)
-          for i, ch in relevantChanges:
-            let caid = ch.getOrDefault("asset_id").getStr("")
-            let cInstId = if caid == tokenUp: InstUp else: InstDown
+            if caid in tokenToInst:
+              relevantChanges.add((ch, tokenToInst[caid]))
+          for i, (ch, cInstId) in relevantChanges:
             let p = ch["price"].getStr
             let pm = int16(parseFloat(p) * 1000.0 + 0.5)
             let isLast = (i == relevantChanges.len - 1)
@@ -141,7 +141,7 @@ proc pmIngestThread(ss: ptr SharedState) {.thread.} =
               priceMilli: pm, seqNo: pmSeqNo,
               flags: (if isLast: FlagLastInBatch else: 0)))
 
-        elif et == "last_trade_price" and (isUp or isDown):
+        elif et == "last_trade_price" and known:
           pmSeqNo += 1
           discard pmQ.tryPush(FeedEvent(
             kind: ekPmTrade, instrumentId: instId,
@@ -161,138 +161,161 @@ proc bnIngestThread(ss: ptr SharedState) {.thread.} =
   let refQ = cast[ptr SpscRing[FeedEvent]](ss.refQ)
 
   proc run() {.async.} =
-    proc bboFeed() {.async.} =
-      var bboWs: WebSocket
-      try: bboWs = await newWebSocket(BnBookTickerUrl)
-      except:
-        let client = newAsyncHttpClient()
-        defer: client.close()
-        while ss.running.load(moRelaxed) and epochTime() < ss.captureEnd.float:
-          try:
-            let resp = await client.getContent(BnRestBbo)
-            discard ss.bnBytesTotal.fetchAdd(int64(resp.len), moRelaxed)
-            let msg = parseJson(resp)
+    # Collect unique reference symbols from registry
+    var refSymbols: seq[(string, uint32)]  # (symbol_lower, instrumentId)
+    var seen: Table[string, bool]
+    for i in 0..<ss.registry.marketCount:
+      let mkt = ss.registry.markets[i]
+      let sym = ($ss.registry.instruments[mkt.refIdx].symbol).toLowerAscii
+      if sym notin seen:
+        seen[sym] = true
+        refSymbols.add((sym, uint32(mkt.refIdx)))
+
+    # Launch 3 feeds per unique reference symbol
+    for mktIdx, (symLower, instId) in refSymbols:
+      let symUpper = symLower.toUpperAscii
+
+      # ── BBO feed ──
+      capture symLower, symUpper, instId, mktIdx:
+        proc bboFeed() {.async.} =
+          let bboUrl = BnStreamBase & symLower & "@bookTicker"
+          let restUrl = BnRestBboBase & symUpper
+          var bboWs: WebSocket
+          try: bboWs = await newWebSocket(bboUrl)
+          except:
+            let client = newAsyncHttpClient()
+            defer: client.close()
+            while ss.running.load(moRelaxed) and epochTime() < ss.captureEnd.float:
+              try:
+                let resp = await client.getContent(restUrl)
+                discard ss.bnBytesTotal.fetchAdd(int64(resp.len), moRelaxed)
+                let msg = parseJson(resp)
+                let ns = nowNs(ss.monoBase)
+                discard refQ.tryPush(FeedEvent(
+                  kind: ekBnBbo, instrumentId: instId,
+                  localNs: ns, localEpochMs: int64(epochTime() * 1000),
+                  bnBid: parseFloat(msg["bidPrice"].getStr),
+                  bnAsk: parseFloat(msg["askPrice"].getStr),
+                  bnBidQty: parseFloat(msg["bidQty"].getStr),
+                  bnAskQty: parseFloat(msg["askQty"].getStr)))
+              except: discard
+              await sleepAsync(200)
+            return
+          defer: bboWs.close()
+          while ss.running.load(moRelaxed) and epochTime() < ss.captureEnd.float:
+            var raw: string
+            try: raw = await bboWs.receiveStrPacket()
+            except WebSocketClosedError: break
+            except: continue
+            discard ss.bnBytesTotal.fetchAdd(int64(raw.len), moRelaxed)
+            ss.bnLastMsgNs[mktIdx].store(getMonoTime().ticks, moRelaxed)
+            var msg: JsonNode
+            try: msg = parseJson(raw) except: continue
             let ns = nowNs(ss.monoBase)
             discard refQ.tryPush(FeedEvent(
-              kind: ekBnBbo, instrumentId: InstRef,
+              kind: ekBnBbo, instrumentId: instId,
               localNs: ns, localEpochMs: int64(epochTime() * 1000),
-              bnBid: parseFloat(msg["bidPrice"].getStr),
-              bnAsk: parseFloat(msg["askPrice"].getStr),
-              bnBidQty: parseFloat(msg["bidQty"].getStr),
-              bnAskQty: parseFloat(msg["askQty"].getStr)))
-          except: discard
-          await sleepAsync(200)
-        return
-      defer: bboWs.close()
-      while ss.running.load(moRelaxed) and epochTime() < ss.captureEnd.float:
-        var raw: string
-        try: raw = await bboWs.receiveStrPacket()
-        except WebSocketClosedError: break
-        except: continue
-        discard ss.bnBytesTotal.fetchAdd(int64(raw.len), moRelaxed)
-        ss.bnLastMsgNs[0].store(getMonoTime().ticks, moRelaxed)
-        var msg: JsonNode
-        try: msg = parseJson(raw) except: continue
-        let ns = nowNs(ss.monoBase)
-        discard refQ.tryPush(FeedEvent(
-          kind: ekBnBbo, instrumentId: InstRef,
-          localNs: ns, localEpochMs: int64(epochTime() * 1000),
-          bnBid: parseFloat(msg.getOrDefault("b").getStr("0")),
-          bnAsk: parseFloat(msg.getOrDefault("a").getStr("0")),
-          bnBidQty: parseFloat(msg.getOrDefault("B").getStr("0")),
-          bnAskQty: parseFloat(msg.getOrDefault("A").getStr("0")),
-          bnUpdateId: msg.getOrDefault("u").getBiggestInt(0)))
+              bnBid: parseFloat(msg.getOrDefault("b").getStr("0")),
+              bnAsk: parseFloat(msg.getOrDefault("a").getStr("0")),
+              bnBidQty: parseFloat(msg.getOrDefault("B").getStr("0")),
+              bnAskQty: parseFloat(msg.getOrDefault("A").getStr("0")),
+              bnUpdateId: msg.getOrDefault("u").getBiggestInt(0)))
+        discard bboFeed()
 
-    proc tradeFeed() {.async.} =
-      var tradeWs: WebSocket
-      try: tradeWs = await newWebSocket(BnTradeUrl)
-      except Exception as e:
-        echo "  [bn_trade] WS failed: " & e.msg; return
-      defer: tradeWs.close()
-      while ss.running.load(moRelaxed) and epochTime() < ss.captureEnd.float:
-        var raw: string
-        try: raw = await tradeWs.receiveStrPacket()
-        except WebSocketClosedError: break
-        except: continue
-        discard ss.bnBytesTotal.fetchAdd(int64(raw.len), moRelaxed)
-        ss.bnLastMsgNs[0].store(getMonoTime().ticks, moRelaxed)
-        var msg: JsonNode
-        try: msg = parseJson(raw) except: continue
-        let ns = nowNs(ss.monoBase)
-        discard refQ.tryPush(FeedEvent(
-          kind: ekBnTrade, instrumentId: InstRef,
-          localNs: ns, localEpochMs: int64(epochTime() * 1000),
-          price: parseFloat(msg.getOrDefault("p").getStr("0")),
-          size: parseFloat(msg.getOrDefault("q").getStr("0")),
-          bnEventTimeMs: msg.getOrDefault("E").getBiggestInt(0),
-          bnTradeTimeMs: msg.getOrDefault("T").getBiggestInt(0),
-          bnIsBuyerMaker: msg.getOrDefault("m").getBool(false)))
+      # ── Trade feed ──
+      capture symLower, instId, mktIdx:
+        proc tradeFeed() {.async.} =
+          let tradeUrl = BnStreamBase & symLower & "@trade"
+          var tradeWs: WebSocket
+          try: tradeWs = await newWebSocket(tradeUrl)
+          except Exception as e:
+            echo "  [bn_trade:" & symLower & "] WS failed: " & e.msg; return
+          defer: tradeWs.close()
+          while ss.running.load(moRelaxed) and epochTime() < ss.captureEnd.float:
+            var raw: string
+            try: raw = await tradeWs.receiveStrPacket()
+            except WebSocketClosedError: break
+            except: continue
+            discard ss.bnBytesTotal.fetchAdd(int64(raw.len), moRelaxed)
+            ss.bnLastMsgNs[mktIdx].store(getMonoTime().ticks, moRelaxed)
+            var msg: JsonNode
+            try: msg = parseJson(raw) except: continue
+            let ns = nowNs(ss.monoBase)
+            discard refQ.tryPush(FeedEvent(
+              kind: ekBnTrade, instrumentId: instId,
+              localNs: ns, localEpochMs: int64(epochTime() * 1000),
+              price: parseFloat(msg.getOrDefault("p").getStr("0")),
+              size: parseFloat(msg.getOrDefault("q").getStr("0")),
+              bnEventTimeMs: msg.getOrDefault("E").getBiggestInt(0),
+              bnTradeTimeMs: msg.getOrDefault("T").getBiggestInt(0),
+              bnIsBuyerMaker: msg.getOrDefault("m").getBool(false)))
+        discard tradeFeed()
 
-    var bnDepthSeqNo: uint32 = 0
+      # ── Depth feed ──
+      capture symLower, instId, mktIdx:
+        var bnDepthSeqNo: uint32 = 0
+        proc depthFeed() {.async.} =
+          let depthUrl = BnStreamBase & symLower & "@depth20@100ms"
+          var depthWs: WebSocket
+          try: depthWs = await newWebSocket(depthUrl)
+          except Exception as e:
+            echo "  [bn_depth20:" & symLower & "] WS failed: " & e.msg; return
+          defer: depthWs.close()
+          while ss.running.load(moRelaxed) and epochTime() < ss.captureEnd.float:
+            var raw: string
+            try: raw = await depthWs.receiveStrPacket()
+            except WebSocketClosedError: break
+            except: continue
+            discard ss.bnBytesTotal.fetchAdd(int64(raw.len), moRelaxed)
+            ss.bnLastMsgNs[mktIdx].store(getMonoTime().ticks, moRelaxed)
+            var msg: JsonNode
+            try: msg = parseJson(raw) except: continue
+            let ns = nowNs(ss.monoBase)
+            let epochMs = int64(epochTime() * 1000)
+            let lastUpdateId = msg.getOrDefault("lastUpdateId").getBiggestInt(0)
+            let bidsNode = msg.getOrDefault("bids")
+            let asksNode = msg.getOrDefault("asks")
+            let bidCount = if bidsNode.kind == JArray: bidsNode.len else: 0
+            let askCount = if asksNode.kind == JArray: asksNode.len else: 0
 
-    proc depthFeed() {.async.} =
-      var depthWs: WebSocket
-      try: depthWs = await newWebSocket(BnDepth20Url)
-      except Exception as e:
-        echo "  [bn_depth20] WS failed: " & e.msg; return
-      defer: depthWs.close()
-      while ss.running.load(moRelaxed) and epochTime() < ss.captureEnd.float:
-        var raw: string
-        try: raw = await depthWs.receiveStrPacket()
-        except WebSocketClosedError: break
-        except: continue
-        discard ss.bnBytesTotal.fetchAdd(int64(raw.len), moRelaxed)
-        ss.bnLastMsgNs[0].store(getMonoTime().ticks, moRelaxed)
-        var msg: JsonNode
-        try: msg = parseJson(raw) except: continue
-        let ns = nowNs(ss.monoBase)
-        let epochMs = int64(epochTime() * 1000)
-        let lastUpdateId = msg.getOrDefault("lastUpdateId").getBiggestInt(0)
-        let bidsNode = msg.getOrDefault("bids")
-        let asksNode = msg.getOrDefault("asks")
-        let bidCount = if bidsNode.kind == JArray: bidsNode.len else: 0
-        let askCount = if asksNode.kind == JArray: asksNode.len else: 0
+            bnDepthSeqNo += 1
+            discard refQ.tryPush(FeedEvent(
+              kind: ekPmBookClear, instrumentId: instId,
+              localNs: ns, localEpochMs: epochMs, seqNo: bnDepthSeqNo,
+              bnUpdateId: lastUpdateId))
 
-        bnDepthSeqNo += 1
-        discard refQ.tryPush(FeedEvent(
-          kind: ekPmBookClear, instrumentId: InstRef,
-          localNs: ns, localEpochMs: epochMs, seqNo: bnDepthSeqNo,
-          bnUpdateId: lastUpdateId))
+            for i in 0..<bidCount:
+              let level = bidsNode[i]
+              let price = parseFloat(level[0].getStr("0"))
+              let qty = parseFloat(level[1].getStr("0"))
+              let isLast = (i == bidCount - 1 and askCount == 0)
+              bnDepthSeqNo += 1
+              discard refQ.tryPush(FeedEvent(
+                kind: ekBnDepth, instrumentId: instId,
+                localNs: ns, localEpochMs: epochMs,
+                price: price, size: qty, side: SideBuy,
+                flags: (if isLast: FlagLastInBatch else: 0),
+                seqNo: bnDepthSeqNo,
+                bnUpdateId: lastUpdateId,
+                bnDepthBidLevels: int16(bidCount),
+                bnDepthAskLevels: int16(askCount)))
+            for i in 0..<askCount:
+              let level = asksNode[i]
+              let price = parseFloat(level[0].getStr("0"))
+              let qty = parseFloat(level[1].getStr("0"))
+              let isLast = (i == askCount - 1)
+              bnDepthSeqNo += 1
+              discard refQ.tryPush(FeedEvent(
+                kind: ekBnDepth, instrumentId: instId,
+                localNs: ns, localEpochMs: epochMs,
+                price: price, size: qty, side: SideSell,
+                flags: (if isLast: FlagLastInBatch else: 0),
+                seqNo: bnDepthSeqNo,
+                bnUpdateId: lastUpdateId,
+                bnDepthBidLevels: int16(bidCount),
+                bnDepthAskLevels: int16(askCount)))
+        discard depthFeed()
 
-        for i in 0..<bidCount:
-          let level = bidsNode[i]
-          let price = parseFloat(level[0].getStr("0"))
-          let qty = parseFloat(level[1].getStr("0"))
-          let isLast = (i == bidCount - 1 and askCount == 0)
-          bnDepthSeqNo += 1
-          discard refQ.tryPush(FeedEvent(
-            kind: ekBnDepth, instrumentId: InstRef,
-            localNs: ns, localEpochMs: epochMs,
-            price: price, size: qty, side: SideBuy,
-            flags: (if isLast: FlagLastInBatch else: 0),
-            seqNo: bnDepthSeqNo,
-            bnUpdateId: lastUpdateId,
-            bnDepthBidLevels: int16(bidCount),
-            bnDepthAskLevels: int16(askCount)))
-        for i in 0..<askCount:
-          let level = asksNode[i]
-          let price = parseFloat(level[0].getStr("0"))
-          let qty = parseFloat(level[1].getStr("0"))
-          let isLast = (i == askCount - 1)
-          bnDepthSeqNo += 1
-          discard refQ.tryPush(FeedEvent(
-            kind: ekBnDepth, instrumentId: InstRef,
-            localNs: ns, localEpochMs: epochMs,
-            price: price, size: qty, side: SideSell,
-            flags: (if isLast: FlagLastInBatch else: 0),
-            seqNo: bnDepthSeqNo,
-            bnUpdateId: lastUpdateId,
-            bnDepthBidLevels: int16(bidCount),
-            bnDepthAskLevels: int16(askCount)))
-
-    let f1 = bboFeed()
-    let f2 = tradeFeed()
-    let f3 = depthFeed()
     while ss.running.load(moRelaxed) and epochTime() < ss.captureEnd.float:
       await sleepAsync(200)
 
@@ -442,26 +465,28 @@ proc engineThread(ss: ptr SharedState) {.thread.} =
         emitTelemetry(ev, tkBnTrade, latNs)
 
       of ekPmBookClear:
-        if ev.instrumentId == InstRef:
-          refBooks[0].bidCount = 0
-          refBooks[0].askCount = 0
-          refBooks[0].lastUpdateId = ev.bnUpdateId
-          let latNs = getMonoTime().ticks - t0
-          emitTelemetry(ev, tkBnDepth, latNs)
+        # Reference instrument depth snapshot clear
+        let refBookIdx = ev.instrumentId.int mod MaxInstruments
+        refBooks[refBookIdx].bidCount = 0
+        refBooks[refBookIdx].askCount = 0
+        refBooks[refBookIdx].lastUpdateId = ev.bnUpdateId
+        let latNs = getMonoTime().ticks - t0
+        emitTelemetry(ev, tkBnDepth, latNs)
 
       of ekBnDepth:
-        if ev.side == SideBuy and refBooks[0].bidCount < BnDepthLevels:
-          refBooks[0].bids[refBooks[0].bidCount] = BnBookLevel(price: ev.price, qty: ev.size)
-          refBooks[0].bidCount += 1
-        elif ev.side == SideSell and refBooks[0].askCount < BnDepthLevels:
-          refBooks[0].asks[refBooks[0].askCount] = BnBookLevel(price: ev.price, qty: ev.size)
-          refBooks[0].askCount += 1
+        let refBookIdx = ev.instrumentId.int mod MaxInstruments
+        if ev.side == SideBuy and refBooks[refBookIdx].bidCount < BnDepthLevels:
+          refBooks[refBookIdx].bids[refBooks[refBookIdx].bidCount] = BnBookLevel(price: ev.price, qty: ev.size)
+          refBooks[refBookIdx].bidCount += 1
+        elif ev.side == SideSell and refBooks[refBookIdx].askCount < BnDepthLevels:
+          refBooks[refBookIdx].asks[refBooks[refBookIdx].askCount] = BnBookLevel(price: ev.price, qty: ev.size)
+          refBooks[refBookIdx].askCount += 1
 
         if (ev.flags and FlagLastInBatch) != 0:
-          refBooks[0].valid = true
+          refBooks[refBookIdx].valid = true
           bnBookUpdates += 1
-          let (rbid, _) = refBooks[0].bnBestBid()
-          let (rask, _) = refBooks[0].bnBestAsk()
+          let (rbid, _) = refBooks[refBookIdx].bnBestBid()
+          let (rask, _) = refBooks[refBookIdx].bnBestAsk()
           if rbid > 0 and rask > 0 and btcBid > 0 and btcAsk > 0:
             if abs(rbid - btcBid) <= 0.021 and abs(rask - btcAsk) <= 0.021:
               bnBboMatches += 1
@@ -490,20 +515,20 @@ proc engineThread(ss: ptr SharedState) {.thread.} =
 proc telemetryThread(ss: ptr SharedState) {.thread.} =
   let telemQ = cast[ptr SpscRing[TelemetryEvent]](ss.telemQ)
   let dashQ = cast[ptr SmallSpscRing[DashboardSnapshot]](ss.dashQ)
-  let baseName = $ss.tapeDir / "tape_" & $ss.registry.markets[0].slug
+  let baseName = $ss.tapeDir / "tape_" & (if ss.registry.marketCount > 0: $ss.registry.markets[0].slug else: "unknown")
 
   # ── Binary tapes ──
   let inputTapeHeader = TapeHeader(
     magic: TapeMagic, version: TapeVersion,
     recordSize: InputRecordSize.uint32,
     startTs: uint64(ss.windowStart) * 1_000_000_000,
-    instrumentCount: 3,
+    instrumentCount: uint32(ss.registry.count),
   )
   let stateTapeHeader = TapeHeader(
     magic: TapeMagic, version: TapeVersion,
     recordSize: StateRecordSize.uint32,
     startTs: uint64(ss.windowStart) * 1_000_000_000,
-    instrumentCount: 3,
+    instrumentCount: uint32(ss.registry.count),
   )
   var inputTape = initMmapTapeWriter(baseName & ".input.bin", inputTapeHeader)
   var stateTape = initMmapTapeWriter(baseName & ".state.bin", stateTapeHeader,
@@ -594,7 +619,7 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
     globalSeq += 1
     inputTape.appendInput(InputRecord(
       kind: ev.evKind.uint8,
-      instrumentId: (if ev.instId == InstUp: 0'u8 elif ev.instId == InstDown: 1'u8 else: 2'u8),
+      instrumentId: uint8(ev.instId),
       side: ev.tradeSide,
       flags: ev.flags,
       seqNo: ev.seqNo,
@@ -624,7 +649,7 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
         askSize: ev.askSize,
         microPrice: ev.weightedMid,
         spread: ev.spread,
-        instrumentId: (if ev.instId == InstUp: 0'u8 elif ev.instId == InstDown: 1'u8 else: 2'u8),
+        instrumentId: uint8(ev.instId),
         phase: ev.phase.uint8,
         seqNo: ev.seqNo,
         wallNs: ev.localNs,
@@ -930,29 +955,75 @@ proc dashboardThread(ss: ptr SharedState) {.thread.} =
 #  MARKET DISCOVERY
 # ═══════════════════════════════════════════════════════════════════════════
 
-proc findMarket(timeframe: string, windowStart: int): (string, string, string) =
-  let tag = if timeframe == "5m": "5M" else: "15M"
-  let url = &"{GammaApi}/events?limit=200&active=true&closed=false&tag_slug=up-or-down&tag_slug={tag}"
+proc findMarkets(timeframes: seq[(string, int)], windowStart: int): InstrumentRegistry =
+  ## Discover multiple markets. timeframes = @[("5m", 300), ("15m", 900)]
+  ## Looks for BTC, SOL, ETH up-or-down markets.
   let client = newHttpClient()
   defer: client.close()
-  let resp = client.getContent(url)
-  let events = parseJson(resp)
-  for ev in events:
-    for mkt in ev.getOrDefault("markets"):
-      let slug = mkt.getOrDefault("slug").getStr("")
-      if not slug.startsWith("btc-updown-"): continue
-      let parts = slug.split('-')
-      if parts.len < 4: continue
-      let ts = try: parseInt(parts[^1]) except: continue
-      if ts != windowStart: continue
-      let tids = parseJson(mkt.getOrDefault("clobTokenIds").getStr("[]"))
-      let outs = parseJson(mkt.getOrDefault("outcomes").getStr("[]"))
-      if tids.len < 2: continue
-      var upIdx = 0
-      for i, o in outs.elems:
-        if o.getStr("").toLowerAscii == "up": upIdx = i; break
-      return (slug, tids[upIdx].getStr, tids[1 - upIdx].getStr)
-  raise newException(ValueError, &"No market for window {windowStart}")
+  var nextInst: int32 = 0
+  var nextMarket: int32 = 0
+
+  for (tfLabel, dur) in timeframes:
+    let tag = if tfLabel == "5m": "5M" else: "15M"
+    let url = &"{GammaApi}/events?limit=200&active=true&closed=false&tag_slug=up-or-down&tag_slug={tag}"
+    let resp = client.getContent(url)
+    let events = parseJson(resp)
+
+    for ev in events:
+      for mkt in ev.getOrDefault("markets"):
+        let slug = mkt.getOrDefault("slug").getStr("")
+        var asset = ""
+        if slug.startsWith("btc-updown-"): asset = "BTC"
+        elif slug.startsWith("sol-updown-"): asset = "SOL"
+        elif slug.startsWith("eth-updown-"): asset = "ETH"
+        else: continue
+
+        let parts = slug.split('-')
+        if parts.len < 4: continue
+        let ts = try: parseInt(parts[^1]) except: continue
+        if ts != windowStart: continue
+        let tids = parseJson(mkt.getOrDefault("clobTokenIds").getStr("[]"))
+        let outs = parseJson(mkt.getOrDefault("outcomes").getStr("[]"))
+        if tids.len < 2: continue
+
+        var upIdx = 0
+        for i, o in outs.elems:
+          if o.getStr("").toLowerAscii == "up": upIdx = i; break
+
+        if nextInst + 3 > MaxInstruments or nextMarket >= MaxMarkets: break
+
+        # Register Up instrument
+        result.instruments[nextInst] = InstrumentEntry(
+          id: uint32(nextInst), kind: ikPmUpDown,
+          symbol: toFixedLabel(asset & "_UP"), active: true)
+        let upI = nextInst; nextInst += 1
+
+        # Register Down instrument
+        result.instruments[nextInst] = InstrumentEntry(
+          id: uint32(nextInst), kind: ikPmUpDown,
+          symbol: toFixedLabel(asset & "_DN"), active: true)
+        let dnI = nextInst; nextInst += 1
+
+        # Register Reference instrument
+        let refSymbol = asset & "USDT"
+        result.instruments[nextInst] = InstrumentEntry(
+          id: uint32(nextInst), kind: ikReference,
+          symbol: toFixedLabel(refSymbol), active: true)
+        let refI = nextInst; nextInst += 1
+
+        # Register market group
+        result.markets[nextMarket] = MarketGroup(
+          label: toFixedLabel(asset & "-" & tfLabel),
+          slug: toFixedStr(slug),
+          upIdx: int8(upI), downIdx: int8(dnI), refIdx: int8(refI),
+          timeframe: dur.uint16,
+          windowStart: windowStart.int64,
+          tokenUp: toFixedStr(tids[upIdx].getStr),
+          tokenDown: toFixedStr(tids[1 - upIdx].getStr))
+        nextMarket += 1
+
+  result.count = nextInst
+  result.marketCount = nextMarket
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  REPORT
@@ -1095,17 +1166,19 @@ proc main() =
     let captureEnd = windowStart + dur + PostCloseSecs
 
     echo &"\n  -- Window {win+1} --"
-    echo &"  Discovering market for {fromUnix(windowStart.int64).utc.format(\"HH:mm:ss\")} UTC..."
+    echo &"  Discovering markets for {fromUnix(windowStart.int64).utc.format(\"HH:mm:ss\")} UTC..."
 
-    var slug, tokenUp, tokenDown: string
+    var registry: InstrumentRegistry
     try:
-      (slug, tokenUp, tokenDown) = findMarket(timeframe, windowStart)
+      registry = findMarkets(@[(timeframe, dur)], windowStart)
     except Exception as e:
       echo &"  ERROR: {e.msg}"; continue
+    if registry.marketCount == 0:
+      echo "  ERROR: no markets found"; continue
 
-    echo &"  Market: {slug}"
-    echo &"  Up:     {tokenUp[0..15]}..."
-    echo &"  Down:   {tokenDown[0..15]}..."
+    echo &"  Found {registry.marketCount} markets:"
+    for i in 0..<registry.marketCount:
+      echo &"    {$registry.markets[i].label}: {$registry.markets[i].slug}"
 
     # ── Allocate shared state ──
     var ss = cast[ptr SharedState](allocShared0(sizeof(SharedState)))
@@ -1120,25 +1193,7 @@ proc main() =
     ss.tapeDir = toFixedStr(tapeDir)
     ss.running.store(true, moRelaxed)
     ss.selectedMarket.store(0, moRelaxed)
-
-    # Set up registry — single market for now (Task 9 will generalize)
-    ss.registry.count = 3  # Up, Down, Ref
-    ss.registry.instruments[0] = InstrumentEntry(
-      id: InstUp, kind: ikPmUpDown, symbol: toFixedLabel("UP"), active: true)
-    ss.registry.instruments[1] = InstrumentEntry(
-      id: InstDown, kind: ikPmUpDown, symbol: toFixedLabel("DOWN"), active: true)
-    ss.registry.instruments[2] = InstrumentEntry(
-      id: InstRef, kind: ikReference, symbol: toFixedLabel("BTC-REF"), active: true)
-    ss.registry.marketCount = 1
-    ss.registry.markets[0] = MarketGroup(
-      label: toFixedLabel(slug.split('-')[0..2].join("-")),
-      slug: toFixedStr(slug),
-      upIdx: 0, downIdx: 1, refIdx: 2,
-      timeframe: uint16(dur),
-      windowStart: int64(windowStart),
-      tokenUp: toFixedStr(tokenUp),
-      tokenDown: toFixedStr(tokenDown),
-    )
+    ss.registry = registry
 
     # ── Wait for capture window ──
     let waitUntil = windowStart - PreOpenSecs
