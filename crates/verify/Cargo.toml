@@ -13,6 +13,8 @@ mantis-types = { workspace = true }
 mantis-queue = { workspace = true, features = ["alloc"] }
 mantis-fixed = { workspace = true }
 mantis-seqlock = { workspace = true }
+mantis-events = { workspace = true }
+mantis-market-state = { workspace = true }
 bolero = { workspace = true }
 
 [lints]
