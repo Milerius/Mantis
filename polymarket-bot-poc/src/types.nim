@@ -268,6 +268,9 @@ type
     bnLastMsgNs*: array[MaxMarkets, Atomic[int64]]
     # Dashboard control
     selectedMarket*: Atomic[int32]
+    # Depth data (written by engine, read by telemetry — tearing OK for display)
+    upDepthShared*: DepthLadder
+    downDepthShared*: DepthLadder
     # Output
     summary*: CaptureSummary
     tapeDir*: FixedStr

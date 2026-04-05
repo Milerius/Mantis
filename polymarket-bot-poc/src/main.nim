@@ -462,6 +462,27 @@ proc engineThread(ss: ptr SharedState) {.thread.} =
               lastBboMid[instIdx] = newMid
               let latNs = getMonoTime().ticks - t0
               emitTelemetry(ev, tkTopOfBook, latNs)
+              # Write depth ladder to shared state for dashboard
+              var bidLevels: array[20, tuple[price: float64, size: float64]]
+              var askLevels: array[20, tuple[price: float64, size: float64]]
+              let nBids = books[instIdx].getTopBids(bidLevels)
+              let nAsks = books[instIdx].getTopAsks(askLevels)
+              for mi in 0..<ss.registry.marketCount:
+                let mkt = ss.registry.markets[mi]
+                if instIdx == mkt.upIdx.int:
+                  for i in 0..<nBids:
+                    ss.upDepthShared.bids[i] = DepthLevel(price: bidLevels[i][0], size: bidLevels[i][1])
+                  ss.upDepthShared.bidCount = int32(nBids)
+                  for i in 0..<nAsks:
+                    ss.upDepthShared.asks[i] = DepthLevel(price: askLevels[i][0], size: askLevels[i][1])
+                  ss.upDepthShared.askCount = int32(nAsks)
+                elif instIdx == mkt.downIdx.int:
+                  for i in 0..<nBids:
+                    ss.downDepthShared.bids[i] = DepthLevel(price: bidLevels[i][0], size: bidLevels[i][1])
+                  ss.downDepthShared.bidCount = int32(nBids)
+                  for i in 0..<nAsks:
+                    ss.downDepthShared.asks[i] = DepthLevel(price: askLevels[i][0], size: askLevels[i][1])
+                  ss.downDepthShared.askCount = int32(nAsks)
             lastBbo[instIdx] = (bp, ap)
 
           let latNs = getMonoTime().ticks - t0
@@ -618,6 +639,12 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
 
   # Dashboard push timing
   var lastDashPushMs: int64 = initMs
+
+  # Probability history
+  var probHistBuf: array[120, float32]
+  var probHistIdx: int32 = 0
+  var probHistCount: int32 = 0
+  var lastProbPushMs: int64 = initMs
 
   var ev: TelemetryEvent
   var spinCount = 0
@@ -904,6 +931,10 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
       snap.rssBytes = sysMet.rssBytes
       snap.vmBytes = sysMet.vmBytes
 
+      # Copy depth ladder from engine's shared state
+      snap.upDepth = ss.upDepthShared
+      snap.downDepth = ss.downDepthShared
+
       # Complementarity (up+down mid)
       for mi in 0..<ss.registry.marketCount:
         let mkt = ss.registry.markets[mi]
@@ -911,6 +942,20 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
         let dnMid = instState[mkt.downIdx.int].mid
         if upMid > 0 and dnMid > 0:
           snap.upPlusDown[mi] = upMid + dnMid
+
+      # Probability history (1 sample/sec)
+      if wallMs - lastProbPushMs >= 1000:
+        lastProbPushMs = wallMs
+        if snap.selectedMarket < snap.marketCount:
+          let mkt = snap.markets[snap.selectedMarket]
+          let upWmid = instState[mkt.upIdx.int].wmid
+          if upWmid > 0:
+            probHistBuf[probHistIdx mod 120] = float32(upWmid)
+            probHistIdx += 1
+            if probHistCount < 120: probHistCount += 1
+      snap.probHistory = probHistBuf
+      snap.probHistoryIdx = probHistIdx mod 120
+      snap.probHistoryCount = probHistCount
 
       discard dashQ.tryPush(snap)
 

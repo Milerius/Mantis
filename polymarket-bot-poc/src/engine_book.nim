@@ -113,3 +113,21 @@ proc bnImbalance*(b: BnBook, levels: int): float64 =
   for i in 0..<min(levels, b.bidCount): bidDepth += b.bids[i].qty
   for i in 0..<min(levels, b.askCount): askDepth += b.asks[i].qty
   if bidDepth + askDepth > 0: (bidDepth - askDepth) / (bidDepth + askDepth) else: 0.0
+
+proc getTopBids*(b: EngineBook, levels: var array[20, tuple[price: float64, size: float64]]): int =
+  ## Returns top N bid levels (highest price first). Returns count filled.
+  result = 0
+  for i in countdown(1000'i16, 0'i16):
+    if b.bids.levels[i] > 0:
+      levels[result] = (i.float64 / 1000.0, b.bids.levels[i])
+      result += 1
+      if result >= 20: break
+
+proc getTopAsks*(b: EngineBook, levels: var array[20, tuple[price: float64, size: float64]]): int =
+  ## Returns top N ask levels (lowest price first). Returns count filled.
+  result = 0
+  for i in 0'i16..1000'i16:
+    if b.asks.levels[i] > 0:
+      levels[result] = (i.float64 / 1000.0, b.asks.levels[i])
+      result += 1
+      if result >= 20: break
