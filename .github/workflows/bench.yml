@@ -39,44 +39,56 @@ jobs:
       - name: Allow perf_event_open (Linux)
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.perf_event_paranoid=1
+      # ── SPSC benchmarks (custom harness, outputs JSON directly) ──
       - name: Run SPSC benchmarks
         run: cargo +nightly bench --bench spsc --all-features
-        env:
-          RUSTFLAGS: "-C target-cpu=native"
-      - name: Clear Criterion cache before seqlock bench
-        run: rm -rf target/criterion
-      - name: Run seqlock benchmarks
-        run: cargo +nightly bench --bench seqlock
-        env:
-          RUSTFLAGS: "-C target-cpu=native"
-      - name: Clear Criterion cache before fixed-point bench
-        run: rm -rf target/criterion
-      - name: Run fixed-point benchmarks
-        run: cargo +nightly bench --bench fixed
-        env:
-          RUSTFLAGS: "-C target-cpu=native"
-      - name: Clear Criterion cache before market-state bench
-        run: rm -rf target/criterion
-      - name: Run market-state benchmarks
-        run: cargo +nightly bench --bench market_state
         env:
           RUSTFLAGS: "-C target-cpu=native"
       - name: Convert SPSC report for CI tracking
         run: |
           jq '[.results[] | {name: .workload, unit: "ns/op", value: .ns_per_op}]' \
             target/bench-report-spsc.json > bench-output-spsc.json
+
+      # ── Seqlock benchmarks (Criterion) ──
+      # IMPORTANT: Each Criterion bench must be converted IMMEDIATELY after running,
+      # before the next `rm -rf target/criterion`. The criterion-to-json.sh script
+      # reads from target/criterion/<group>/ and uses prefix matching on the bench name.
+      # If conversion runs after a later bench clears + overwrites criterion/, it will
+      # pick up the wrong bench's data.
+      - name: Clear Criterion cache before seqlock bench
+        run: rm -rf target/criterion
+      - name: Run seqlock benchmarks
+        run: cargo +nightly bench --bench seqlock
+        env:
+          RUSTFLAGS: "-C target-cpu=native"
       - name: Convert seqlock Criterion results to JSON report
         run: bash .github/scripts/criterion-to-json.sh seqlock
       - name: Convert seqlock report for CI tracking
         run: |
           jq '[.results[] | {name: ("seqlock/" + .workload), unit: "ns/op", value: .ns_per_op}]' \
             target/bench-report-seqlock.json > bench-output-seqlock.json
+
+      # ── Fixed-point benchmarks (Criterion) ──
+      - name: Clear Criterion cache before fixed-point bench
+        run: rm -rf target/criterion
+      - name: Run fixed-point benchmarks
+        run: cargo +nightly bench --bench fixed
+        env:
+          RUSTFLAGS: "-C target-cpu=native"
       - name: Convert fixed-point Criterion results to JSON report
         run: bash .github/scripts/criterion-to-json.sh fixed
       - name: Convert fixed-point report for CI tracking
         run: |
           jq '[.results[] | {name: ("fixed/" + .workload), unit: "ns/op", value: .ns_per_op}]' \
             target/bench-report-fixed.json > bench-output-fixed.json
+
+      # ── Market-state benchmarks (Criterion) ──
+      - name: Clear Criterion cache before market-state bench
+        run: rm -rf target/criterion
+      - name: Run market-state benchmarks
+        run: cargo +nightly bench --bench market_state
+        env:
+          RUSTFLAGS: "-C target-cpu=native"
       - name: Convert market-state Criterion results to JSON report
         run: bash .github/scripts/criterion-to-json.sh market_state
       - name: Convert market-state report for CI tracking

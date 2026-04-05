@@ -20,7 +20,7 @@ type F6 = FixedI64<6>;
 type F8 = FixedI64<8>;
 
 fn bench_checked_add(c: &mut Criterion) {
-    let mut group = c.benchmark_group("checked_add");
+    let mut group = c.benchmark_group("fixed/checked_add");
     let a = F6::from_raw(1_500_000);
     let b = F6::from_raw(2_500_000);
     group.bench_function("FixedI64<6>", |bencher| {
@@ -35,7 +35,7 @@ fn bench_checked_add(c: &mut Criterion) {
 }
 
 fn bench_checked_mul_trunc(c: &mut Criterion) {
-    let mut group = c.benchmark_group("checked_mul_trunc");
+    let mut group = c.benchmark_group("fixed/checked_mul_trunc");
 
     let a2 = F2::from_raw(150);
     let b2 = F2::from_raw(200);
@@ -61,7 +61,7 @@ fn bench_checked_mul_trunc(c: &mut Criterion) {
 }
 
 fn bench_checked_mul_round_vs_trunc(c: &mut Criterion) {
-    let mut group = c.benchmark_group("mul_round_vs_trunc");
+    let mut group = c.benchmark_group("fixed/mul_round_vs_trunc");
     let a = F6::from_raw(1_500_000);
     let b = F6::from_raw(3_333_333);
     group.bench_function("trunc", |bencher| {
@@ -74,7 +74,7 @@ fn bench_checked_mul_round_vs_trunc(c: &mut Criterion) {
 }
 
 fn bench_checked_div(c: &mut Criterion) {
-    let mut group = c.benchmark_group("checked_div");
+    let mut group = c.benchmark_group("fixed/checked_div");
     let a = F6::from_raw(4_500_000);
     let b = F6::from_raw(1_500_000);
     group.bench_function("trunc", |bencher| {
@@ -87,7 +87,7 @@ fn bench_checked_div(c: &mut Criterion) {
 }
 
 fn bench_rescale(c: &mut Criterion) {
-    let mut group = c.benchmark_group("rescale");
+    let mut group = c.benchmark_group("fixed/rescale");
     let f6 = F6::from_raw(1_555_555);
     group.bench_function("D6_to_D2_trunc", |bencher| {
         bencher.iter(|| black_box(f6).rescale_trunc::<2>());
@@ -100,7 +100,7 @@ fn bench_rescale(c: &mut Criterion) {
 }
 
 fn bench_parse(c: &mut Criterion) {
-    let mut group = c.benchmark_group("parse");
+    let mut group = c.benchmark_group("fixed/parse");
     group.bench_function("short", |bencher| {
         bencher.iter(|| F6::from_str_decimal(black_box("1.5")));
     });
@@ -115,7 +115,7 @@ fn bench_parse(c: &mut Criterion) {
 
 fn bench_display(c: &mut Criterion) {
     use std::fmt::Write;
-    let mut group = c.benchmark_group("display");
+    let mut group = c.benchmark_group("fixed/display");
     let f = F6::from_raw(1_500_000);
     group.bench_function("FixedI64<6>", |bencher| {
         let mut buf = String::with_capacity(32);
@@ -131,7 +131,7 @@ fn bench_display(c: &mut Criterion) {
 
 #[cfg(feature = "bench-fixed-contenders")]
 fn bench_contender_add(c: &mut Criterion) {
-    let mut group = c.benchmark_group("contender_add");
+    let mut group = c.benchmark_group("fixed/contender_add");
 
     // Mantis
     let ma = F6::from_raw(1_500_000);
@@ -166,7 +166,7 @@ fn bench_contender_add(c: &mut Criterion) {
 
 #[cfg(feature = "bench-fixed-contenders")]
 fn bench_contender_mul(c: &mut Criterion) {
-    let mut group = c.benchmark_group("contender_mul");
+    let mut group = c.benchmark_group("fixed/contender_mul");
 
     // Mantis (truncating)
     let ma = F6::from_raw(1_500_000); // 1.5
@@ -194,7 +194,7 @@ fn bench_contender_mul(c: &mut Criterion) {
 
 #[cfg(feature = "bench-fixed-contenders")]
 fn bench_contender_div(c: &mut Criterion) {
-    let mut group = c.benchmark_group("contender_div");
+    let mut group = c.benchmark_group("fixed/contender_div");
 
     // Mantis
     let ma = F6::from_raw(4_500_000); // 4.5
@@ -224,7 +224,7 @@ fn bench_contender_div(c: &mut Criterion) {
 fn bench_contender_parse(c: &mut Criterion) {
     use std::str::FromStr;
 
-    let mut group = c.benchmark_group("contender_parse");
+    let mut group = c.benchmark_group("fixed/contender_parse");
 
     // Mantis
     group.bench_function("mantis_parse", |bencher| {
@@ -248,7 +248,7 @@ fn bench_contender_parse(c: &mut Criterion) {
 fn bench_contender_display(c: &mut Criterion) {
     use std::fmt::Write;
 
-    let mut group = c.benchmark_group("contender_display");
+    let mut group = c.benchmark_group("fixed/contender_display");
 
     // Mantis
     let mf = F6::from_raw(1_500_000);
