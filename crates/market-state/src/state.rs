@@ -5,7 +5,6 @@ use mantis_types::{InstrumentId, Lots, SeqNum, Side, Ticks, Timestamp};
 use crate::book::OrderBook;
 
 /// Per-instrument state managed by the engine.
-#[expect(dead_code, reason = "fields accessed in engine impl (Task 4)")]
 pub struct InstrumentState<B: OrderBook> {
     pub(crate) book: B,
     pub(crate) prev_bid: Option<Ticks>,
