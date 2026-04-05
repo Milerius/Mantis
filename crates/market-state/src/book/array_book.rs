@@ -197,3 +197,91 @@ impl<const N: usize> OrderBook for ArrayBook<N> {
         total
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_book_is_empty() {
+        let book = ArrayBook::<100>::default();
+        assert!(book.best_bid().is_none());
+        assert!(book.best_ask().is_none());
+        assert_eq!(book.level_count(Side::Bid), 0);
+        assert_eq!(book.level_count(Side::Ask), 0);
+    }
+
+    #[test]
+    fn apply_delta_new_level() {
+        let mut book = ArrayBook::<100>::default();
+        book.apply_delta(Ticks::from_raw(45), Lots::from_raw(100), Side::Bid, UpdateAction::New);
+        assert_eq!(book.best_bid(), Some((Ticks::from_raw(45), Lots::from_raw(100))));
+    }
+
+    #[test]
+    fn apply_delta_delete_level() {
+        let mut book = ArrayBook::<100>::default();
+        book.apply_delta(Ticks::from_raw(45), Lots::from_raw(100), Side::Bid, UpdateAction::New);
+        book.apply_delta(Ticks::from_raw(45), Lots::ZERO, Side::Bid, UpdateAction::Delete);
+        assert!(book.best_bid().is_none());
+    }
+
+    #[test]
+    fn best_bid_is_highest_price() {
+        let mut book = ArrayBook::<100>::default();
+        book.apply_delta(Ticks::from_raw(40), Lots::from_raw(100), Side::Bid, UpdateAction::New);
+        book.apply_delta(Ticks::from_raw(45), Lots::from_raw(200), Side::Bid, UpdateAction::New);
+        book.apply_delta(Ticks::from_raw(42), Lots::from_raw(50), Side::Bid, UpdateAction::New);
+        assert_eq!(book.best_bid(), Some((Ticks::from_raw(45), Lots::from_raw(200))));
+    }
+
+    #[test]
+    fn best_ask_is_lowest_price() {
+        let mut book = ArrayBook::<100>::default();
+        book.apply_delta(Ticks::from_raw(50), Lots::from_raw(100), Side::Ask, UpdateAction::New);
+        book.apply_delta(Ticks::from_raw(47), Lots::from_raw(200), Side::Ask, UpdateAction::New);
+        book.apply_delta(Ticks::from_raw(55), Lots::from_raw(50), Side::Ask, UpdateAction::New);
+        assert_eq!(book.best_ask(), Some((Ticks::from_raw(47), Lots::from_raw(200))));
+    }
+
+    #[test]
+    fn clear_resets_all() {
+        let mut book = ArrayBook::<100>::default();
+        book.apply_delta(Ticks::from_raw(45), Lots::from_raw(100), Side::Bid, UpdateAction::New);
+        book.apply_delta(Ticks::from_raw(55), Lots::from_raw(100), Side::Ask, UpdateAction::New);
+        book.clear();
+        assert!(book.best_bid().is_none());
+        assert!(book.best_ask().is_none());
+    }
+
+    #[test]
+    fn level_count_correct() {
+        let mut book = ArrayBook::<100>::default();
+        book.apply_delta(Ticks::from_raw(40), Lots::from_raw(100), Side::Bid, UpdateAction::New);
+        book.apply_delta(Ticks::from_raw(45), Lots::from_raw(200), Side::Bid, UpdateAction::New);
+        assert_eq!(book.level_count(Side::Bid), 2);
+        assert_eq!(book.level_count(Side::Ask), 0);
+    }
+
+    #[test]
+    fn total_depth_sums_top_n() {
+        let mut book = ArrayBook::<100>::default();
+        book.apply_delta(Ticks::from_raw(45), Lots::from_raw(100), Side::Bid, UpdateAction::New);
+        book.apply_delta(Ticks::from_raw(44), Lots::from_raw(200), Side::Bid, UpdateAction::New);
+        book.apply_delta(Ticks::from_raw(43), Lots::from_raw(300), Side::Bid, UpdateAction::New);
+        assert_eq!(book.total_depth(Side::Bid, 2), Lots::from_raw(300)); // top 2: 100 + 200
+        assert_eq!(book.total_depth(Side::Bid, 5), Lots::from_raw(600)); // all 3: 100+200+300
+    }
+
+    #[test]
+    fn depth_fills_buffer() {
+        let mut book = ArrayBook::<100>::default();
+        book.apply_delta(Ticks::from_raw(45), Lots::from_raw(100), Side::Bid, UpdateAction::New);
+        book.apply_delta(Ticks::from_raw(44), Lots::from_raw(200), Side::Bid, UpdateAction::New);
+        let mut buf = [(Ticks::ZERO, Lots::ZERO); 5];
+        let n = book.depth(Side::Bid, &mut buf);
+        assert_eq!(n, 2);
+        assert_eq!(buf[0], (Ticks::from_raw(45), Lots::from_raw(100)));
+        assert_eq!(buf[1], (Ticks::from_raw(44), Lots::from_raw(200)));
+    }
+}
