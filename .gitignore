@@ -48,3 +48,15 @@ philosophy/
 .worktrees/
 
 .claude/datapipeline
+
+# Nim POC
+polymarket-bot-poc/src/main
+polymarket-bot-poc/src/main.dSYM/
+polymarket-bot-poc/src/test_dashboard
+polymarket-bot-poc/src/check_sizes
+polymarket-bot-poc/src/check_inst
+polymarket-bot-poc/src/ftxui/build/
+polymarket-bot-poc/data/tapes/
+polymarket-bot-poc/mantis.log
+polymarket-bot-poc/capture.log
+*.nimcache/
