@@ -545,7 +545,10 @@ proc engineThread(ss: ptr SharedState) {.thread.} =
       else: discard
 
     if not processed:
+      # Yield CPU when no events — saves power without hurting hot-path latency.
+      # In production HFT you'd busy-spin, but for this POC we yield.
       cpuRelax()
+      sleep(0)  # sched_yield equivalent
 
   # Write final counters
   ss.summary.bboChanges = bboChanges
@@ -655,6 +658,7 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
       spinCount += 1
       if spinCount > 64:
         cpuRelax()
+        sleep(0)  # yield CPU when idle
         spinCount = 0
     else:
       spinCount = 0
