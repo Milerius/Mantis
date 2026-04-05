@@ -86,6 +86,8 @@ jobs:
       - name: Merge benchmark outputs
         run: |
           jq -s 'add' bench-output-spsc.json bench-output-seqlock.json bench-output-fixed.json bench-output-market_state.json > bench-output.json
+      - name: Restore Cargo.lock before gh-pages switch
+        run: git checkout -- Cargo.lock
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@a7bc2366eda11037936ea57d811a43b3418d3073 # v1.21.0
         with:
