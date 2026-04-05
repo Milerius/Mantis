@@ -223,11 +223,16 @@ proc makeSparklineGraph*(data: ptr int16, count: cint, col: FtxuiColor): Element
   auto graphColor = `col`;
   `res` = ftxui::graph([dataPtr, dataCount](int width, int height) -> std::vector<int> {
     std::vector<int> out(width, 0);
+    if (dataCount <= 0 || height <= 0) return out;
     int16_t maxVal = 1;
-    for (int i = 0; i < std::min(width, dataCount); i++)
+    for (int i = 0; i < dataCount; i++)
       if (dataPtr[i] > maxVal) maxVal = dataPtr[i];
-    for (int i = 0; i < std::min(width, dataCount); i++)
-      out[i] = std::min(static_cast<int>(dataPtr[i] * height / maxVal), height);
+    // Stretch dataCount points across full width
+    for (int x = 0; x < width; x++) {
+      int i = x * dataCount / width;
+      if (i >= dataCount) i = dataCount - 1;
+      out[x] = std::min(static_cast<int>(dataPtr[i] * height / maxVal), height);
+    }
     return out;
   }) | ftxui::color(graphColor);
   """.}

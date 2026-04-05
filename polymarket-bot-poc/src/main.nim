@@ -10,7 +10,7 @@
 #
 # Compile: cd polymarket-bot-poc && nim c src/main.nim
 
-import std/[asyncdispatch, atomics, httpclient, json, monotimes, net,
+import std/[asyncdispatch, atomics, httpclient, json, locks, monotimes, net,
             os, algorithm, sequtils, strformat, strutils, sugar, tables, times,
             parseopt]
 import ws
@@ -25,23 +25,28 @@ import constantine/threadpool/crossthread/backoff  # Eventcount
 #  LOGGING — file-based, thread-safe via {.gcsafe.}
 # ═══════════════════════════════════════════════════════════════════════════
 
-var logFile {.threadvar.}: File
+var logFile: File
 var logPath* = "mantis.log"
+var logLock: Lock
 
 proc initLog*() =
+  initLock(logLock)
   logFile = open(logPath, fmAppend)
 
-proc log*(msg: string) =
-  if logFile != nil:
+proc log*(msg: string) {.gcsafe.} =
+  {.cast(gcsafe).}:
     let ts = now().format("HH:mm:ss.fff")
-    logFile.writeLine(&"[{ts}] {msg}")
-    logFile.flushFile()
-  stderr.writeLine(msg)
+    acquire(logLock)
+    if logFile != nil:
+      logFile.writeLine(&"[{ts}] {msg}")
+      logFile.flushFile()
+    release(logLock)
 
 proc closeLog*() =
   if logFile != nil:
     logFile.close()
     logFile = nil
+  deinitLock(logLock)
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  CONSTANTS
