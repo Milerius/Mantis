@@ -552,16 +552,11 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
   var bnPriceSteps: seq[float] = @[]
   var lastBnPrice = 0.0
 
-  # Per-instrument state for dashboard
-  var instBidPrice, instAskPrice: array[MaxInstruments, float64]
-  var instBidSize, instAskSize: array[MaxInstruments, float64]
-  var instMid, instSpread, instWmid: array[MaxInstruments, float64]
-  var instBidLevels, instAskLevels: array[MaxInstruments, int32]
-  var instTotalBidDepth, instTotalAskDepth: array[MaxInstruments, float64]
+  # Per-instrument last-seen state
+  var instState: array[MaxInstruments, InstrumentSnapshot]
+  var instBboCount: array[MaxInstruments, int32]
   var instTradeCount: array[MaxInstruments, int32]
-  var instLastTradePrice: array[MaxInstruments, float64]
-  var instLastTradeSide: array[MaxInstruments, uint8]
-  var instLastTradeSize: array[MaxInstruments, float64]
+  var instLastMid: array[MaxInstruments, float64]  # for microstructure tracking
 
   # Rolling counters
   var totalRate, pmRate, bnBboRate, bnTradeRate, bnDepthRate: RollingCounter
@@ -573,6 +568,10 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
   for i in 0..<MaxInstruments:
     instBboRate[i].init(initMs)
     instTradeRate[i].init(initMs)
+
+  # Trade tape circular buffer
+  var tradeTape: array[MaxTrades, TradeTick]
+  var tradeWriteIdx: int32 = 0
 
   # Latency histogram
   var latHist: LatencyHistogram
@@ -668,25 +667,27 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
     # ── Per-instrument state update ──
     let iid = ev.instId.int
     if iid < MaxInstruments:
-      instBidPrice[iid] = ev.bidPrice
-      instAskPrice[iid] = ev.askPrice
-      instBidSize[iid] = ev.bidSize
-      instAskSize[iid] = ev.askSize
-      instMid[iid] = ev.mid
-      instSpread[iid] = ev.spread
-      instWmid[iid] = ev.weightedMid
-      instBidLevels[iid] = ev.bidLevels
-      instAskLevels[iid] = ev.askLevels
-      instTotalBidDepth[iid] = ev.totalBidDepth
-      instTotalAskDepth[iid] = ev.totalAskDepth
+      instState[iid].instrumentId = ev.instId
+      instState[iid].active = true
+      instState[iid].bidPrice = ev.bidPrice
+      instState[iid].askPrice = ev.askPrice
+      instState[iid].bidSize = ev.bidSize
+      instState[iid].askSize = ev.askSize
+      instState[iid].spread = ev.spread
+      instState[iid].mid = ev.mid
+      instState[iid].wmid = ev.weightedMid
+      instState[iid].bidLevels = ev.bidLevels
+      instState[iid].askLevels = ev.askLevels
+      instState[iid].totalBidDepth = ev.totalBidDepth
+      instState[iid].totalAskDepth = ev.totalAskDepth
+      if ev.bidSize + ev.askSize > 0:
+        instState[iid].imbalance = float32((ev.bidSize - ev.askSize) / (ev.bidSize + ev.askSize))
 
     # ── Accumulate stats ──
     case ev.kind
     of tkBookUpdate:
       pmEvents += 1; pmRate.increment(wallMs)
       totalRate.increment(wallMs)
-      if iid < MaxInstruments:
-        instBboRate[iid].increment(wallMs)
       if ev.mid > 0:
         lastUpMid = ev.mid
         if ev.mid > probPeak: probPeak = ev.mid
@@ -703,10 +704,20 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
       lastTradeMs = ev.localEpochMs
       if iid < MaxInstruments:
         instTradeCount[iid] += 1
+        instState[iid].tradeCount = instTradeCount[iid]
         instTradeRate[iid].increment(wallMs)
-        instLastTradePrice[iid] = ev.tradePrice
-        instLastTradeSide[iid] = ev.tradeSide
-        instLastTradeSize[iid] = ev.tradeSize
+        instState[iid].tradesPerSec = instTradeRate[iid].rate(wallMs)
+        instState[iid].lastTradePrice = ev.tradePrice
+        instState[iid].lastTradeSide = ev.tradeSide
+        instState[iid].lastTradeSize = ev.tradeSize
+        # Trade tape
+        tradeTape[tradeWriteIdx mod MaxTrades] = TradeTick(
+          epochMs: ev.localEpochMs,
+          instrumentId: ev.instId,
+          price: ev.tradePrice,
+          size: ev.tradeSize,
+          side: ev.tradeSide)
+        tradeWriteIdx += 1
 
     of tkBnBbo:
       bnBboEvents += 1; bnBboRate.increment(wallMs)
@@ -737,6 +748,34 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
       totalRate.increment(wallMs)
       if ev.mid > 0:
         lastUpMid = ev.mid
+      if iid < MaxInstruments:
+        instBboCount[iid] += 1
+        instState[iid].bboChanges = instBboCount[iid]
+        instBboRate[iid].increment(wallMs)
+        instState[iid].bboChangesPerSec = instBboRate[iid].rate(wallMs)
+        # Microstructure: track price reversals and consecutive moves
+        if ev.mid > 0 and instLastMid[iid] > 0:
+          let diff = ev.mid - instLastMid[iid]
+          if diff > 0:
+            if instState[iid].moveDirection < 0:
+              instState[iid].priceReversals += 1
+              instState[iid].consecutiveMoves = 1
+            elif instState[iid].moveDirection > 0:
+              instState[iid].consecutiveMoves += 1
+            else:
+              instState[iid].consecutiveMoves = 1
+            instState[iid].moveDirection = 1
+          elif diff < 0:
+            if instState[iid].moveDirection > 0:
+              instState[iid].priceReversals += 1
+              instState[iid].consecutiveMoves = 1
+            elif instState[iid].moveDirection < 0:
+              instState[iid].consecutiveMoves += 1
+            else:
+              instState[iid].consecutiveMoves = 1
+            instState[iid].moveDirection = -1
+        if ev.mid > 0:
+          instLastMid[iid] = ev.mid
 
     # ── Dashboard snapshot every 100ms ──
     if wallMs - lastDashPushMs >= 100:
@@ -779,42 +818,18 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
       for i in 0..<ss.registry.marketCount:
         snap.markets[i] = ss.registry.markets[i]
 
-      # Fill instrument snapshots
-      for i in 0..<ss.registry.count:
-        snap.instruments[i].instrumentId = ss.registry.instruments[i].id
+      # Per-instrument snapshots from consolidated state
+      for i in 0..<snap.instrumentCount:
+        snap.instruments[i] = instState[i]
+        # Overlay registry metadata
         snap.instruments[i].kind = ss.registry.instruments[i].kind
-        snap.instruments[i].active = ss.registry.instruments[i].active
-        if i < MaxInstruments:
-          snap.instruments[i].bidPrice = instBidPrice[i]
-          snap.instruments[i].askPrice = instAskPrice[i]
-          snap.instruments[i].bidSize = instBidSize[i]
-          snap.instruments[i].askSize = instAskSize[i]
-          snap.instruments[i].spread = instSpread[i]
-          snap.instruments[i].mid = instMid[i]
-          snap.instruments[i].wmid = instWmid[i]
-          snap.instruments[i].bidLevels = instBidLevels[i]
-          snap.instruments[i].askLevels = instAskLevels[i]
-          snap.instruments[i].totalBidDepth = instTotalBidDepth[i]
-          snap.instruments[i].totalAskDepth = instTotalAskDepth[i]
-          snap.instruments[i].bboChangesPerSec = instBboRate[i].rate(wallMs)
-          snap.instruments[i].tradesPerSec = instTradeRate[i].rate(wallMs)
-          snap.instruments[i].tradeCount = instTradeCount[i]
-          snap.instruments[i].lastTradePrice = instLastTradePrice[i]
-          snap.instruments[i].lastTradeSide = instLastTradeSide[i]
-          snap.instruments[i].lastTradeSize = instLastTradeSize[i]
-          # Imbalance from bid/ask sizes
-          let bs = instBidSize[i]; let az = instAskSize[i]
-          if bs + az > 0:
-            snap.instruments[i].imbalance = float32((bs - az) / (bs + az))
+        # Refresh rolling rates at snapshot time
+        snap.instruments[i].bboChangesPerSec = instBboRate[i].rate(wallMs)
+        snap.instruments[i].tradesPerSec = instTradeRate[i].rate(wallMs)
 
-      # Reference instrument (BN BBO) — stored using InstRef mapped to refIdx
-      let refIdx = ss.registry.markets[0].refIdx.int
-      if refIdx < MaxInstruments:
-        snap.instruments[refIdx].bidPrice = lastBtcMid  # btcBid from telemetry
-        # We track btc via the telem events; use last known values
-        # The BN BBO data flows through telemetry events, we track lastBtcMid
-        snap.instruments[refIdx].bidPrice = 0.0  # placeholder, BN reference is tracked differently
-        snap.instruments[refIdx].askPrice = 0.0
+      # Trade tape
+      snap.trades = tradeTape
+      snap.tradeWriteIdx = tradeWriteIdx mod MaxTrades
 
       # Queue depths
       snap.pmQDepth = int32(pmQLen)
@@ -873,10 +888,10 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
       # Complementarity (up+down mid)
       for mi in 0..<ss.registry.marketCount:
         let mkt = ss.registry.markets[mi]
-        let upMid = instMid[mkt.upIdx.int]
-        let downMid = instMid[mkt.downIdx.int]
-        if upMid > 0 and downMid > 0:
-          snap.upPlusDown[mi] = upMid + downMid
+        let upMid = instState[mkt.upIdx.int].mid
+        let dnMid = instState[mkt.downIdx.int].mid
+        if upMid > 0 and dnMid > 0:
+          snap.upPlusDown[mi] = upMid + dnMid
 
       discard dashQ.tryPush(snap)
 
