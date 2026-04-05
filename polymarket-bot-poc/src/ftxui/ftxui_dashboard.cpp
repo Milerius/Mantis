@@ -5,7 +5,6 @@
 #include <ftxui/screen/screen.hpp>
 #include <ftxui/dom/node.hpp>
 #include <ftxui/screen/color.hpp>
-#include <ftxui/dom/table.hpp>
 #include <ftxui/dom/canvas.hpp>
 
 #include <string>
@@ -206,19 +205,36 @@ struct FtxuiDashboard {
                 ap.str(), std::to_string(static_cast<int>(inst.askSize))
             });
         }
-        auto table = Table(rows);
-        table.SelectAll().Border(LIGHT);
-        table.SelectRow(0).Decorate(bold);
-        table.SelectRow(0).SeparatorVertical(LIGHT);
-        table.SelectColumn(0).DecorateCells(color(Color::Green));
-        table.SelectColumn(1).DecorateCells(color(Color::Green));
-        table.SelectColumn(2).DecorateCells(color(Color::Red));
-        table.SelectColumn(3).DecorateCells(color(Color::Red));
+        if (rows.size() <= 1) {
+            return vbox({
+                hbox({text("UP BOOK") | bold, filler(), text(prob.str()) | bold | color(Color::Cyan)}),
+                text("  waiting for book data...") | dim,
+            });
+        }
 
-        // Depth bar chart via Canvas
+        // Manual vbox/hbox layout instead of Table to avoid __next_prime crash
+        Elements depth_rows;
+        depth_rows.push_back(hbox({
+            text("DEPTH") | bold | size(WIDTH, EQUAL, 8),
+            text("BID") | bold | color(Color::Green) | size(WIDTH, EQUAL, 8),
+            text("ASK") | bold | color(Color::Red) | size(WIDTH, EQUAL, 8),
+            text("DEPTH") | bold | size(WIDTH, EQUAL, 8),
+        }) | borderLight);
+        for (size_t r = 1; r < rows.size(); r++) {
+            depth_rows.push_back(hbox({
+                text(rows[r][0]) | color(Color::Green) | size(WIDTH, EQUAL, 8),
+                text(rows[r][1]) | color(Color::Green) | size(WIDTH, EQUAL, 8),
+                text(rows[r][2]) | color(Color::Red) | size(WIDTH, EQUAL, 8),
+                text(rows[r][3]) | color(Color::Red) | size(WIDTH, EQUAL, 8),
+            }));
+        }
+        auto depth_list = vbox(depth_rows) | border;
+
+        // Depth bar chart via Canvas — guard against degenerate dimensions
         auto depth_canvas = canvas([&](Canvas& c) {
             int w = c.width();
             int h = c.height();
+            if (w <= 0 || h <= 0 || w > 1000 || h > 1000) return;
             int cx = w / 2;
             double maxSize = 1;
             for (int i = 0; i < std::min(10, static_cast<int>(s->upDepth.bidCount)); i++)
@@ -230,12 +246,12 @@ struct FtxuiDashboard {
             for (int i = 0; i < std::min(10, static_cast<int>(s->upDepth.bidCount)); i++) {
                 int bw = static_cast<int>(s->upDepth.bids[i].size / maxSize * cx);
                 int y = i * barH * 2;
-                c.DrawBlockLine(cx - bw, y, cx, y, Color::Green);
+                if (y < h) c.DrawBlockLine(cx - bw, y, cx, y, Color::Green);
             }
             for (int i = 0; i < std::min(10, static_cast<int>(s->upDepth.askCount)); i++) {
                 int aw = static_cast<int>(s->upDepth.asks[i].size / maxSize * cx);
                 int y = i * barH * 2;
-                c.DrawBlockLine(cx, y, cx + aw, y, Color::Red);
+                if (y < h) c.DrawBlockLine(cx, y, cx + aw, y, Color::Red);
             }
         });
 
@@ -250,7 +266,7 @@ struct FtxuiDashboard {
                 filler(),
                 text(prob.str()) | bold | color(Color::Cyan),
             }),
-            table.Render(),
+            depth_list,
             depth_canvas | size(HEIGHT, EQUAL, 6),
             text(stats.str()) | dim,
         }) | flex;
@@ -313,6 +329,7 @@ struct FtxuiDashboard {
         auto chart = canvas([&](Canvas& c) {
             int w = c.width();
             int h = c.height();
+            if (w <= 0 || h <= 0 || w > 1000 || h > 1000) return;
             // Grid lines at 25%, 50%, 75%
             for (float pct : {0.25f, 0.50f, 0.75f}) {
                 int y = h - static_cast<int>(pct * h);
@@ -346,6 +363,7 @@ struct FtxuiDashboard {
         auto chart = canvas([&](Canvas& c) {
             int w = c.width();
             int h = c.height();
+            if (w <= 0 || h <= 0 || w > 1000 || h > 1000) return;
             // Approximate bars from percentiles (we lack raw histogram buckets)
             float barW = static_cast<float>(w) / 10;
             int64_t vals[] = {
@@ -409,10 +427,12 @@ struct FtxuiDashboard {
     }
 
     Element buildFeeds(const DashboardSnapshot* s) {
-        int64_t pmStale = s->epochMs - s->pmLastMsgMs;
-        auto pmDot = (pmStale < 100) ? color(Color::Green)
+        int64_t pmStale = (s->pmLastMsgMs > 0) ? (s->epochMs - s->pmLastMsgMs) : -1;
+        auto pmDot = (pmStale < 0) ? color(Color::GrayDark)
+                   : (pmStale < 100) ? color(Color::Green)
                    : (pmStale < 1000) ? color(Color::Yellow)
                    : color(Color::Red);
+        std::string pmStaleStr = (pmStale < 0) ? "---" : (std::to_string(pmStale) + "ms");
         int64_t bnStale = 0;
         for (int i = 0; i < s->marketCount; i++) {
             if (s->bnLastMsgMs[i] > 0) {
@@ -426,8 +446,8 @@ struct FtxuiDashboard {
 
         return vbox({
             text("FEEDS") | bold | dim,
-            hbox({text("● ") | pmDot, text("PM " + std::to_string(pmStale) + "ms")}),
-            hbox({text("● ") | bnDot, text("BN " + std::to_string(bnStale) + "ms")}),
+            hbox({text("● ") | pmDot, text("PM " + pmStaleStr)}),
+            hbox({text("● ") | bnDot, text("BN " + (bnStale > 0 ? std::to_string(bnStale) + "ms" : std::string("---")))}),
             text("PM:" + fmtBytes(static_cast<int64_t>(s->pmBytesPerSec)) +
                  "/s  BN:" + fmtBytes(static_cast<int64_t>(s->bnBytesPerSec)) + "/s") | dim,
         });
@@ -514,18 +534,35 @@ struct FtxuiDashboard {
                 "$" + std::to_string(static_cast<int>(t.size)),
             });
         }
-        auto table = Table(rows);
-        table.SelectAll().Border(LIGHT);
-        table.SelectRow(0).Decorate(bold);
-        table.SelectRow(0).Decorate(dim);
-        // Color BUY green, SELL red
+        if (rows.size() <= 1) {
+            // No trades yet — just show header
+            return vbox({
+                text("TRADE TAPE") | bold | dim,
+                text("  waiting for trades...") | dim,
+            });
+        }
+
+        // Manual vbox/hbox layout instead of Table to avoid __next_prime crash
+        Elements tape_rows;
+        tape_rows.push_back(hbox({
+            text("TIME") | bold | dim | size(WIDTH, EQUAL, 10),
+            text("SIDE") | bold | dim | size(WIDTH, EQUAL, 6),
+            text("PRICE") | bold | dim | size(WIDTH, EQUAL, 8),
+            text("SIZE") | bold | dim | size(WIDTH, EQUAL, 8),
+        }));
+        tape_rows.push_back(separator());
         for (size_t r = 1; r < rows.size(); r++) {
-            auto col = (rows[r][1] == "BUY") ? Color::Green : Color::Red;
-            table.SelectCell(1, static_cast<int>(r)).Decorate(color(col));
+            auto sideCol = (rows[r][1] == "BUY") ? Color::Green : Color::Red;
+            tape_rows.push_back(hbox({
+                text(rows[r][0]) | size(WIDTH, EQUAL, 10),
+                text(rows[r][1]) | color(sideCol) | size(WIDTH, EQUAL, 6),
+                text(rows[r][2]) | size(WIDTH, EQUAL, 8),
+                text(rows[r][3]) | size(WIDTH, EQUAL, 8),
+            }));
         }
         return vbox({
             text("TRADE TAPE") | bold | dim,
-            table.Render() | flex | yframe,
+            vbox(tape_rows) | flex | yframe,
         });
     }
 
@@ -543,6 +580,21 @@ struct FtxuiDashboard {
     // ── Main layout ─────────────────────────────────────────────────────
 
     Element buildLayout(const DashboardSnapshot* s) {
+        // Guard: if no data yet, show minimal waiting screen
+        if (s->marketCount == 0 && s->latSampleCount == 0) {
+            return vbox({
+                buildHeader(s),
+                separator(),
+                vbox({
+                    filler(),
+                    text("  Waiting for market data...") | bold | center,
+                    text("  Markets will appear when capture window opens") | dim | center,
+                    filler(),
+                }) | flex | border,
+                buildStatusBar(s),
+            });
+        }
+
         auto left_col = vbox({
             buildUpBook(s) | flex,
             separator(),
@@ -601,12 +653,25 @@ void dashboard_destroy(FtxuiDashboard* d) {
 char dashboard_render(FtxuiDashboard* d, const void* snapshot_ptr) {
     auto* snap = static_cast<const DashboardSnapshot*>(snapshot_ptr);
 
-    auto document = d->buildLayout(snap);
-    auto screen = Screen::Create(Dimension::Full(), Dimension::Fit(document));
-    Render(screen, document);
-    std::cout << d->reset_position;
-    screen.Print();
-    d->reset_position = screen.ResetPosition();
+    try {
+        auto document = d->buildLayout(snap);
+        auto screen = Screen::Create(Dimension::Full(), Dimension::Fit(document));
+        Render(screen, document);
+        std::cout << d->reset_position;
+        screen.Print();
+        d->reset_position = screen.ResetPosition();
+    } catch (...) {
+        // Catch any exception (including __next_prime overflow from Canvas)
+        auto document = vbox({
+            text("MANTIS — Dashboard Error") | bold | color(Color::Red),
+            text("  Rendering error — waiting for valid data...") | dim,
+        });
+        auto screen = Screen::Create(Dimension::Full(), Dimension::Fit(document));
+        Render(screen, document);
+        std::cout << d->reset_position;
+        screen.Print();
+        d->reset_position = screen.ResetPosition();
+    }
 
     return d->pollKey();
 }
