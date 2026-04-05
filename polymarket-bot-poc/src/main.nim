@@ -531,6 +531,17 @@ proc engineThread(ss: ptr SharedState) {.thread.} =
         if (ev.flags and FlagLastInBatch) != 0:
           refBooks[refBookIdx].valid = true
           bnBookUpdates += 1
+          # Write BN depth to shared state for dashboard
+          for i in 0..<min(refBooks[refBookIdx].bidCount, 20):
+            ss.refDepthShared.bids[i] = DepthLevel(
+              price: refBooks[refBookIdx].bids[i].price,
+              size: refBooks[refBookIdx].bids[i].qty)
+          ss.refDepthShared.bidCount = int32(min(refBooks[refBookIdx].bidCount, 20))
+          for i in 0..<min(refBooks[refBookIdx].askCount, 20):
+            ss.refDepthShared.asks[i] = DepthLevel(
+              price: refBooks[refBookIdx].asks[i].price,
+              size: refBooks[refBookIdx].asks[i].qty)
+          ss.refDepthShared.askCount = int32(min(refBooks[refBookIdx].askCount, 20))
           let (rbid, _) = refBooks[refBookIdx].bnBestBid()
           let (rask, _) = refBooks[refBookIdx].bnBestAsk()
           if rbid > 0 and rask > 0 and btcBid > 0 and btcAsk > 0:
@@ -938,6 +949,7 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
       # Copy depth ladder from engine's shared state
       snap.upDepth = ss.upDepthShared
       snap.downDepth = ss.downDepthShared
+      snap.refDepth = ss.refDepthShared
 
       # Complementarity (up+down mid)
       for mi in 0..<ss.registry.marketCount:

@@ -160,10 +160,29 @@ proc buildDownBook(snap: DashboardSnapshot): Element =
                 elif upDown >= 0.995 and upDown <= 1.005: colorYellow()
                 else: colorRed()
 
+  # Down book depth ladder
+  var dnRows = initElements()
+  let dnLevels = min(snap.downDepth.bidCount, snap.downDepth.askCount).min(5)
+  if dnLevels > 0:
+    for i in 0..<dnLevels:
+      dnRows.add(hbox(elems(
+        text($int(snap.downDepth.bids[i].size)).withColor(colorGreen()).withSize(WIDTH, EQUAL, 7),
+        text(fmtPrice(snap.downDepth.bids[i].price)).withColor(colorGreen()).withSize(WIDTH, EQUAL, 7),
+        text(fmtPrice(snap.downDepth.asks[i].price)).withColor(colorRed()).withSize(WIDTH, EQUAL, 7),
+        text($int(snap.downDepth.asks[i].size)).withColor(colorRed()).withSize(WIDTH, EQUAL, 7),
+      )))
+  else:
+    dnRows.add(text(line))
+
   vbox(elems(
     hbox(elems(text("DOWN BOOK").bold, filler(), text(prob).bold.withColor(colorYellowLight()))),
-    text(line),
-    hbox(elems(text("up+down: "), text(&"{upDown:.4f}").withColor(udColor))),
+    vbox(dnRows),
+    hbox(elems(
+      text(&"sp:{inst.spread:.3f} imb:{inst.imbalance:+.2f}").dim,
+      filler(),
+      text("up+down: "),
+      text(&"{upDown:.4f}").withColor(udColor),
+    )),
   ))
 
 proc buildReference(snap: DashboardSnapshot): Element =
@@ -172,9 +191,27 @@ proc buildReference(snap: DashboardSnapshot): Element =
   let refInst = snap.instruments[mkt.refIdx]
   let sym = $refInst.symbol
 
+  # BN depth20 book levels
+  var refRows = initElements()
+  let refLevels = min(snap.refDepth.bidCount, snap.refDepth.askCount).min(5)
+  if refLevels > 0:
+    refRows.add(hbox(elems(
+      text("QTY").bold.dim.withSize(WIDTH, EQUAL, 10),
+      text("BID").bold.withColor(colorGreen()).withSize(WIDTH, EQUAL, 12),
+      text("ASK").bold.withColor(colorRed()).withSize(WIDTH, EQUAL, 12),
+      text("QTY").bold.dim.withSize(WIDTH, EQUAL, 10),
+    )))
+    for i in 0..<refLevels:
+      refRows.add(hbox(elems(
+        text(&"{snap.refDepth.bids[i].size:.2f}").withColor(colorGreen()).withSize(WIDTH, EQUAL, 10),
+        text(fmtComma(snap.refDepth.bids[i].price)).withColor(colorGreen()).withSize(WIDTH, EQUAL, 12),
+        text(fmtComma(snap.refDepth.asks[i].price)).withColor(colorRed()).withSize(WIDTH, EQUAL, 12),
+        text(&"{snap.refDepth.asks[i].size:.2f}").withColor(colorRed()).withSize(WIDTH, EQUAL, 10),
+      )))
+
   vbox(elems(
-    hbox(elems(text(sym).bold, text(" (Binance)").dim)),
-    text("$" & fmtComma(refInst.mid)).bold.withColor(colorCyan()),
+    hbox(elems(text(sym).bold, text(" (Binance)").dim, filler(), text("$" & fmtComma(refInst.mid)).bold.withColor(colorCyan()))),
+    vbox(refRows),
     text(&"sp:${refInst.spread:.2f}  d20<>bbo:{refInst.bboMatchRate:.1f}%").dim,
   ))
 

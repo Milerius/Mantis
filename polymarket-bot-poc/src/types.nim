@@ -221,6 +221,7 @@ type
     # FTXUI depth ladder data
     upDepth*: DepthLadder
     downDepth*: DepthLadder
+    refDepth*: DepthLadder        # BN depth20 book
     # Probability history
     probHistory*: array[120, float32]
     probHistoryIdx*: int32
@@ -271,6 +272,7 @@ type
     # Depth data (written by engine, read by telemetry — tearing OK for display)
     upDepthShared*: DepthLadder
     downDepthShared*: DepthLadder
+    refDepthShared*: DepthLadder  # BN depth20
     # Output
     summary*: CaptureSummary
     tapeDir*: FixedStr
