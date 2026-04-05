@@ -148,15 +148,18 @@ proc makeLineChart*(data: ptr float32, count: cint, w, h: cint, col: FtxuiColor)
     ch - 1 - cint((v - minV) / rangeV * (ch - 2).float32)
   proc toX(i: int): cint =
     cint(i.float32 / (count - 1).float32 * (cw - 1).float32)
-  # Fill area under the curve (dim green)
-  let dimGreen = colorRGB(0, 60, 20)
+  # Draw smooth line using braille points only
+  for i in 1..<count:
+    c.drawPointLine(toX(i - 1), toY(arr[i - 1]), toX(i), toY(arr[i]), col)
+  # Fill under the curve with braille dots (subtle, every other pixel)
+  let dimGreen = colorRGB(0, 40, 15)
   for i in 0..<count:
     let x = toX(i)
     let y = toY(arr[i])
-    c.drawBlockLine(x, y, x, ch - 1, dimGreen)
-  # Draw line on top (bright green)
-  for i in 1..<count:
-    c.drawPointLine(toX(i - 1), toY(arr[i - 1]), toX(i), toY(arr[i]), col)
+    var fy = y + 2
+    while fy < ch:
+      c.drawPoint(x, fy, true, dimGreen)
+      fy += 2
   canvasToElement(c)
 
 proc makeBarChart*(values: ptr int64, count: cint, w, h: cint, colors: ptr FtxuiColor): Element =
