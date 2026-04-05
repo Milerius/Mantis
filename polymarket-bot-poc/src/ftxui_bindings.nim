@@ -3,6 +3,12 @@
 # Single source of truth for FTXUI interop.
 # Nim calls C++ directly — no wrapper layer.
 
+{.emit: """/*INCLUDESECTION*/
+#include <memory>
+#include <vector>
+#include <algorithm>
+""".}
+
 {.passC: "-Isrc/ftxui/build/_deps/ftxui-src/include -std=c++17".}
 {.passL: "src/ftxui/build/_deps/ftxui-build/libftxui-dom.a".}
 {.passL: "src/ftxui/build/_deps/ftxui-build/libftxui-screen.a".}
@@ -103,11 +109,116 @@ proc drawPoint*(c: var Canvas, x, y: cint, value: bool, col: FtxuiColor) {.impor
 proc drawBlockLine*(c: var Canvas, x1, y1, x2, y2: cint) {.importcpp: "#.DrawBlockLine(#, #, #, #)".}
 proc drawBlockLine*(c: var Canvas, x1, y1, x2, y2: cint, col: FtxuiColor) {.importcpp: "#.DrawBlockLine(#, #, #, #, #)".}
 
-proc canvasElement*(width, height: cint, fn: proc(c: var Canvas) {.cdecl.}): Element =
-  ## Wraps a canvas drawing function into an Element.
-  ## Note: FTXUI's canvas() takes std::function<void(Canvas&)>.
-  ## We use a C++ lambda wrapper via emit.
-  discard  # placeholder — need emit approach
+proc canvasToElement*(c: Canvas): Element =
+  ## Convert a pre-drawn Canvas to an Element.
+  ## ConstRef<Canvas> is implicitly constructible from Canvas by value.
+  var res: Element
+  {.emit: [res, " = ftxui::canvas(std::move(", c, "));"].}
+  res
+
+proc makeLineChart*(data: ptr float32, count: cint, w, h: cint, col: FtxuiColor): Element =
+  ## Create a line chart Element from float data array.
+  var c = initCanvas(w * 2, h * 4)  # braille resolution
+  let cw = c.width
+  let ch = c.height
+  if count < 2 or cw <= 0 or ch <= 0:
+    return canvasToElement(c)
+  # Find min/max
+  var minV, maxV: float32
+  minV = data[]; maxV = data[]
+  for i in 1..<count:
+    let v = cast[ptr UncheckedArray[float32]](data)[i]
+    if v < minV: minV = v
+    if v > maxV: maxV = v
+  let rangeV = if maxV > minV: maxV - minV else: 0.01'f32
+  # Grid lines at 25%, 50%, 75%
+  for pct in [0.25'f32, 0.50, 0.75]:
+    let y = ch - cint(pct * ch.float32)
+    var x: cint = 0
+    while x < cw:
+      c.drawPoint(x, y, true, colorGrayDark())
+      x += 4
+  # Draw line
+  for i in 1..<count:
+    let x0 = cint((i - 1).float32 / count.float32 * cw.float32)
+    let x1 = cint(i.float32 / count.float32 * cw.float32)
+    let v0 = cast[ptr UncheckedArray[float32]](data)[i - 1]
+    let v1 = cast[ptr UncheckedArray[float32]](data)[i]
+    let y0 = ch - cint((v0 - minV) / rangeV * (ch - 2).float32) - 1
+    let y1 = ch - cint((v1 - minV) / rangeV * (ch - 2).float32) - 1
+    c.drawPointLine(x0, y0, x1, y1, col)
+  canvasToElement(c)
+
+proc makeBarChart*(values: ptr int64, count: cint, w, h: cint, colors: ptr FtxuiColor): Element =
+  ## Create a bar chart Element from int64 data.
+  var c = initCanvas(w * 2, h * 2)  # block resolution
+  let cw = c.width
+  let ch = c.height
+  if count <= 0 or cw <= 0 or ch <= 0:
+    return canvasToElement(c)
+  var maxV: int64 = 1
+  for i in 0..<count:
+    let v = cast[ptr UncheckedArray[int64]](values)[i]
+    if v > maxV: maxV = v
+  let barW = max(1, cw div count)
+  for i in 0..<count:
+    let v = cast[ptr UncheckedArray[int64]](values)[i]
+    let bh = cint(v.float / maxV.float * ch.float)
+    let x0 = cint(i) * barW
+    let col = cast[ptr UncheckedArray[FtxuiColor]](colors)[i]
+    for y in (ch - bh)..<ch:
+      c.drawBlockLine(x0, y, x0 + barW - 1, y, col)
+  canvasToElement(c)
+
+proc makeDepthChart*(bidSizes, askSizes: ptr float64, bidCount, askCount: cint, w, h: cint): Element =
+  ## Horizontal depth bars: bids green left, asks red right.
+  var c = initCanvas(w * 2, h * 2)
+  let cw = c.width
+  let ch = c.height
+  if cw <= 0 or ch <= 0: return canvasToElement(c)
+  let cx = cw div 2
+  var maxSize: float64 = 1
+  for i in 0..<bidCount:
+    let s = cast[ptr UncheckedArray[float64]](bidSizes)[i]
+    if s > maxSize: maxSize = s
+  for i in 0..<askCount:
+    let s = cast[ptr UncheckedArray[float64]](askSizes)[i]
+    if s > maxSize: maxSize = s
+  let levels = max(bidCount, askCount)
+  let barH = max(1, ch div (levels * 2 + 1))
+  for i in 0..<bidCount:
+    let s = cast[ptr UncheckedArray[float64]](bidSizes)[i]
+    let bw = cint(s / maxSize * cx.float)
+    let y = cint(i) * barH * 2
+    if y < ch:
+      c.drawBlockLine(cx - bw, y, cx - 1, y, colorGreen())
+  for i in 0..<askCount:
+    let s = cast[ptr UncheckedArray[float64]](askSizes)[i]
+    let aw = cint(s / maxSize * cx.float)
+    let y = cint(i) * barH * 2
+    if y < ch:
+      c.drawBlockLine(cx, y, cx + aw, y, colorRed())
+  canvasToElement(c)
+
+proc makeSparklineGraph*(data: ptr int16, count: cint, col: FtxuiColor): Element =
+  ## Create a graph element from sparkline data.
+  ## Uses {.emit.} to bridge to FTXUI's graph() with std::function.
+  var res: Element
+  {.emit: """
+  auto dataPtr = (NI16*)`data`;
+  int dataCount = `count`;
+  auto graphColor = `col`;
+  `res` = ftxui::graph([dataPtr, dataCount](int width, int height) -> std::vector<int> {
+    std::vector<int> out(width, 0);
+    int16_t maxVal = 1;
+    for (int i = 0; i < std::min(width, dataCount); i++)
+      if (dataPtr[i] > maxVal) maxVal = dataPtr[i];
+    for (int i = 0; i < std::min(width, dataCount); i++)
+      out[i] = std::min(static_cast<int>(dataPtr[i] * height / maxVal), height);
+    return out;
+  }) | ftxui::color(graphColor);
+  """.}
+  res
 
 # ── Screen ──
 

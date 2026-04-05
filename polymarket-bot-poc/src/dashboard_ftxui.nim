@@ -128,9 +128,22 @@ proc buildUpBook(snap: DashboardSnapshot): Element =
 
   let stats = &"sp:{inst.spread:.3f} wmid:{inst.wmid:.4f} imb:{inst.imbalance:+.2f} lvl:{inst.bidLevels}/{inst.askLevels}"
 
+  # Depth bar chart
+  var bidSizes: array[20, float64]
+  var askSizes: array[20, float64]
+  let bc = snap.upDepth.bidCount.min(20)
+  let ac = snap.upDepth.askCount.min(20)
+  for i in 0..<bc: bidSizes[i] = snap.upDepth.bids[i].size
+  for i in 0..<ac: askSizes[i] = snap.upDepth.asks[i].size
+  let depthChart = if bc > 0 or ac > 0:
+    makeDepthChart(addr bidSizes[0], addr askSizes[0], bc.cint, ac.cint, 20, 3)
+  else:
+    emptyElement()
+
   vbox(elems(
     hbox(elems(text("UP BOOK").bold, filler(), text(prob).bold.withColor(colorCyan()))),
     vbox(rows).border,
+    depthChart.withSize(HEIGHT, EQUAL, 3),
     text(stats).dim,
     text(&"depth: {inst.totalBidDepth:.0f}/{inst.totalAskDepth:.0f}  bbo/s:{inst.bboChangesPerSec:.1f}  rev:{inst.priceReversals}").dim,
   )).flex
@@ -165,20 +178,61 @@ proc buildReference(snap: DashboardSnapshot): Element =
     text(&"sp:${refInst.spread:.2f}  d20<>bbo:{refInst.bboMatchRate:.1f}%").dim,
   ))
 
+proc buildProbChart(snap: DashboardSnapshot): Element =
+  if snap.probHistoryCount < 2:
+    return vbox(elems(
+      hbox(elems(text("PROBABILITY HISTORY").bold.dim, filler(), text("60s window").dim)),
+      filler(),
+    )).flex
+
+  # Build line chart from prob history
+  var data: array[120, float32]
+  let count = snap.probHistoryCount.min(120)
+  for i in 0..<count:
+    let idx = (snap.probHistoryIdx - count + i + 120) mod 120
+    data[i] = snap.probHistory[idx]
+  let chart = makeLineChart(addr data[0], count.cint, 40, 8, colorGreen())
+
+  vbox(elems(
+    hbox(elems(text("PROBABILITY HISTORY").bold.dim, filler(), text("60s window").dim)),
+    chart.flex,
+  )).flex
+
 proc buildLatency(snap: DashboardSnapshot): Element =
   let p99Color = if snap.latP99 < 10_000: colorGreen()
                  elif snap.latP99 < 100_000: colorYellow()
                  else: colorRed()
 
+  # Latency histogram bars (10 buckets approximated from percentiles)
+  var buckets: array[10, int64]
+  var colors: array[10, FtxuiColor]
+  # Approximate: distribute percentile values across buckets
+  buckets[0] = snap.latP50; buckets[1] = snap.latP50
+  buckets[2] = snap.latP95; buckets[3] = snap.latP95
+  buckets[4] = snap.latP99; buckets[5] = snap.latP99
+  buckets[6] = snap.latP999; buckets[7] = snap.latP999
+  buckets[8] = snap.latMax; buckets[9] = snap.latMax
+  for i in 0..3: colors[i] = colorGreen()
+  for i in 4..5: colors[i] = colorGreenLight()
+  for i in 6..7: colors[i] = colorYellow()
+  colors[8] = colorRedLight()
+  colors[9] = colorRed()
+
+  let histChart = if snap.latSampleCount > 0:
+    makeBarChart(addr buckets[0], 10.cint, 40, 4, addr colors[0])
+  else:
+    emptyElement()
+
   vbox(elems(
-    hbox(elems(text("LATENCY").bold.dim, text(&" (n={snap.latSampleCount})").dim)),
+    hbox(elems(text("ENGINE LATENCY").bold.dim, text(&" (n={snap.latSampleCount})").dim)),
     hbox(elems(
       text("p50:").dim, text(fmtLat(snap.latP50)).withColor(colorGreen()), text(" "),
       text("p95:").dim, text(fmtLat(snap.latP95)).withColor(colorGreenLight()), text(" "),
       text("p99:").dim, text(fmtLat(snap.latP99)).withColor(p99Color), text(" "),
       text("p999:").dim, text(fmtLat(snap.latP999)).withColor(colorRedLight()),
     )),
-    text(&"min:{fmtLat(snap.latMin)} max:{fmtLat(snap.latMax)}").dim,
+    histChart.withSize(HEIGHT, EQUAL, 4),
+    text(&"min:{fmtLat(snap.latMin)} max:{fmtLat(snap.latMax)} n={snap.latSampleCount}").dim,
   ))
 
 proc buildFeeds(snap: DashboardSnapshot): Element =
@@ -291,8 +345,14 @@ proc buildTradeTape(snap: DashboardSnapshot): Element =
   ))
 
 proc buildRates(snap: DashboardSnapshot): Element =
+  var sparkData: array[SparklineLen, int16]
+  for i in 0..<SparklineLen:
+    sparkData[i] = snap.rateSparkline[i]
+  let sparkline = makeSparklineGraph(addr sparkData[0], SparklineLen.cint, colorBlueLight())
+
   vbox(elems(
-    text("RATES").bold.dim,
+    text("EVENT RATES").bold.dim,
+    sparkline.withSize(HEIGHT, EQUAL, 4),
     hbox(elems(
       text("pm:" & fmtRate(snap.pmEventsPerSec)).withColor(colorGreen()), text(" "),
       text("bn:" & fmtRate(snap.bnBboPerSec + snap.bnTradePerSec + snap.bnDepthPerSec)).withColor(colorBlue()), text(" "),
@@ -333,8 +393,7 @@ proc buildLayout*(snap: DashboardSnapshot): Element =
   )).withSize(WIDTH, EQUAL, 45).border
 
   let centerCol = vbox(elems(
-    text("PROBABILITY").bold.dim,
-    filler(),
+    buildProbChart(snap).flex,
     separator(),
     buildLatency(snap),
     separator(),
