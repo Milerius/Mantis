@@ -143,6 +143,24 @@
 - [x] Layout assertions
 - [x] Type aliases: SeqLockDefault, SeqLockSimd (nightly)
 
+### 1.11 Market State Engine (`mantis-market-state`)
+**Status: Complete** | Completed: 2026-04-04
+
+- [x] `ArrayBook<N>` — fixed-size O(1) order book indexed by tick offset
+- [x] `OrderBook` trait — polymorphic interface for book implementations
+- [x] `MarketStateEngine<B, MAX>` — fully stack-allocated, no_std passive state machine
+- [x] Snapshot state machine — IS_SNAPSHOT / LAST_IN_BATCH flags for correct BBO emission
+- [x] `TopOfBook` — micro price + spread + BBO cached on price change only
+- [x] `InstrumentState<B>` — per-instrument state with seq, staleness, and snapshot tracking
+- [x] `Strategy` trait + `OrderIntent` + `OrderAction` — inline callback hook for strategies
+- [x] Lazy query methods: `micro_price`, `book_imbalance`, `spread`, `last_trade`, `is_stale`, `is_ready`, `book`
+- [x] `take_tob` — edge-triggered TopOfBook emission (clears flag on read)
+- [x] TopOfBook event processed as synthetic single-level book update
+- [x] Layout assertions: `TopOfBook` fits in one 64B cache line; `ArrayBook<100>` size verified
+- [x] Criterion benchmarks: `apply_delta`, `best_bid`, `process_delta` (mid/end), `micro_price`, `book_imbalance`
+- [x] Bolero property tests: random deltas no panic, best_bid invariant, imbalance range
+- [x] 17 unit tests, no_std clean, layout assertions in `mantis-layout`
+
 ### 1.4 Snapshot Publication
 - [ ] Single-writer publication primitive
 - [ ] Lock-free reader access
@@ -213,6 +231,7 @@
 | `mantis-queue` | Active | yes | 31 | — | miri pass |
 | `mantis-platform` | Active | yes | 164 | — | miri pass |
 | `mantis-seqlock` | Active | yes | 1 | — | miri pass |
+| `mantis-market-state` | Active | yes | 17 | 6 criterion groups | 3 bolero props |
 | `mantis-bench` | Active | std | 11 | 6+7 bench groups, 6 contenders | — |
-| `mantis-layout` | Active | std | 5 | — | — |
-| `mantis-verify` | Active | std | 10 | — | 4 kani proofs, 10 bolero/diff |
+| `mantis-layout` | Active | std | 6 | — | — |
+| `mantis-verify` | Active | std | 13 | — | 4 kani proofs, 13 bolero/diff |
