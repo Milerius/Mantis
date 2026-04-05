@@ -3,7 +3,6 @@
 # Integer-indexed (PriceMilli 0-1000) for PM, level-array for BN depth20.
 
 import constantine/platforms/intrinsics/compiler_optim_hints  # prefetch
-import types
 
 const BnDepthLevels* = 20
 

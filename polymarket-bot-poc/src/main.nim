@@ -338,7 +338,6 @@ proc engineThread(ss: ptr SharedState) {.thread.} =
   var lastBboMid: array[MaxInstruments, float64]
   var lastBboDir: array[MaxInstruments, int]
   var bboChanges, priceReversals = 0
-  var downBboChanges = 0
   var engineEvCount = 0
 
   # BN book cross-validation counters

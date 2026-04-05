@@ -38,8 +38,8 @@ const
   FgRed = "\e[31m"
   FgGreen = "\e[32m"
   FgYellow = "\e[33m"
-  FgCyan = "\e[36m"
-  FgWhite = "\e[37m"
+  FgCyan {.used.} = "\e[36m"
+  FgWhite {.used.} = "\e[37m"
   BgInverse = "\e[7m"
 
 proc moveTo(row, col: int): string = &"\e[{row};{col}H"

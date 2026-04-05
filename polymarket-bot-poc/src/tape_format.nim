@@ -7,7 +7,7 @@
 # Both are fixed-size records, repr(C), zero serialization — just memcpy.
 # Written via mmap for zero-copy, zero-alloc hot path writes.
 
-import std/[os, posix]
+import std/[posix]
 
 const
   TapeMagic* = [byte 0x4D, 0x41, 0x4E, 0x54, 0x49, 0x53, 0x01, 0x00]  # "MANTIS\x01\x00"
