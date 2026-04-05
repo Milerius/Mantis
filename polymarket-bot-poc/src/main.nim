@@ -999,15 +999,14 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
 proc dashboardThread(ss: ptr SharedState) {.thread.} =
   let dashQ = cast[ptr SmallSpscRing[DashboardSnapshot]](ss.dashQ)
 
+  enableRawMode()
+  defer: disableRawMode()
+  hideCursor()
+  defer: showCursor()
+  clearScreen()
   when defined(ftxui):
     initFtxuiDashboard()
     defer: destroyFtxuiDashboard()
-  else:
-    enableRawMode()
-    defer: disableRawMode()
-    hideCursor()
-    defer: showCursor()
-    clearScreen()
 
   var snap: DashboardSnapshot
   while ss.running.load(moRelaxed):

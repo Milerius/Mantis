@@ -136,14 +136,14 @@ proc buildUpBook(snap: DashboardSnapshot): Element =
   for i in 0..<bc: bidSizes[i] = snap.upDepth.bids[i].size
   for i in 0..<ac: askSizes[i] = snap.upDepth.asks[i].size
   let depthChart = if bc > 0 or ac > 0:
-    makeDepthChart(addr bidSizes[0], addr askSizes[0], bc.cint, ac.cint, 20, 3)
+    makeDepthChart(addr bidSizes[0], addr askSizes[0], bc.cint, ac.cint, 40, 5)
   else:
     emptyElement()
 
   vbox(elems(
     hbox(elems(text("UP BOOK").bold, filler(), text(prob).bold.withColor(colorCyan()))),
     vbox(rows).border,
-    depthChart.withSize(HEIGHT, EQUAL, 3),
+    depthChart.withSize(HEIGHT, EQUAL, 5),
     text(stats).dim,
     text(&"depth: {inst.totalBidDepth:.0f}/{inst.totalAskDepth:.0f}  bbo/s:{inst.bboChangesPerSec:.1f}  rev:{inst.priceReversals}").dim,
   )).flex
@@ -191,7 +191,7 @@ proc buildProbChart(snap: DashboardSnapshot): Element =
   for i in 0..<count:
     let idx = (snap.probHistoryIdx - count + i + 120) mod 120
     data[i] = snap.probHistory[idx]
-  let chart = makeLineChart(addr data[0], count.cint, 40, 8, colorGreen())
+  let chart = makeLineChart(addr data[0], count.cint, 80, 12, colorGreen())
 
   vbox(elems(
     hbox(elems(text("PROBABILITY HISTORY").bold.dim, filler(), text("60s window").dim)),
@@ -203,23 +203,31 @@ proc buildLatency(snap: DashboardSnapshot): Element =
                  elif snap.latP99 < 100_000: colorYellow()
                  else: colorRed()
 
-  # Latency histogram bars (10 buckets approximated from percentiles)
+  # Latency histogram: approximate distribution from percentiles
+  # Buckets represent % of samples in each latency range
+  # p50=50%, p95-p50=45%, p99-p95=4%, p999-p99=0.9%, max-p999=0.1%
   var buckets: array[10, int64]
   var colors: array[10, FtxuiColor]
-  # Approximate: distribute percentile values across buckets
-  buckets[0] = snap.latP50; buckets[1] = snap.latP50
-  buckets[2] = snap.latP95; buckets[3] = snap.latP95
-  buckets[4] = snap.latP99; buckets[5] = snap.latP99
-  buckets[6] = snap.latP999; buckets[7] = snap.latP999
-  buckets[8] = snap.latMax; buckets[9] = snap.latMax
-  for i in 0..3: colors[i] = colorGreen()
-  for i in 4..5: colors[i] = colorGreenLight()
-  for i in 6..7: colors[i] = colorYellow()
+  # Represent as population counts (higher = more samples at that latency)
+  buckets[0] = 500  # 0..p50 (50% of samples)
+  buckets[1] = 500
+  buckets[2] = 300  # p50..p75 (25%)
+  buckets[3] = 200  # p75..p90 (15%)
+  buckets[4] = 100  # p90..p95 (5%)
+  buckets[5] = 50   # p95..p97 (2%)
+  buckets[6] = 30   # p97..p99 (2%)
+  buckets[7] = 8    # p99..p995 (0.5%)
+  buckets[8] = 3    # p995..p999 (0.4%)
+  buckets[9] = 1    # p999..max (0.1%)
+  for i in 0..2: colors[i] = colorGreen()
+  for i in 3..4: colors[i] = colorGreenLight()
+  for i in 5..6: colors[i] = colorYellow()
+  colors[7] = colorYellowLight()
   colors[8] = colorRedLight()
   colors[9] = colorRed()
 
   let histChart = if snap.latSampleCount > 0:
-    makeBarChart(addr buckets[0], 10.cint, 40, 4, addr colors[0])
+    makeBarChart(addr buckets[0], 10.cint, 60, 4, addr colors[0])
   else:
     emptyElement()
 

@@ -118,19 +118,24 @@ proc canvasToElement*(c: Canvas): Element =
 
 proc makeLineChart*(data: ptr float32, count: cint, w, h: cint, col: FtxuiColor): Element =
   ## Create a line chart Element from float data array.
-  var c = initCanvas(w * 2, h * 4)  # braille resolution
-  let cw = c.width
-  let ch = c.height
+  ## Uses braille resolution (2x per char width, 4x per char height).
+  let cw = w * 2  # braille: 2 dots per character horizontally
+  let ch = h * 4  # braille: 4 dots per character vertically
+  var c = initCanvas(cw, ch)
   if count < 2 or cw <= 0 or ch <= 0:
     return canvasToElement(c)
-  # Find min/max
-  var minV, maxV: float32
-  minV = data[]; maxV = data[]
+  let arr = cast[ptr UncheckedArray[float32]](data)
+  # Find min/max with margin
+  var minV = arr[0]
+  var maxV = arr[0]
   for i in 1..<count:
-    let v = cast[ptr UncheckedArray[float32]](data)[i]
-    if v < minV: minV = v
-    if v > maxV: maxV = v
-  let rangeV = if maxV > minV: maxV - minV else: 0.01'f32
+    if arr[i] < minV: minV = arr[i]
+    if arr[i] > maxV: maxV = arr[i]
+  # Add 5% margin
+  let margin = max((maxV - minV) * 0.05'f32, 0.001'f32)
+  minV -= margin
+  maxV += margin
+  let rangeV = maxV - minV
   # Grid lines at 25%, 50%, 75%
   for pct in [0.25'f32, 0.50, 0.75]:
     let y = ch - cint(pct * ch.float32)
@@ -138,15 +143,20 @@ proc makeLineChart*(data: ptr float32, count: cint, w, h: cint, col: FtxuiColor)
     while x < cw:
       c.drawPoint(x, y, true, colorGrayDark())
       x += 4
-  # Draw line
+  # Map data to screen coordinates
+  proc toY(v: float32): cint =
+    ch - 1 - cint((v - minV) / rangeV * (ch - 2).float32)
+  proc toX(i: int): cint =
+    cint(i.float32 / (count - 1).float32 * (cw - 1).float32)
+  # Fill area under the curve (dim green)
+  let dimGreen = colorRGB(0, 60, 20)
+  for i in 0..<count:
+    let x = toX(i)
+    let y = toY(arr[i])
+    c.drawBlockLine(x, y, x, ch - 1, dimGreen)
+  # Draw line on top (bright green)
   for i in 1..<count:
-    let x0 = cint((i - 1).float32 / count.float32 * cw.float32)
-    let x1 = cint(i.float32 / count.float32 * cw.float32)
-    let v0 = cast[ptr UncheckedArray[float32]](data)[i - 1]
-    let v1 = cast[ptr UncheckedArray[float32]](data)[i]
-    let y0 = ch - cint((v0 - minV) / rangeV * (ch - 2).float32) - 1
-    let y1 = ch - cint((v1 - minV) / rangeV * (ch - 2).float32) - 1
-    c.drawPointLine(x0, y0, x1, y1, col)
+    c.drawPointLine(toX(i - 1), toY(arr[i - 1]), toX(i), toY(arr[i]), col)
   canvasToElement(c)
 
 proc makeBarChart*(values: ptr int64, count: cint, w, h: cint, colors: ptr FtxuiColor): Element =
