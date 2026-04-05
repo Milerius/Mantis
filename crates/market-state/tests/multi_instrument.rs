@@ -24,13 +24,14 @@ fn make_delta(inst: u32, price: i64, qty: i64, side: Side, flags: EventFlags) ->
 }
 
 #[test]
+#[expect(clippy::expect_used, reason = "test assertion")]
 fn twelve_instruments_independent() {
     let mut engine = MarketStateEngine::<ArrayBook<100>, 12>::new(12, 1_000_000_000);
 
     // Initialize each instrument with a unique bid/ask
     for i in 1..=12u32 {
-        let bid_price = (i * 5) as i64; // 5, 10, 15, ..., 60
-        let ask_price = (i * 5 + 2) as i64; // 7, 12, 17, ..., 62
+        let bid_price = i64::from(i * 5); // 5, 10, 15, ..., 60
+        let ask_price = i64::from(i * 5 + 2); // 7, 12, 17, ..., 62
         let snap_bid = make_delta(i, bid_price, 100, Side::Bid, EventFlags::IS_SNAPSHOT);
         let snap_ask = make_delta(i, ask_price, 200, Side::Ask, EventFlags::LAST_IN_BATCH);
         engine.process(&snap_bid);
@@ -40,11 +41,13 @@ fn twelve_instruments_independent() {
     // Verify each instrument has correct independent state
     for i in 1..=12u32 {
         let inst = InstrumentId::from_raw(i);
-        let bid_price = (i * 5) as i64;
-        let ask_price = (i * 5 + 2) as i64;
+        let bid_price = i64::from(i * 5);
+        let ask_price = i64::from(i * 5 + 2);
 
         assert!(engine.is_ready(inst), "inst {i} should be ready");
-        let book = engine.book(inst).unwrap();
+        let book = engine
+            .book(inst)
+            .expect("expected book for valid instrument");
         assert_eq!(
             book.best_bid(),
             Some((Ticks::from_raw(bid_price), Lots::from_raw(100)))
@@ -54,7 +57,9 @@ fn twelve_instruments_independent() {
             Some((Ticks::from_raw(ask_price), Lots::from_raw(200)))
         );
 
-        let mp = engine.micro_price(inst).unwrap();
+        let mp = engine
+            .micro_price(inst)
+            .expect("expected micro_price for valid instrument");
         assert!(
             mp.to_raw() >= bid_price && mp.to_raw() <= ask_price,
             "micro_price {mp:?} out of bid/ask range [{bid_price}, {ask_price}] for inst {i}"
@@ -63,6 +68,7 @@ fn twelve_instruments_independent() {
 }
 
 #[test]
+#[expect(clippy::expect_used, reason = "test arithmetic conversion")]
 fn high_throughput_stress() {
     let mut engine = MarketStateEngine::<ArrayBook<100>, 4>::new(4, 1_000_000_000);
 
@@ -75,8 +81,8 @@ fn high_throughput_stress() {
     // Process 100K interleaved deltas
     let mut tob_count = 0;
     for j in 0..100_000u64 {
-        let inst = (j % 4 + 1) as u32;
-        let price = 40 + (j % 20) as i64;
+        let inst = u32::try_from(j % 4 + 1).expect("j % 4 + 1 fits in u32");
+        let price = 40 + i64::try_from(j % 20).expect("j % 20 fits in i64");
         let side = if j % 2 == 0 { Side::Bid } else { Side::Ask };
         let flags = if j % 10 == 9 {
             EventFlags::LAST_IN_BATCH
