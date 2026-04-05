@@ -19,21 +19,38 @@ fi
 # Collect all estimates into a JSON array
 results="[]"
 
-# Search for estimates matching the bench name prefix (e.g. "seqlock_*" for seqlock bench,
-# "checked_*" for fixed bench). If no prefix match is found, fall back to all estimates.
-# This prevents cross-contamination between bench runs that share target/criterion/.
+# Search for estimates matching the bench name prefix (e.g. "seqlock/*" for seqlock bench,
+# "market_state/*" for market_state bench).
+#
+# IMPORTANT: Each bench must be converted IMMEDIATELY after running, before the next
+# bench clears target/criterion/. See bench.yml workflow comments.
+#
+# NO FALLBACK: if prefix doesn't match, we fail loudly rather than silently reading
+# another bench's data. This prevents cross-contamination bugs.
 shopt -s nullglob
 matched_ests=()
-for est in "$criterion_dir"/${bench_name}*/new/estimates.json "$criterion_dir"/${bench_name}*/*/*/new/estimates.json; do
+# Criterion writes group/variant/new/estimates.json where group = bench_name with / → _
+# Depths: group/new/estimates.json (no variant), group/variant/new/estimates.json (1 variant),
+#          group/variant/subvar/new/estimates.json (2 variants)
+for est in "$criterion_dir"/${bench_name}*/new/estimates.json \
+           "$criterion_dir"/${bench_name}*/*/new/estimates.json \
+           "$criterion_dir"/${bench_name}*/*/*/new/estimates.json; do
   matched_ests+=("$est")
 done
-# Fallback: if no prefix-matched results, read everything (backwards compatibility)
-if [ ${#matched_ests[@]} -eq 0 ]; then
-  for est in "$criterion_dir"/*/new/estimates.json "$criterion_dir"/*/*/new/estimates.json; do
-    matched_ests+=("$est")
-  done
-fi
 shopt -u nullglob
+
+if [ ${#matched_ests[@]} -eq 0 ]; then
+  echo "WARNING: No criterion results found matching prefix '${bench_name}' in $criterion_dir" >&2
+  echo "Available directories:" >&2
+  ls -1 "$criterion_dir" 2>/dev/null | head -20 >&2 || true
+  echo "Criterion group names must start with '${bench_name}' (the bench binary name)." >&2
+  echo "Check your benchmark_group() names in the bench source file." >&2
+  # Write empty result rather than reading wrong data
+  jq -n --arg cpu "unknown" --arg arch "unknown" --arg compiler "unknown" \
+    '{cpu: $cpu, arch: $arch, compiler: $compiler, results: []}' > "$output"
+  echo "Wrote 0 benchmarks to $output (no matching data)" >&2
+  exit 0
+fi
 
 for est in "${matched_ests[@]}"; do
   [ -f "$est" ] || continue

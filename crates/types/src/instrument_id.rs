@@ -28,6 +28,12 @@ impl InstrumentId {
     }
 }
 
+impl Default for InstrumentId {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
 impl fmt::Debug for InstrumentId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "InstrumentId({})", self.0)

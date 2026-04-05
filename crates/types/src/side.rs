@@ -3,10 +3,11 @@
 use core::fmt;
 
 /// Market side: bid or ask.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum Side {
     /// Buying / bid side.
+    #[default]
     Bid = 0,
     /// Selling / ask side.
     Ask = 1,

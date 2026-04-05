@@ -6,6 +6,7 @@
 #![deny(unsafe_code)]
 
 mod fixed_props;
+pub mod market_state_props;
 pub mod seqlock_proofs;
 pub mod seqlock_props;
 mod spsc_diff;

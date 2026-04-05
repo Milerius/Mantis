@@ -9,13 +9,13 @@ Build:          cargo +nightly build --features alloc,std
 Build nightly:  cargo +nightly build --all-features
 Test:           cargo +nightly test --features alloc,std
 Test nightly:   cargo +nightly test --all-features
-Test no_std:    cargo +nightly test -p mantis-core -p mantis-types -p mantis-fixed -p mantis-queue -p mantis-events -p mantis-seqlock --no-default-features
+Test no_std:    cargo +nightly test -p mantis-core -p mantis-types -p mantis-fixed -p mantis-queue -p mantis-events -p mantis-seqlock -p mantis-market-state --no-default-features
 Lint:           cargo +nightly clippy --all-targets --features alloc,std -- -D warnings
 Lint all:       cargo +nightly clippy --all-targets --all-features -- -D warnings
 Format:         cargo +nightly fmt --all
 Format check:   cargo +nightly fmt --all --check
 Deny:           cargo deny check
-Miri:           cargo +nightly miri test -p mantis-queue -p mantis-fixed -p mantis-events -p mantis-seqlock
+Miri:           cargo +nightly miri test -p mantis-queue -p mantis-fixed -p mantis-events -p mantis-seqlock -p mantis-market-state
 Careful:        cargo +nightly careful test
 Bench SPSC:     cargo bench --bench spsc
 Bench fixed:    cargo +nightly bench --bench fixed

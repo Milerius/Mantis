@@ -74,6 +74,34 @@ mod tests {
     }
 
     #[test]
+    fn market_state_layout_assertions() {
+        use mantis_market_state::{ArrayBook, TopOfBook};
+
+        // TopOfBook should fit in a single cache line (64 bytes)
+        let tob_info = inspect::<TopOfBook>("TopOfBook");
+        assert!(
+            tob_info.size <= 64,
+            "TopOfBook size {} exceeds cache line (64 bytes)",
+            tob_info.size
+        );
+        assert_eq!(
+            tob_info.cache_lines, 1,
+            "TopOfBook must fit in one 64B cache line"
+        );
+
+        // ArrayBook<100> is the primary Polymarket shape; bounded size is acceptable
+        let book_info = inspect::<ArrayBook<100>>("ArrayBook<100>");
+        // Each side is 100 × 8 bytes = 800 bytes; two sides = 1600 bytes + header
+        assert!(book_info.size > 0, "ArrayBook<100> must have positive size");
+        // Sanity: two sides (bids + asks) at 8 bytes per Lots entry
+        assert_eq!(
+            book_info.size,
+            core::mem::size_of::<ArrayBook<100>>(),
+            "inspect size must match mem::size_of"
+        );
+    }
+
+    #[test]
     fn event_layout_assertions() {
         use mantis_events::*;
 

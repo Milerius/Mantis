@@ -24,6 +24,8 @@ mantis-queue = { workspace = true, features = ["alloc"] }
 mantis-platform = { workspace = true, features = ["std"] }
 mantis-fixed = { workspace = true }
 mantis-seqlock = { workspace = true }
+mantis-events = { workspace = true }
+mantis-market-state = { workspace = true }
 criterion = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -49,4 +51,8 @@ harness = false
 
 [[bench]]
 name = "seqlock"
+harness = false
+
+[[bench]]
+name = "market_state"
 harness = false
