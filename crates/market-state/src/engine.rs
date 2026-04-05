@@ -140,12 +140,12 @@ impl<B: OrderBook, const MAX: usize> MarketStateEngine<B, MAX> {
     /// Micro price — volume-weighted fair value between best bid and ask.
     ///
     /// Returns `None` if the instrument ID is invalid or either side is empty.
-    pub fn micro_price(&self, inst: InstrumentId) -> Option<Ticks> {
+    pub fn micro_price(&mut self, inst: InstrumentId) -> Option<Ticks> {
         let slot = inst.to_raw() as usize;
         if slot == 0 || slot > self.active_count {
             return None;
         }
-        let state = &self.instruments[slot - 1];
+        let state = &mut self.instruments[slot - 1];
         let (bp, bq) = state.book.best_bid()?;
         let (ap, aq) = state.book.best_ask()?;
         let total = bq.to_raw() + aq.to_raw();
@@ -165,12 +165,12 @@ impl<B: OrderBook, const MAX: usize> MarketStateEngine<B, MAX> {
         clippy::cast_precision_loss,
         reason = "quantity values fit comfortably in f64 mantissa at market scales"
     )]
-    pub fn book_imbalance(&self, inst: InstrumentId, levels: usize) -> Option<f64> {
+    pub fn book_imbalance(&mut self, inst: InstrumentId, levels: usize) -> Option<f64> {
         let slot = inst.to_raw() as usize;
         if slot == 0 || slot > self.active_count {
             return None;
         }
-        let state = &self.instruments[slot - 1];
+        let state = &mut self.instruments[slot - 1];
         let bd = state.book.total_depth(Side::Bid, levels).to_raw() as f64;
         let ad = state.book.total_depth(Side::Ask, levels).to_raw() as f64;
         if bd + ad == 0.0 {
@@ -182,12 +182,12 @@ impl<B: OrderBook, const MAX: usize> MarketStateEngine<B, MAX> {
     /// Spread in ticks: `ask_price - bid_price`.
     ///
     /// Returns `None` if the instrument ID is invalid or either side is empty.
-    pub fn spread(&self, inst: InstrumentId) -> Option<Ticks> {
+    pub fn spread(&mut self, inst: InstrumentId) -> Option<Ticks> {
         let slot = inst.to_raw() as usize;
         if slot == 0 || slot > self.active_count {
             return None;
         }
-        let state = &self.instruments[slot - 1];
+        let state = &mut self.instruments[slot - 1];
         let (bp, _) = state.book.best_bid()?;
         let (ap, _) = state.book.best_ask()?;
         Some(Ticks::from_raw(ap.to_raw() - bp.to_raw()))
@@ -215,7 +215,7 @@ impl<B: OrderBook, const MAX: usize> MarketStateEngine<B, MAX> {
         if last == 0 {
             return true;
         }
-        now.as_nanos() - last > self.stale_timeout_ns
+        now.as_nanos().saturating_sub(last) > self.stale_timeout_ns
     }
 
     /// Returns `true` if the initial snapshot has been received for this instrument.
@@ -229,15 +229,15 @@ impl<B: OrderBook, const MAX: usize> MarketStateEngine<B, MAX> {
         self.instruments[slot - 1].snapshot_received
     }
 
-    /// Direct read-only access to the underlying order book.
+    /// Direct access to the underlying order book.
     ///
     /// Returns `None` if the instrument ID is invalid.
-    pub fn book(&self, inst: InstrumentId) -> Option<&B> {
+    pub fn book(&mut self, inst: InstrumentId) -> Option<&mut B> {
         let slot = inst.to_raw() as usize;
         if slot == 0 || slot > self.active_count {
             return None;
         }
-        Some(&self.instruments[slot - 1].book)
+        Some(&mut self.instruments[slot - 1].book)
     }
 
     /// Take the last `TopOfBook` if a BBO price change was detected.
@@ -261,7 +261,7 @@ impl<B: OrderBook, const MAX: usize> MarketStateEngine<B, MAX> {
         reason = "slot < active_count <= MAX which is bounded by u32::MAX in new()"
     )]
     fn check_bbo_price_change(&mut self, slot: usize) -> Option<TopOfBook> {
-        let state = &self.instruments[slot];
+        let state = &mut self.instruments[slot];
         let bid = state.book.best_bid();
         let ask = state.book.best_ask();
         let bid_price = bid.map(|(p, _)| p);
@@ -271,7 +271,6 @@ impl<B: OrderBook, const MAX: usize> MarketStateEngine<B, MAX> {
             return None;
         }
 
-        let state = &mut self.instruments[slot];
         state.prev_bid = bid_price;
         state.prev_ask = ask_price;
 

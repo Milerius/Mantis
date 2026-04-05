@@ -43,8 +43,8 @@ pub enum OrderAction {
 /// Strategy trait — implemented by the binary.
 ///
 /// `on_tick` is called inline on the hot thread when a BBO price change
-/// is detected. Strategy has direct `&engine` access to all books and
-/// derived metrics.
+/// is detected. Strategy has direct `&mut engine` access to all books and
+/// derived metrics (queries may update BBO caches).
 pub trait Strategy<B: OrderBook, const MAX: usize> {
     /// Called when a BBO price change is detected on any instrument.
     ///
@@ -52,7 +52,7 @@ pub trait Strategy<B: OrderBook, const MAX: usize> {
     /// Returns the number of order intents written to `intents`.
     fn on_tick(
         &mut self,
-        engine: &MarketStateEngine<B, MAX>,
+        engine: &mut MarketStateEngine<B, MAX>,
         tob: &TopOfBook,
         intents: &mut [OrderIntent; MAX_INTENTS_PER_TICK],
     ) -> usize;

@@ -116,7 +116,7 @@ fn bench_engine_process(c: &mut Criterion) {
 
     // Micro-price query after snapshot
     group.bench_function("micro_price", |b| {
-        let engine = primed_engine();
+        let mut engine = primed_engine();
         let inst = InstrumentId::from_raw(1);
         b.iter(|| {
             black_box(engine.micro_price(black_box(inst)));
@@ -125,7 +125,7 @@ fn bench_engine_process(c: &mut Criterion) {
 
     // Book imbalance at 5 levels
     group.bench_function("book_imbalance_5", |b| {
-        let engine = primed_engine();
+        let mut engine = primed_engine();
         let inst = InstrumentId::from_raw(1);
         b.iter(|| {
             black_box(engine.book_imbalance(black_box(inst), black_box(5)));

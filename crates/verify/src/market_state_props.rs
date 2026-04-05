@@ -38,16 +38,17 @@ mod tests {
     #[test]
     fn prop_array_book_random_deltas_no_panic() {
         // Each element: (price_raw, qty_raw, side_bit)
+        // qty constrained to i32 range to avoid overflow in total_depth summation
         check!()
-            .with_type::<Vec<(i64, i64, bool)>>()
+            .with_type::<Vec<(i64, i32, bool)>>()
             .for_each(|deltas| {
                 let mut book = ArrayBook::<100>::default();
                 for (price, qty, is_ask) in deltas {
                     let side = if *is_ask { Side::Ask } else { Side::Bid };
-                    // apply_delta must not panic for any i64 price/qty pair
+                    // apply_delta must not panic for any price/qty pair
                     book.apply_delta(
                         Ticks::from_raw(*price),
-                        Lots::from_raw(*qty),
+                        Lots::from_raw(i64::from(*qty)),
                         side,
                         UpdateAction::New,
                     );

@@ -45,17 +45,19 @@ fn twelve_instruments_independent() {
         let ask_price = i64::from(i * 5 + 2);
 
         assert!(engine.is_ready(inst), "inst {i} should be ready");
-        let book = engine
-            .book(inst)
-            .expect("expected book for valid instrument");
-        assert_eq!(
-            book.best_bid(),
-            Some((Ticks::from_raw(bid_price), Lots::from_raw(100)))
-        );
-        assert_eq!(
-            book.best_ask(),
-            Some((Ticks::from_raw(ask_price), Lots::from_raw(200)))
-        );
+        {
+            let book = engine
+                .book(inst)
+                .expect("expected book for valid instrument");
+            assert_eq!(
+                book.best_bid(),
+                Some((Ticks::from_raw(bid_price), Lots::from_raw(100)))
+            );
+            assert_eq!(
+                book.best_ask(),
+                Some((Ticks::from_raw(ask_price), Lots::from_raw(200)))
+            );
+        }
 
         let mp = engine
             .micro_price(inst)

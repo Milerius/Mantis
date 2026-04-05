@@ -21,10 +21,10 @@ pub trait OrderBook: Default {
     fn clear(&mut self);
 
     /// Best bid price and quantity, or `None` if no bids.
-    fn best_bid(&self) -> Option<(Ticks, Lots)>;
+    fn best_bid(&mut self) -> Option<(Ticks, Lots)>;
 
     /// Best ask price and quantity, or `None` if no asks.
-    fn best_ask(&self) -> Option<(Ticks, Lots)>;
+    fn best_ask(&mut self) -> Option<(Ticks, Lots)>;
 
     /// Fill `buf` with the top levels for one side. Returns count written.
     fn depth(&self, side: Side, buf: &mut [(Ticks, Lots)]) -> usize;
