@@ -577,6 +577,8 @@ proc engineThread(ss: ptr SharedState) {.thread.} =
               bnBboMatches += 1
             else:
               bnBboMismatches += 1
+            ss.bnBboMatchesShared.store(int32(bnBboMatches), moRelaxed)
+            ss.bnBboMismatchesShared.store(int32(bnBboMismatches), moRelaxed)
 
         let latNs = getMonoTime().ticks - t0
         emitTelemetry(ev, tkBnDepth, latNs)
@@ -915,6 +917,16 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
         # Refresh rolling rates at snapshot time
         snap.instruments[i].bboChangesPerSec = instBboRate[i].rate(wallMs)
         snap.instruments[i].tradesPerSec = instTradeRate[i].rate(wallMs)
+
+      # BBO match rate for reference instruments
+      let matches = ss.bnBboMatchesShared.load(moRelaxed)
+      let mismatches = ss.bnBboMismatchesShared.load(moRelaxed)
+      let totalChecks = matches + mismatches
+      if totalChecks > 0:
+        let matchRate = float32(matches) / float32(totalChecks) * 100.0
+        for mi in 0..<snap.marketCount:
+          let refIdx = snap.markets[mi].refIdx.int
+          snap.instruments[refIdx].bboMatchRate = matchRate
 
       # Trade tape
       snap.trades = tradeTape

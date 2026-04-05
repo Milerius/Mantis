@@ -182,14 +182,14 @@ proc buildDownBook(snap: DashboardSnapshot): Element =
   for i in 0..<dnBc: dnBidSizes[i] = snap.downDepth.bids[i].size
   for i in 0..<dnAc: dnAskSizes[i] = snap.downDepth.asks[i].size
   let dnDepthChart = if dnBc > 0 or dnAc > 0:
-    makeDepthChart(addr dnBidSizes[0], addr dnAskSizes[0], dnBc.cint, dnAc.cint, 40, 3)
+    makeDepthChart(addr dnBidSizes[0], addr dnAskSizes[0], dnBc.cint, dnAc.cint, 40, 5)
   else:
     emptyElement()
 
   vbox(elems(
     hbox(elems(text("DOWN BOOK").bold, filler(), text(prob).bold.withColor(colorYellowLight()))),
     vbox(dnRows),
-    dnDepthChart.withSize(HEIGHT, EQUAL, 3),
+    dnDepthChart.withSize(HEIGHT, EQUAL, 5),
     hbox(elems(
       text(&"sp:{inst.spread:.3f} imb:{inst.imbalance:+.2f}").dim,
       filler(),
@@ -230,14 +230,14 @@ proc buildReference(snap: DashboardSnapshot): Element =
   for i in 0..<refBc: refBidSizes[i] = snap.refDepth.bids[i].size
   for i in 0..<refAc: refAskSizes[i] = snap.refDepth.asks[i].size
   let refDepthChart = if refBc > 0 or refAc > 0:
-    makeDepthChart(addr refBidSizes[0], addr refAskSizes[0], refBc.cint, refAc.cint, 40, 3)
+    makeDepthChart(addr refBidSizes[0], addr refAskSizes[0], refBc.cint, refAc.cint, 40, 5)
   else:
     emptyElement()
 
   vbox(elems(
     hbox(elems(text(sym).bold, text(" (Binance)").dim, filler(), text("$" & fmtComma(refInst.mid)).bold.withColor(colorCyan()))),
     vbox(refRows),
-    refDepthChart.withSize(HEIGHT, EQUAL, 3),
+    refDepthChart.withSize(HEIGHT, EQUAL, 5),
     text(&"sp:${refInst.spread:.2f}  d20<>bbo:{refInst.bboMatchRate:.1f}%").dim,
   ))
 
@@ -416,14 +416,15 @@ proc buildTradeTape(snap: DashboardSnapshot): Element =
   ))
 
 proc buildRates(snap: DashboardSnapshot): Element =
-  var sparkData: array[SparklineLen, int16]
+  # Build rate chart using Canvas (reliable, no pointer capture issues)
+  var rateData: array[SparklineLen, float32]
   for i in 0..<SparklineLen:
-    sparkData[i] = snap.rateSparkline[i]
-  let sparkline = makeSparklineGraph(addr sparkData[0], SparklineLen.cint, colorBlueLight())
+    rateData[i] = snap.rateSparkline[i].float32
+  let rateChart = makeLineChart(addr rateData[0], SparklineLen.cint, 60, 4, colorBlueLight())
 
   vbox(elems(
     text("EVENT RATES").bold.dim,
-    sparkline.withSize(HEIGHT, EQUAL, 4),
+    rateChart.withSize(HEIGHT, EQUAL, 4),
     hbox(elems(
       text("pm:" & fmtRate(snap.pmEventsPerSec)).withColor(colorGreen()), text(" "),
       text("bn:" & fmtRate(snap.bnBboPerSec + snap.bnTradePerSec + snap.bnDepthPerSec)).withColor(colorBlue()), text(" "),

@@ -273,6 +273,9 @@ type
     upDepthShared*: DepthLadder
     downDepthShared*: DepthLadder
     refDepthShared*: array[MaxMarkets, DepthLadder]  # BN depth20, per market
+    # BN cross-validation (written by engine, read by telemetry)
+    bnBboMatchesShared*: Atomic[int32]
+    bnBboMismatchesShared*: Atomic[int32]
     # Output
     summary*: CaptureSummary
     tapeDir*: FixedStr
