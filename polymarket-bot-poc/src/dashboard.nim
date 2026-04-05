@@ -124,6 +124,14 @@ proc renderHeader*(snap: DashboardSnapshot, row: int): int =
       line.add Dim & &" {i+1}:{label} " & Reset & " "
   let phStr = snap.phase.phaseStr
   line.add &"{Bold}{phStr}{Reset} {snap.elapsed:+.0f}s"
+  # Show selected market's reference price in header
+  let sel = snap.selectedMarket
+  if sel < snap.marketCount:
+    let mkt = snap.markets[sel]
+    let refInst = snap.instruments[mkt.refIdx]
+    if refInst.mid > 0:
+      let refSym = $refInst.symbol  # e.g. "BTCUSDT"
+      line.add &"  {FgCyan}{refSym}: ${fmtComma(refInst.mid)}{Reset}"
   stdout.write(line)
   row + 1
 
@@ -223,9 +231,13 @@ proc renderComplementarity*(snap: DashboardSnapshot, row: int): int =
 
 proc renderRefPanel*(snap: DashboardSnapshot, refInst: InstrumentSnapshot,
                      row: int): int =
-  stdout.write moveTo(row, 1) & clearLine() & Bold & " REFERENCE" & Reset
+  let refSym = $refInst.symbol  # e.g. "BTCUSDT"
+  stdout.write moveTo(row, 1) & clearLine() & Bold &
+    &" {refSym}" & Reset & " (Binance)"
+  if refInst.mid > 0:
+    stdout.write &"  {FgCyan}${fmtComma(refInst.mid)}{Reset}"
   stdout.write moveTo(row+1, 1) & clearLine() &
-    &"  {fmtComma(refInst.bidPrice)} | {fmtComma(refInst.askPrice)}  " &
+    &"  bid: {fmtComma(refInst.bidPrice)}  ask: {fmtComma(refInst.askPrice)}  " &
     &"sp:${refInst.spread:.2f}  imb:{refInst.imbalance:+.2f}"
   stdout.write moveTo(row+2, 1) & clearLine() &
     &"  d20<>bbo:{refInst.bboMatchRate:.1f}%  " &

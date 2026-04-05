@@ -837,6 +837,7 @@ proc telemetryThread(ss: ptr SharedState) {.thread.} =
         snap.instruments[i] = instState[i]
         # Overlay registry metadata
         snap.instruments[i].kind = ss.registry.instruments[i].kind
+        snap.instruments[i].symbol = ss.registry.instruments[i].symbol
         # Refresh rolling rates at snapshot time
         snap.instruments[i].bboChangesPerSec = instBboRate[i].rate(wallMs)
         snap.instruments[i].tradesPerSec = instTradeRate[i].rate(wallMs)

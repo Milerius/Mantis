@@ -141,6 +141,7 @@ type
     instrumentId*: uint32
     kind*: InstrumentKind
     active*: bool
+    symbol*: FixedLabel          # "BTC_UP", "SOLUSDT", etc.
     bidPrice*, askPrice*: float64
     bidSize*, askSize*: float64
     spread*, mid*, wmid*: float64
