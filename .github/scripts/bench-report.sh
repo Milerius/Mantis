@@ -5,12 +5,14 @@ set -euo pipefail
 # Usage: bench-report.sh <linux-json> <macos-json>
 # Outputs markdown to stdout.
 
-linux_json="${1:?usage: bench-report.sh <linux-spsc> <macos-spsc> [<linux-seqlock> <macos-seqlock>] [<linux-fixed> <macos-fixed>]}"
-macos_json="${2:?usage: bench-report.sh <linux-spsc> <macos-spsc> [<linux-seqlock> <macos-seqlock>] [<linux-fixed> <macos-fixed>]}"
+linux_json="${1:?usage: bench-report.sh <linux-spsc> <macos-spsc> [<linux-seqlock> <macos-seqlock>] [<linux-fixed> <macos-fixed>] [<linux-market-state> <macos-market-state>]}"
+macos_json="${2:?usage: bench-report.sh <linux-spsc> <macos-spsc> [<linux-seqlock> <macos-seqlock>] [<linux-fixed> <macos-fixed>] [<linux-market-state> <macos-market-state>]}"
 linux_seqlock="${3:-}"
 macos_seqlock="${4:-}"
 linux_fixed="${5:-}"
 macos_fixed="${6:-}"
+linux_market_state="${7:-}"
+macos_market_state="${8:-}"
 
 # Normalize workload names into (impl, pattern, element) and extract metrics.
 # Output: JSON array of {impl, pattern, element, ns_per_op, ...}
@@ -321,6 +323,30 @@ if [ -n "$linux_fixed" ] || [ -n "$macos_fixed" ]; then
     echo "<summary><strong>macOS</strong></summary>"
     echo ""
     render_grouped_platform "$macos_fixed" "macOS" "fixed-point"
+    echo "</details>"
+  fi
+fi
+
+# Market-state benchmarks (optional)
+if [ -n "$linux_market_state" ] || [ -n "$macos_market_state" ]; then
+  echo ""
+  echo "### Market-State Engine (mantis-market-state)"
+  echo ""
+
+  if [ -n "$linux_market_state" ]; then
+    echo "<details open>"
+    echo "<summary><strong>Linux</strong></summary>"
+    echo ""
+    render_grouped_platform "$linux_market_state" "Linux" "market-state"
+    echo "</details>"
+    echo ""
+  fi
+
+  if [ -n "$macos_market_state" ]; then
+    echo "<details open>"
+    echo "<summary><strong>macOS</strong></summary>"
+    echo ""
+    render_grouped_platform "$macos_market_state" "macOS" "market-state"
     echo "</details>"
   fi
 fi
