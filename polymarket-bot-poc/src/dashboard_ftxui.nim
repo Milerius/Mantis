@@ -174,9 +174,22 @@ proc buildDownBook(snap: DashboardSnapshot): Element =
   else:
     dnRows.add(text(line))
 
+  # Down depth bar chart
+  var dnBidSizes: array[20, float64]
+  var dnAskSizes: array[20, float64]
+  let dnBc = snap.downDepth.bidCount.min(20)
+  let dnAc = snap.downDepth.askCount.min(20)
+  for i in 0..<dnBc: dnBidSizes[i] = snap.downDepth.bids[i].size
+  for i in 0..<dnAc: dnAskSizes[i] = snap.downDepth.asks[i].size
+  let dnDepthChart = if dnBc > 0 or dnAc > 0:
+    makeDepthChart(addr dnBidSizes[0], addr dnAskSizes[0], dnBc.cint, dnAc.cint, 40, 3)
+  else:
+    emptyElement()
+
   vbox(elems(
     hbox(elems(text("DOWN BOOK").bold, filler(), text(prob).bold.withColor(colorYellowLight()))),
     vbox(dnRows),
+    dnDepthChart.withSize(HEIGHT, EQUAL, 3),
     hbox(elems(
       text(&"sp:{inst.spread:.3f} imb:{inst.imbalance:+.2f}").dim,
       filler(),
@@ -209,9 +222,22 @@ proc buildReference(snap: DashboardSnapshot): Element =
         text(&"{snap.refDepth.asks[i].size:.2f}").withColor(colorRed()).withSize(WIDTH, EQUAL, 10),
       )))
 
+  # BN depth bar chart
+  var refBidSizes: array[20, float64]
+  var refAskSizes: array[20, float64]
+  let refBc = snap.refDepth.bidCount.min(20)
+  let refAc = snap.refDepth.askCount.min(20)
+  for i in 0..<refBc: refBidSizes[i] = snap.refDepth.bids[i].size
+  for i in 0..<refAc: refAskSizes[i] = snap.refDepth.asks[i].size
+  let refDepthChart = if refBc > 0 or refAc > 0:
+    makeDepthChart(addr refBidSizes[0], addr refAskSizes[0], refBc.cint, refAc.cint, 40, 3)
+  else:
+    emptyElement()
+
   vbox(elems(
     hbox(elems(text(sym).bold, text(" (Binance)").dim, filler(), text("$" & fmtComma(refInst.mid)).bold.withColor(colorCyan()))),
     vbox(refRows),
+    refDepthChart.withSize(HEIGHT, EQUAL, 3),
     text(&"sp:${refInst.spread:.2f}  d20<>bbo:{refInst.bboMatchRate:.1f}%").dim,
   ))
 
