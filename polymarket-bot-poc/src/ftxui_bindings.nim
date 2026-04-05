@@ -183,6 +183,28 @@ proc makeBarChart*(values: ptr int64, count: cint, w, h: cint, colors: ptr Ftxui
       c.drawBlockLine(x0, y, x0 + barW - 1, y, col)
   canvasToElement(c)
 
+proc makeBarSparkline*(data: ptr int16, count: cint, w, h: cint, col: FtxuiColor): Element =
+  ## Create a bar sparkline from int16 data — filled vertical bars.
+  let cw = w * 2  # block resolution
+  let ch = h * 2
+  var c = initCanvas(cw, ch)
+  if count <= 0 or cw <= 0 or ch <= 0:
+    return canvasToElement(c)
+  let arr = cast[ptr UncheckedArray[int16]](data)
+  var maxV: int16 = 1
+  for i in 0..<count:
+    if arr[i] > maxV: maxV = arr[i]
+  # Each data point gets barW pixels wide
+  let barW = max(1, cw div count)
+  for i in 0..<count:
+    if arr[i] <= 0: continue
+    let bh = max(1, cint(arr[i].float / maxV.float * (ch - 1).float))
+    let x0 = cint(i.float / count.float * cw.float)
+    let x1 = min(x0 + barW - 1, cw - 1)
+    for y in (ch - bh)..<ch:
+      c.drawBlockLine(x0, y, x1, y, col)
+  canvasToElement(c)
+
 proc makeDepthChart*(bidSizes, askSizes: ptr float64, bidCount, askCount: cint, w, h: cint): Element =
   ## Horizontal depth bars: bids green left, asks red right.
   var c = initCanvas(w * 2, h * 2)

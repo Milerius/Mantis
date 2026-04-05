@@ -416,11 +416,11 @@ proc buildTradeTape(snap: DashboardSnapshot): Element =
   ))
 
 proc buildRates(snap: DashboardSnapshot): Element =
-  # Build rate chart using Canvas (reliable, no pointer capture issues)
-  var rateData: array[SparklineLen, float32]
+  # Bar sparkline for event rates
+  var rateData: array[SparklineLen, int16]
   for i in 0..<SparklineLen:
-    rateData[i] = snap.rateSparkline[i].float32
-  let rateChart = makeLineChart(addr rateData[0], SparklineLen.cint, 60, 4, colorBlueLight())
+    rateData[i] = snap.rateSparkline[i]
+  let rateChart = makeBarSparkline(addr rateData[0], SparklineLen.cint, 60, 4, colorBlueLight())
 
   vbox(elems(
     text("EVENT RATES").bold.dim,
