@@ -22,6 +22,28 @@ else:
 import constantine/threadpool/crossthread/backoff  # Eventcount
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  LOGGING — file-based, thread-safe via {.gcsafe.}
+# ═══════════════════════════════════════════════════════════════════════════
+
+var logFile {.threadvar.}: File
+var logPath* = "mantis.log"
+
+proc initLog*() =
+  logFile = open(logPath, fmAppend)
+
+proc log*(msg: string) =
+  if logFile != nil:
+    let ts = now().format("HH:mm:ss.fff")
+    logFile.writeLine(&"[{ts}] {msg}")
+    logFile.flushFile()
+  stderr.writeLine(msg)
+
+proc closeLog*() =
+  if logFile != nil:
+    logFile.close()
+    logFile = nil
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  CONSTANTS
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -53,6 +75,7 @@ proc pmIngestThread(ss: ptr SharedState) {.thread.} =
 
     let pmWs = await newWebSocket(WsMarketUrl)
     defer: pmWs.close()
+    log("[pm_ingest] WS connected, subscribing to " & $allTokens.len & " tokens")
 
     await pmWs.send($ %*{
       "assets_ids": allTokens,
@@ -155,7 +178,7 @@ proc pmIngestThread(ss: ptr SharedState) {.thread.} =
             side: (if msg.getOrDefault("side").getStr == "BUY": SideBuy else: SideSell)))
 
   try: waitFor run()
-  except Exception as e: echo "  [pm_ingest] error: " & e.msg
+  except Exception as e: log("[pm_ingest] ERROR: " & e.msg)
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  BN INGEST THREAD
@@ -233,7 +256,7 @@ proc bnIngestThread(ss: ptr SharedState) {.thread.} =
           var tradeWs: WebSocket
           try: tradeWs = await newWebSocket(tradeUrl)
           except Exception as e:
-            echo "  [bn_trade:" & symLower & "] WS failed: " & e.msg; return
+            log("[bn_trade:" & symLower & "] WS FAILED: " & e.msg); return
           defer: tradeWs.close()
           while ss.running.load(moRelaxed) and epochTime() < ss.captureEnd.float:
             var raw: string
@@ -263,7 +286,7 @@ proc bnIngestThread(ss: ptr SharedState) {.thread.} =
           var depthWs: WebSocket
           try: depthWs = await newWebSocket(depthUrl)
           except Exception as e:
-            echo "  [bn_depth20:" & symLower & "] WS failed: " & e.msg; return
+            log("[bn_depth20:" & symLower & "] WS FAILED: " & e.msg); return
           defer: depthWs.close()
           while ss.running.load(moRelaxed) and epochTime() < ss.captureEnd.float:
             var raw: string
@@ -324,7 +347,7 @@ proc bnIngestThread(ss: ptr SharedState) {.thread.} =
       await sleepAsync(200)
 
   try: waitFor run()
-  except Exception as e: echo "  [bn_ingest] error: " & e.msg
+  except Exception as e: log("[bn_ingest] ERROR: " & e.msg)
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  ENGINE THREAD — busy-spin, owner thread, no allocations
@@ -1237,6 +1260,9 @@ proc printReport(ss: ptr SharedState) =
 # ═══════════════════════════════════════════════════════════════════════════
 
 proc main() =
+  initLog()
+  defer: closeLog()
+  log("MANTIS starting")
   var timeframe = "5m"
   var numWindows = 1
   var p = initOptParser(commandLineParams())
@@ -1277,8 +1303,9 @@ proc main() =
     except Exception as e:
       echo &"  ERROR: {e.msg}"; continue
     if registry.marketCount == 0:
-      echo "  ERROR: no markets found"; continue
+      log("ERROR: no markets found"); continue
 
+    log(&"Found {registry.marketCount} markets")
     echo &"  Found {registry.marketCount} markets:"
     for i in 0..<registry.marketCount:
       echo &"    {$registry.markets[i].label}: {$registry.markets[i].slug}"
