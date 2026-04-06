@@ -24,7 +24,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/crates-14-2ea44f?style=for-the-badge" alt="14 crates">
   <img src="https://img.shields.io/badge/tests-656-2ea44f?style=for-the-badge" alt="656 tests">
-  <img src="https://img.shields.io/badge/coverage-90%25-2ea44f?style=for-the-badge" alt="90% coverage">
+  <a href="https://codecov.io/gh/Milerius/Mantis"><img src="https://img.shields.io/codecov/c/github/Milerius/Mantis?style=for-the-badge&label=coverage" alt="Coverage"></a>
   <img src="https://img.shields.io/badge/miri-clean-2ea44f?style=for-the-badge" alt="Miri clean">
   <img src="https://img.shields.io/badge/kani-proven-2ea44f?style=for-the-badge" alt="Kani proven">
 </p>
