@@ -16,6 +16,7 @@ mantis-events = { workspace = true }
 mantis-types = { workspace = true }
 mantis-market-state = { workspace = true }
 mantis-fixed = { workspace = true }
+libm = { workspace = true }
 
 [dev-dependencies]
 
