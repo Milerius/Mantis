@@ -1,7 +1,7 @@
 //! The core Strategy trait.
 
+use crate::intent::{MAX_INTENTS_PER_TICK, OrderIntent};
 use mantis_events::HotEvent;
-use crate::intent::{OrderIntent, MAX_INTENTS_PER_TICK};
 
 /// Strategy is a self-contained event-driven state machine.
 ///

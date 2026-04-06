@@ -84,10 +84,7 @@ mod tests {
             capital_budget: FixedI64::ZERO,
         };
         let cloned = limits.clone();
-        assert_eq!(
-            cloned.max_position_per_instrument.to_raw(),
-            100
-        );
+        assert_eq!(cloned.max_position_per_instrument.to_raw(), 100);
         assert_eq!(cloned.max_orders_live, 10);
     }
 }

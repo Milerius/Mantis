@@ -1,7 +1,7 @@
 //! Generic signed position with `VWAP` entry tracking and `PnL` accounting.
 
 use mantis_fixed::FixedI64;
-use mantis_types::{InstrumentId, Lots, SignedLots, Side};
+use mantis_types::{InstrumentId, Lots, Side, SignedLots};
 
 /// Signed inventory position with VWAP average entry price.
 ///
@@ -83,13 +83,9 @@ impl Position {
                 .checked_mul_int(old_qty_raw)
                 .unwrap_or(FixedI64::ZERO);
             // new_cost = |delta| * price
-            let new_cost = price
-                .checked_mul_int(delta_raw)
-                .unwrap_or(FixedI64::ZERO);
+            let new_cost = price.checked_mul_int(delta_raw).unwrap_or(FixedI64::ZERO);
             // total_cost = old_cost + new_cost
-            let total_cost = old_cost
-                .checked_add(new_cost)
-                .unwrap_or(FixedI64::ZERO);
+            let total_cost = old_cost.checked_add(new_cost).unwrap_or(FixedI64::ZERO);
             // avg_entry = total_cost / new_total_qty
             self.avg_entry = total_cost
                 .checked_div_int(new_qty_raw)
@@ -119,9 +115,7 @@ impl Position {
 
             // If the fill crosses flat (flip), the remaining delta opens a new position.
             // avg_entry for the new leg is the fill price.
-            if new_qty.to_raw().abs() > 0
-                && new_qty.signum() != old_qty.signum()
-            {
+            if new_qty.to_raw().abs() > 0 && new_qty.signum() != old_qty.signum() {
                 // Flipped — new avg_entry is the fill price.
                 self.avg_entry = price;
             }

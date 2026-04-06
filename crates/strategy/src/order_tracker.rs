@@ -165,10 +165,7 @@ impl OrderTracker {
     pub fn open_qty(&self, instrument_id: InstrumentId, side: Side) -> Lots {
         let mut total = Lots::ZERO;
         for order in self.orders.iter().filter_map(|s| s.as_ref()) {
-            if order.is_active()
-                && order.instrument_id == instrument_id
-                && order.side == side
-            {
+            if order.is_active() && order.instrument_id == instrument_id && order.side == side {
                 total += order.remaining_qty();
             }
         }

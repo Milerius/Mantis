@@ -43,7 +43,10 @@ impl<'a> ExposureView<'a> {
 
     /// Total notional at risk across all instruments.
     #[must_use]
-    pub fn total_notional_at_risk(&self, mid_prices: &[(InstrumentId, FixedI64<6>)]) -> FixedI64<6> {
+    pub fn total_notional_at_risk(
+        &self,
+        mid_prices: &[(InstrumentId, FixedI64<6>)],
+    ) -> FixedI64<6> {
         let mut total = FixedI64::<6>::ZERO;
         for (inst, mid) in mid_prices {
             for pos in self.positions {
