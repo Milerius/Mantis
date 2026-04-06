@@ -26,6 +26,6 @@ pub use order_tracker::{
     MAX_TRACKED_ORDERS, OrderState, OrderTracker, TrackedOrder, TrackerFullError,
 };
 pub use position::Position;
-pub use queue::{MAX_QUEUED_ORDERS, QueueEstimator, QueuedOrder};
+pub use queue::{MAX_QUEUED_ORDERS, QueueEstimator, QueueFullError, QueuedOrder};
 pub use risk::{RiskCheckResult, RiskLimits};
 pub use traits::Strategy;
