@@ -684,7 +684,11 @@ mod tests {
 
     #[test]
     fn div_round_by_zero_returns_none() {
-        assert!(F6::from_raw(1_000_000).checked_div_round(F6::ZERO).is_none());
+        assert!(
+            F6::from_raw(1_000_000)
+                .checked_div_round(F6::ZERO)
+                .is_none()
+        );
     }
 
     #[test]
@@ -718,20 +722,14 @@ mod tests {
     fn checked_div_int_truncates_toward_zero() {
         // 1.00 / 3 = 0.333... at D=6 -> raw = 333333 (not 333334)
         let a = F6::from_raw(1_000_000);
-        assert_eq!(
-            a.checked_div_int(3).map(FixedI64::to_raw),
-            Some(333_333)
-        );
+        assert_eq!(a.checked_div_int(3).map(FixedI64::to_raw), Some(333_333));
     }
 
     #[test]
     fn checked_div_int_negative_truncates_toward_zero() {
         // -1.00 / 3 = -0.333... -> raw = -333333
         let a = F6::from_raw(-1_000_000);
-        assert_eq!(
-            a.checked_div_int(3).map(FixedI64::to_raw),
-            Some(-333_333)
-        );
+        assert_eq!(a.checked_div_int(3).map(FixedI64::to_raw), Some(-333_333));
     }
 
     #[test]
@@ -771,14 +769,20 @@ mod tests {
         // Small value * small value must not overflow
         let a = F6::from_raw(1_000_000); // 1.0
         let b = F6::from_raw(1_000_000); // 1.0
-        assert_eq!(a.checked_mul_trunc(b).map(FixedI64::to_raw), Some(1_000_000));
+        assert_eq!(
+            a.checked_mul_trunc(b).map(FixedI64::to_raw),
+            Some(1_000_000)
+        );
     }
 
     #[test]
     fn div_trunc_one_by_one() {
         // 1.0 / 1.0 = 1.0 at D=6
         let a = F6::from_raw(1_000_000);
-        assert_eq!(a.checked_div_trunc(a).map(FixedI64::to_raw), Some(1_000_000));
+        assert_eq!(
+            a.checked_div_trunc(a).map(FixedI64::to_raw),
+            Some(1_000_000)
+        );
     }
 
     #[test]
@@ -792,4 +796,5 @@ mod tests {
     fn checked_div_trunc_min_by_neg_one_overflows() {
         let neg_one = F2::from_int(-1).expect("fits");
         assert!(F2::MIN.checked_div_trunc(neg_one).is_none());
-    }}
+    }
+}

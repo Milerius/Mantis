@@ -323,7 +323,10 @@ mod tests {
         )
     }
 
-    #[expect(clippy::too_many_arguments, reason = "test helper — all params are semantically distinct")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test helper — all params are semantically distinct"
+    )]
     fn make_delta_ts(
         inst: u32,
         price: i64,
@@ -365,7 +368,10 @@ mod tests {
         )
     }
 
-    #[expect(clippy::too_many_arguments, reason = "test helper — all params are semantically distinct")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test helper — all params are semantically distinct"
+    )]
     fn make_top_of_book(
         inst: u32,
         bid_price: i64,

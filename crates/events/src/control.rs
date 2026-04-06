@@ -160,8 +160,16 @@ mod tests {
 
     #[test]
     fn timer_id_is_independent_of_kind() {
-        let p1 = TimerPayload { timer_id: 1, kind: TimerKind::Periodic, _pad: [0; 3] };
-        let p2 = TimerPayload { timer_id: 2, kind: TimerKind::Periodic, _pad: [0; 3] };
+        let p1 = TimerPayload {
+            timer_id: 1,
+            kind: TimerKind::Periodic,
+            _pad: [0; 3],
+        };
+        let p2 = TimerPayload {
+            timer_id: 2,
+            kind: TimerKind::Periodic,
+            _pad: [0; 3],
+        };
         assert_ne!(p1.timer_id, p2.timer_id);
         assert_eq!(p1.kind, p2.kind);
     }

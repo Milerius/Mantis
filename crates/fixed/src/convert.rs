@@ -404,7 +404,7 @@ mod tests {
         let b: FixedI64<6> = a.rescale_trunc().expect("fits");
         assert_ne!(b.to_raw(), 100 + 10_000); // not addition
         assert_ne!(b.to_raw(), 100 - 10_000); // not subtraction
-        assert_eq!(b.to_raw(), 1_000_000);    // must be multiplication
+        assert_eq!(b.to_raw(), 1_000_000); // must be multiplication
     }
 
     #[test]
@@ -415,4 +415,5 @@ mod tests {
         let b: FixedI64<2> = a.rescale_trunc().expect("fits");
         assert_ne!(b.to_raw(), 1_230_000 - 10_000); // not subtraction
         assert_eq!(b.to_raw(), 123);
-    }}
+    }
+}
