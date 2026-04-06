@@ -21,8 +21,19 @@ jobs:
         with:
           tool: cargo-mutants
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: cargo +nightly mutants --timeout 60 -- --all-features
+      - name: Run mutant testing
+        run: cargo +nightly mutants --timeout 60 -- --all-features
         continue-on-error: true
+      - name: Mutants Summary
+        if: always()
+        run: |
+          echo "## Mutation Testing Results" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f mutants.out/caught.txt ]; then
+            echo "Caught: $(wc -l < mutants.out/caught.txt)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f mutants.out/missed.txt ]; then
+            echo "Missed: $(wc -l < mutants.out/missed.txt)" >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Upload mutants report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -102,6 +113,10 @@ jobs:
   kani:
     name: Kani Proofs
     runs-on: ubuntu-latest
+    # Known issue: Kani 0.67.0 bundles rustc 1.93.0-nightly which is below
+    # our MSRV of 1.95.0. Proofs will fail until Kani ships a newer rustc.
+    # Track: https://github.com/model-checking/kani/releases
+    continue-on-error: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -111,12 +126,14 @@ jobs:
           cargo install --locked kani-verifier
           cargo kani setup
       - name: Run proofs
-        run: cargo kani -p mantis-verify 2>&1 | tee kani-output.txt
+        run: |
+          set -o pipefail
+          cargo kani -p mantis-verify 2>&1 | tee kani-output.txt
       - name: Kani Summary
         if: always()
         run: |
           echo "## Kani Proof Results" >> "$GITHUB_STEP_SUMMARY"
-          grep -E "(VERIFIED|FAILED|harness)" kani-output.txt >> "$GITHUB_STEP_SUMMARY" || true
+          grep -E "(VERIFIED|FAILED|harness|error)" kani-output.txt >> "$GITHUB_STEP_SUMMARY" || true
       - name: Upload proof output
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
