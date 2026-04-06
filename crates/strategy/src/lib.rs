@@ -10,6 +10,7 @@
 #![no_std]
 #![deny(unsafe_code)]
 
+pub mod context;
 mod exposure;
 mod intent;
 mod order_tracker;
@@ -18,6 +19,7 @@ mod queue;
 mod risk;
 mod traits;
 
+pub use context::StrategyContext;
 pub use exposure::ExposureView;
 pub use intent::{MAX_INTENTS_PER_TICK, OrderAction, OrderIntent};
 pub use order_tracker::{
