@@ -474,4 +474,322 @@ mod tests {
             Some(300_000_000)
         );
     }
-}
+
+    // --- mul_trunc: sign handling ---
+
+    #[test]
+    fn mul_trunc_neg_times_neg_is_positive() {
+        // -1.50 * -2.00 = 3.00 at D=2
+        let a = F2::from_raw(-150);
+        let b = F2::from_raw(-200);
+        assert_eq!(a.checked_mul_trunc(b).map(FixedI64::to_raw), Some(300));
+    }
+
+    #[test]
+    fn mul_trunc_pos_times_neg_is_negative() {
+        // 1.50 * -2.00 = -3.00 at D=2
+        let a = F2::from_raw(150);
+        let b = F2::from_raw(-200);
+        assert_eq!(a.checked_mul_trunc(b).map(FixedI64::to_raw), Some(-300));
+    }
+
+    #[test]
+    fn mul_trunc_neg_times_pos_is_negative() {
+        let a = F2::from_raw(-150);
+        let b = F2::from_raw(200);
+        assert_eq!(a.checked_mul_trunc(b).map(FixedI64::to_raw), Some(-300));
+    }
+
+    #[test]
+    fn mul_trunc_truncates_negative_toward_zero() {
+        // -1.01 * -1.01 = +1.0201 -> truncate to +1.02 (not +1.03)
+        let a = F2::from_raw(-101);
+        let b = F2::from_raw(-101);
+        assert_eq!(a.checked_mul_trunc(b).map(FixedI64::to_raw), Some(102));
+    }
+
+    #[test]
+    fn mul_trunc_result_not_added_or_subtracted_by_scale() {
+        // 2.00 * 3.00 = 6.00 at D=2, raw=600. Must not be 200+300 or 200-300.
+        let a = F2::from_raw(200);
+        let b = F2::from_raw(300);
+        let result = a.checked_mul_trunc(b).map(FixedI64::to_raw);
+        assert_eq!(result, Some(600));
+        assert_ne!(result, Some(500)); // not addition of raws
+        assert_ne!(result, Some(-100)); // not subtraction of raws
+    }
+
+    // --- mul_round: additional sign and rounding cases ---
+
+    #[test]
+    fn mul_round_neg_times_neg() {
+        // -0.05 * -0.10 = +0.005 -> rounds to +1 at D=2
+        let a = F2::from_raw(-5);
+        let b = F2::from_raw(-10);
+        assert_eq!(a.checked_mul_round(b).map(FixedI64::to_raw), Some(1));
+        assert_eq!(a.checked_mul_trunc(b).map(FixedI64::to_raw), Some(0));
+    }
+
+    #[test]
+    fn mul_round_exact_product_unchanged() {
+        // 2.00 * 3.00 = 6.00 exact, no rounding needed
+        let a = F2::from_raw(200);
+        let b = F2::from_raw(300);
+        assert_eq!(a.checked_mul_round(b).map(FixedI64::to_raw), Some(600));
+    }
+
+    #[test]
+    fn mul_round_overflow_returns_none() {
+        assert!(F6::MAX.checked_mul_round(F6::MAX).is_none());
+    }
+
+    #[test]
+    fn mul_round_biases_toward_positive_infinity_for_positive() {
+        // wide = 50 (tie at D=2). round: 1. trunc: 0. Ensures + not - in bias.
+        let a = F2::from_raw(5);
+        let b = F2::from_raw(10);
+        let r = a.checked_mul_round(b).map(FixedI64::to_raw);
+        let t = a.checked_mul_trunc(b).map(FixedI64::to_raw);
+        assert_eq!(r, Some(1));
+        assert_eq!(t, Some(0));
+        // Confirm they differ — mutation swap of + to - would produce 0 for round
+        assert_ne!(r, t);
+    }
+
+    #[test]
+    fn mul_round_biases_away_from_zero_for_negative() {
+        // wide = -50. round should give -1, trunc gives 0.
+        let a = F2::from_raw(-5);
+        let b = F2::from_raw(10);
+        let r = a.checked_mul_round(b).map(FixedI64::to_raw);
+        let t = a.checked_mul_trunc(b).map(FixedI64::to_raw);
+        assert_eq!(r, Some(-1));
+        assert_eq!(t, Some(0));
+        assert_ne!(r, t);
+    }
+
+    // --- div_trunc: additional mutation killers ---
+
+    #[test]
+    fn div_trunc_negative_by_negative_is_positive() {
+        // -6.00 / -2.00 = 3.00 at D=2
+        let a = F2::from_raw(-600);
+        let b = F2::from_raw(-200);
+        assert_eq!(a.checked_div_trunc(b).map(FixedI64::to_raw), Some(300));
+    }
+
+    #[test]
+    fn div_trunc_positive_by_negative_is_negative() {
+        // 6.00 / -2.00 = -3.00 at D=2
+        let a = F2::from_raw(600);
+        let b = F2::from_raw(-200);
+        assert_eq!(a.checked_div_trunc(b).map(FixedI64::to_raw), Some(-300));
+    }
+
+    #[test]
+    fn div_trunc_scale_factor_is_multiplied_not_added() {
+        // 1.00 / 1.00 = 1.00 at D=2 -> raw=100. If scale were added: 100+100=200.
+        let a = F2::from_raw(100);
+        let b = F2::from_raw(100);
+        assert_eq!(a.checked_div_trunc(b).map(FixedI64::to_raw), Some(100));
+        assert_ne!(a.checked_div_trunc(b).map(FixedI64::to_raw), Some(200));
+    }
+
+    #[test]
+    fn div_trunc_exact_small_value() {
+        // 0.01 / 0.01 = 1.00 at D=2 -> raw=100
+        let a = F2::from_raw(1);
+        let b = F2::from_raw(1);
+        assert_eq!(a.checked_div_trunc(b).map(FixedI64::to_raw), Some(100));
+    }
+
+    #[test]
+    fn div_trunc_truncates_not_rounds() {
+        // 2.00 / 3.00 = 0.666... -> trunc to 0.66 (raw 66), not 0.67
+        let a = F2::from_raw(200);
+        let b = F2::from_raw(300);
+        assert_eq!(a.checked_div_trunc(b).map(FixedI64::to_raw), Some(66));
+    }
+
+    #[test]
+    fn div_trunc_neg_numerator_truncates_toward_zero() {
+        // -2.00 / 3.00 = -0.666... -> trunc toward zero = -0.66 (raw -66)
+        let a = F2::from_raw(-200);
+        let b = F2::from_raw(300);
+        assert_eq!(a.checked_div_trunc(b).map(FixedI64::to_raw), Some(-66));
+        // Not -67 (floor)
+        assert_ne!(a.checked_div_trunc(b).map(FixedI64::to_raw), Some(-67));
+    }
+
+    #[test]
+    fn div_trunc_overflow_returns_none() {
+        // MAX / very small divisor overflows
+        let a = F2::from_raw(i64::MAX);
+        let b = F2::from_raw(1); // 0.01
+        assert!(a.checked_div_trunc(b).is_none());
+    }
+
+    // --- div_round: additional mutation killers ---
+
+    #[test]
+    fn div_round_rounds_up_at_tie() {
+        // 1.00 / 2.00 = 0.50 exactly, no tie ambiguity at D=2, raw=50
+        let a = F2::from_raw(100);
+        let b = F2::from_raw(200);
+        assert_eq!(a.checked_div_round(b).map(FixedI64::to_raw), Some(50));
+        assert_eq!(a.checked_div_trunc(b).map(FixedI64::to_raw), Some(50));
+    }
+
+    #[test]
+    fn div_round_vs_trunc_differ_above_tie() {
+        // 2.00 / 3.00 = 0.666... trunc=0.66 (66), round=0.67 (67)
+        let a = F2::from_raw(200);
+        let b = F2::from_raw(300);
+        // abs_div_half = 300/2 = 150
+        // wide = 200 * 100 = 20000
+        // biased = 20000 + 150 = 20150
+        // 20150 / 300 = 67 (rounds up)
+        assert_eq!(a.checked_div_round(b).map(FixedI64::to_raw), Some(67));
+        assert_eq!(a.checked_div_trunc(b).map(FixedI64::to_raw), Some(66));
+    }
+
+    #[test]
+    fn div_round_negative_rounds_away_from_zero() {
+        // -2.00 / 3.00 = -0.666... trunc=-66, round=-67
+        let a = F2::from_raw(-200);
+        let b = F2::from_raw(300);
+        assert_eq!(a.checked_div_round(b).map(FixedI64::to_raw), Some(-67));
+        assert_eq!(a.checked_div_trunc(b).map(FixedI64::to_raw), Some(-66));
+    }
+
+    #[test]
+    fn div_round_neg_by_neg_rounds_away_from_zero() {
+        // -2.00 / -3.00 = +0.666... round=67, trunc=66
+        let a = F2::from_raw(-200);
+        let b = F2::from_raw(-300);
+        assert_eq!(a.checked_div_round(b).map(FixedI64::to_raw), Some(67));
+        assert_eq!(a.checked_div_trunc(b).map(FixedI64::to_raw), Some(66));
+    }
+
+    #[test]
+    fn div_round_abs_div_half_uses_abs_of_divisor() {
+        // Negative divisor: abs_div_half must use |divisor|, not -divisor directly
+        // 2.00 / -3.00: wide=20000, divisor=-300, abs_div_half=150
+        // biased = 20000 + 150 = 20150 (positive wide)
+        // 20150 / -300 = -67 (rounds away from zero for positive/negative pair)
+        let a = F2::from_raw(200);
+        let b = F2::from_raw(-300);
+        assert_eq!(a.checked_div_round(b).map(FixedI64::to_raw), Some(-67));
+    }
+
+    #[test]
+    fn div_round_by_zero_returns_none() {
+        assert!(F6::from_raw(1_000_000).checked_div_round(F6::ZERO).is_none());
+    }
+
+    #[test]
+    fn div_round_exact_division_same_as_trunc() {
+        // 6.00 / 3.00 = 2.00, no fractional part
+        let a = F2::from_raw(600);
+        let b = F2::from_raw(300);
+        assert_eq!(a.checked_div_round(b).map(FixedI64::to_raw), Some(200));
+        assert_eq!(a.checked_div_trunc(b).map(FixedI64::to_raw), Some(200));
+    }
+
+    // --- checked_mul_int / checked_div_int: additional cases ---
+
+    #[test]
+    fn checked_mul_int_negative_scalar() {
+        // 1.5 * -3 = -4.5 at D=6
+        let a = F6::from_raw(1_500_000);
+        assert_eq!(
+            a.checked_mul_int(-3).map(FixedI64::to_raw),
+            Some(-4_500_000)
+        );
+    }
+
+    #[test]
+    fn checked_mul_int_by_zero() {
+        let a = F6::from_raw(1_500_000);
+        assert_eq!(a.checked_mul_int(0).map(FixedI64::to_raw), Some(0));
+    }
+
+    #[test]
+    fn checked_div_int_truncates_toward_zero() {
+        // 1.00 / 3 = 0.333... at D=6 -> raw = 333333 (not 333334)
+        let a = F6::from_raw(1_000_000);
+        assert_eq!(
+            a.checked_div_int(3).map(FixedI64::to_raw),
+            Some(333_333)
+        );
+    }
+
+    #[test]
+    fn checked_div_int_negative_truncates_toward_zero() {
+        // -1.00 / 3 = -0.333... -> raw = -333333
+        let a = F6::from_raw(-1_000_000);
+        assert_eq!(
+            a.checked_div_int(3).map(FixedI64::to_raw),
+            Some(-333_333)
+        );
+    }
+
+    #[test]
+    fn checked_div_int_negative_divisor() {
+        // 3.00 / -2 = -1.5 at D=6
+        let a = F6::from_raw(3_000_000);
+        assert_eq!(
+            a.checked_div_int(-2).map(FixedI64::to_raw),
+            Some(-1_500_000)
+        );
+    }
+
+    // --- saturating_mul_trunc: additional cases ---
+
+    #[test]
+    fn saturating_mul_trunc_neg_pos_overflow_clamps_to_min() {
+        // MAX * MIN: negative overflow -> MIN
+        assert_eq!(F6::MIN.saturating_mul_trunc(F6::MAX), F6::MIN);
+    }
+
+    #[test]
+    fn saturating_mul_trunc_neg_neg_overflow_clamps_to_max() {
+        // MIN * MIN: both negative, product positive, overflow -> MAX
+        assert_eq!(F6::MIN.saturating_mul_trunc(F6::MIN), F6::MAX);
+    }
+
+    #[test]
+    fn saturating_mul_int_zero() {
+        let a = F6::from_raw(1_000_000);
+        assert_eq!(a.saturating_mul_int(0).to_raw(), 0);
+    }
+
+    // --- boundary / overflow ---
+
+    #[test]
+    fn mul_trunc_near_max_no_overflow() {
+        // Small value * small value must not overflow
+        let a = F6::from_raw(1_000_000); // 1.0
+        let b = F6::from_raw(1_000_000); // 1.0
+        assert_eq!(a.checked_mul_trunc(b).map(FixedI64::to_raw), Some(1_000_000));
+    }
+
+    #[test]
+    fn div_trunc_one_by_one() {
+        // 1.0 / 1.0 = 1.0 at D=6
+        let a = F6::from_raw(1_000_000);
+        assert_eq!(a.checked_div_trunc(a).map(FixedI64::to_raw), Some(1_000_000));
+    }
+
+    #[test]
+    fn mul_trunc_min_times_neg_one_overflows() {
+        // MIN * -1.0 overflows i64
+        let neg_one = F6::from_int(-1).expect("fits");
+        assert!(F6::MIN.checked_mul_trunc(neg_one).is_none());
+    }
+
+    #[test]
+    fn checked_div_trunc_min_by_neg_one_overflows() {
+        let neg_one = F2::from_int(-1).expect("fits");
+        assert!(F2::MIN.checked_div_trunc(neg_one).is_none());
+    }}
