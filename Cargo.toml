@@ -54,7 +54,9 @@ mantis-seqlock = { path = "crates/seqlock", version = "0.1.0" }
 mantis-transport = { path = "crates/transport", version = "0.1.0" }
 mantis-registry = { path = "crates/registry", version = "0.1.0" }
 mantis-market-state = { path = "crates/market-state", version = "0.1.0" }
+mantis-strategy = { path = "crates/strategy", version = "0.1.0" }
 cfg-if = "1"
+libm = "0.2"
 criterion = { version = "0.8", features = ["html_reports"] }
 bolero = "0.11"
 libc = "0.2.169"
