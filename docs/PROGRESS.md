@@ -161,6 +161,21 @@
 - [x] Bolero property tests: random deltas no panic, best_bid invariant, imbalance range
 - [x] 17 unit tests, no_std clean, layout assertions in `mantis-layout`
 
+### 1.12 Strategy Runtime (`mantis-strategy`)
+**Status: Complete** | Completed: 2026-04-06
+
+- [x] Event-driven `Strategy` trait — no generics, associated consts (`STRATEGY_ID`, `NAME`)
+- [x] `OrderIntent` + `OrderAction` (Post/Cancel/Amend) with `target_order_id` disambiguation
+- [x] `SignedLots(i64)` newtype in `mantis-types` for signed inventory positions
+- [x] `Position` — signed qty (`SignedLots`), VWAP entry, realized/unrealized PnL, flat invariant
+- [x] `OrderTracker` — fixed-size `[Option<TrackedOrder>; 64]` order state machine with slot reclamation
+- [x] `QueueEstimator` — L2 probabilistic queue model (`PowerProbQueueFunc`, per-instrument take rates)
+- [x] `ExposureView` — composes position + open orders for worst-case risk calculation
+- [x] `RiskLimits` + `RiskCheckResult` — per-strategy risk configuration
+- [x] `StrategyContext<B, MAX>` — optional helper bundle (engine + queue + orders + risk + positions)
+- [x] Old `Strategy` trait removed from `mantis-market-state` (clean break, no deprecation)
+- [x] 38 unit tests, `no_std` clean, clippy clean, 3 rounds of Codex review
+
 ### 1.4 Snapshot Publication
 - [ ] Single-writer publication primitive
 - [ ] Lock-free reader access
@@ -225,9 +240,9 @@
 | Crate | Status | no_std | Tests | Benchmarks | Verification |
 |---|---|---|---|---|---|
 | `mantis-core` | Active | yes | 1 | — | — |
-| `mantis-types` | Active | yes | 76 | — | — |
+| `mantis-types` | Active | yes | 98 | — | — |
 | `mantis-fixed` | Active | yes | 110 | 7 groups + 2 contenders | miri pass, 7 bolero props, 2 fuzz |
-| `mantis-events` | Active | yes | 57 | — | miri pass |
+| `mantis-events` | Active | yes | 62 | — | miri pass |
 | `mantis-queue` | Active | yes | 31 | — | miri pass |
 | `mantis-platform` | Active | yes | 164 | — | miri pass |
 | `mantis-seqlock` | Active | yes | 1 | — | miri pass |
@@ -235,3 +250,4 @@
 | `mantis-bench` | Active | std | 11 | 6+7 bench groups, 6 contenders | — |
 | `mantis-layout` | Active | std | 6 | — | — |
 | `mantis-verify` | Active | std | 13 | — | 4 kani proofs, 13 bolero/diff |
+| `mantis-strategy` | Active | yes | 38 | — | 3 rounds Codex review |
