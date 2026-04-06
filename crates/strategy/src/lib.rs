@@ -11,9 +11,15 @@
 #![deny(unsafe_code)]
 
 mod intent;
+mod order_tracker;
 mod position;
+mod queue;
 mod traits;
 
 pub use intent::{MAX_INTENTS_PER_TICK, OrderAction, OrderIntent};
+pub use order_tracker::{
+    MAX_TRACKED_ORDERS, OrderState, OrderTracker, TrackedOrder, TrackerFullError,
+};
 pub use position::Position;
+pub use queue::{MAX_QUEUED_ORDERS, QueueEstimator, QueuedOrder};
 pub use traits::Strategy;
