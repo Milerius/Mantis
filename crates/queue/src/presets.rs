@@ -118,7 +118,7 @@ impl<T: Copy + Send, const N: usize> Default for SpscRingCopyInstrumented<T, N> 
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 

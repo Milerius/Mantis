@@ -337,7 +337,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 #[expect(clippy::cast_sign_loss, reason = "test-only usize→u64 conversions")]
 mod tests {
     extern crate std;

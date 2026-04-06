@@ -58,7 +58,7 @@ pub(crate) unsafe fn drop_slot<T, S: Storage<T>>(storage: &S, index: usize) {
     unsafe { ptr::drop_in_place((*slot).as_mut_ptr()) };
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     extern crate alloc;
 
