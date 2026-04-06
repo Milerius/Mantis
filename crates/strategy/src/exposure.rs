@@ -30,8 +30,7 @@ impl<'a> ExposureView<'a> {
             .positions
             .iter()
             .find(|p| p.instrument_id == instrument_id)
-            .map(|p| p.qty)
-            .unwrap_or(SignedLots::ZERO);
+            .map_or(SignedLots::ZERO, |p| p.qty);
 
         let open = self.orders.open_qty(instrument_id, side);
         let delta = match side {
@@ -48,10 +47,10 @@ impl<'a> ExposureView<'a> {
         let mut total = FixedI64::<6>::ZERO;
         for (inst, mid) in mid_prices {
             for pos in self.positions {
-                if pos.instrument_id == *inst {
-                    if let Some(n) = pos.notional(*mid).checked_add(total) {
-                        total = n;
-                    }
+                if pos.instrument_id == *inst
+                    && let Some(n) = pos.notional(*mid).checked_add(total)
+                {
+                    total = n;
                 }
             }
         }
@@ -60,7 +59,8 @@ impl<'a> ExposureView<'a> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, reason = "test code — panics are acceptable")]
+#[expect(clippy::expect_used, reason = "test code — panics are acceptable")]
 mod tests {
     use super::*;
     use crate::order_tracker::{OrderState, OrderTracker, TrackedOrder};

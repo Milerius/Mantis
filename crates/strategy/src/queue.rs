@@ -63,6 +63,7 @@ impl QueueEstimator {
     ///
     /// `current_level_size` is the total resting quantity at `price` before
     /// our order was posted; our order goes behind all of it.
+    #[expect(clippy::too_many_arguments, reason = "all parameters are semantically distinct and required")]
     pub fn register_order(
         &mut self,
         order_id: u64,
@@ -119,21 +120,19 @@ impl QueueEstimator {
             Side::Ask => &mut self.take_rate_ask,
         };
         // i64 → f64: queue sizes fit well within f64 mantissa precision.
-        #[allow(clippy::cast_precision_loss)]
+        #[expect(clippy::cast_precision_loss, reason = "queue sizes fit within f64 mantissa")]
         let qty_f = qty.to_raw() as f64;
         *rate = *rate * (1.0 - alpha) + qty_f * alpha;
 
         // Trades consume from front of queue — reduce ahead_qty.
-        for slot in &mut self.orders {
-            if let Some(order) = slot {
-                if order.instrument_id == instrument_id
-                    && order.side == side
-                    && order.price == price
-                {
-                    let reduction = qty.to_raw().min(order.ahead_qty.to_raw());
-                    order.ahead_qty =
-                        Lots::from_raw((order.ahead_qty.to_raw() - reduction).max(0));
-                }
+        for order in self.orders.iter_mut().flatten() {
+            if order.instrument_id == instrument_id
+                && order.side == side
+                && order.price == price
+            {
+                let reduction = qty.to_raw().min(order.ahead_qty.to_raw());
+                order.ahead_qty =
+                    Lots::from_raw((order.ahead_qty.to_raw() - reduction).max(0));
             }
         }
     }
@@ -144,6 +143,7 @@ impl QueueEstimator {
     /// attributes a fraction of the cancels to the back of the queue.
     /// We only advance `ahead_qty` by the fraction estimated to have been
     /// cancelled from the front.
+    #[expect(clippy::too_many_arguments, reason = "all parameters are semantically distinct and required")]
     pub fn on_level_change(
         &mut self,
         instrument_id: InstrumentId,
@@ -157,44 +157,41 @@ impl QueueEstimator {
         }
         let decrease = old_qty.to_raw() - new_qty.to_raw();
 
-        for slot in &mut self.orders {
-            if let Some(order) = slot {
-                if order.instrument_id == instrument_id
-                    && order.side == side
-                    && order.price == price
-                {
-                    // i64 → f64: queue sizes fit well within f64 mantissa precision.
-                    #[allow(clippy::cast_precision_loss)]
-                    let front = order.ahead_qty.to_raw() as f64;
-                    #[allow(clippy::cast_precision_loss)]
-                    let total = old_qty.to_raw() as f64;
-                    if total <= 0.0 {
-                        continue;
-                    }
-
-                    // PowerProbQueueFunc: probability that a cancel comes from
-                    // the back = back^n / (back^n + front^n).
-                    let back = total - front;
-                    let prob_from_back = if back + front > 0.0 {
-                        libm::pow(back, self.prob_power_n)
-                            / (libm::pow(back, self.prob_power_n)
-                                + libm::pow(front, self.prob_power_n))
-                    } else {
-                        0.5
-                    };
-
-                    // Cancels from front = decrease * (1 - prob_from_back).
-                    #[allow(clippy::cast_precision_loss)]
-                    let decrease_f = decrease as f64;
-                    let cancel_from_front = decrease_f * (1.0 - prob_from_back);
-                    // Truncation is intentional: fractional lots are rounded down.
-                    #[allow(clippy::cast_possible_truncation)]
-                    #[allow(clippy::cast_sign_loss)]
-                    let cancel_lots = cancel_from_front as i64;
-                    order.ahead_qty = Lots::from_raw(
-                        (order.ahead_qty.to_raw() - cancel_lots).max(0),
-                    );
+        for order in self.orders.iter_mut().flatten() {
+            if order.instrument_id == instrument_id
+                && order.side == side
+                && order.price == price
+            {
+                // i64 → f64: queue sizes fit well within f64 mantissa precision.
+                #[expect(clippy::cast_precision_loss, reason = "queue sizes fit within f64 mantissa")]
+                let front = order.ahead_qty.to_raw() as f64;
+                #[expect(clippy::cast_precision_loss, reason = "queue sizes fit within f64 mantissa")]
+                let total = old_qty.to_raw() as f64;
+                if total <= 0.0 {
+                    continue;
                 }
+
+                // PowerProbQueueFunc: probability that a cancel comes from
+                // the back = back^n / (back^n + front^n).
+                let back = total - front;
+                let prob_from_back = if back + front > 0.0 {
+                    libm::pow(back, self.prob_power_n)
+                        / (libm::pow(back, self.prob_power_n)
+                            + libm::pow(front, self.prob_power_n))
+                } else {
+                    0.5
+                };
+
+                // Cancels from front = decrease * (1 - prob_from_back).
+                #[expect(clippy::cast_precision_loss, reason = "queue sizes fit within f64 mantissa")]
+                let decrease_f = decrease as f64;
+                let cancel_from_front = decrease_f * (1.0 - prob_from_back);
+                // Truncation is intentional: fractional lots are rounded down.
+                #[expect(clippy::cast_possible_truncation, reason = "fractional lots rounded down intentionally")]
+                let cancel_lots = cancel_from_front as i64;
+                order.ahead_qty = Lots::from_raw(
+                    (order.ahead_qty.to_raw() - cancel_lots).max(0),
+                );
             }
         }
     }
@@ -223,7 +220,7 @@ impl QueueEstimator {
         };
         let lambda = rate * time_remaining_secs;
         // i64 → f64: queue sizes fit well within f64 mantissa precision.
-        #[allow(clippy::cast_precision_loss)]
+        #[expect(clippy::cast_precision_loss, reason = "queue sizes fit within f64 mantissa")]
         let k = order.ahead_qty.to_raw() as f64;
         if lambda <= 0.0 {
             return 0.0;
@@ -239,13 +236,13 @@ impl QueueEstimator {
             let mut cdf = 0.0_f64;
             let mut term = libm::exp(-lambda);
             // k is already derived from i64, so it's non-negative; truncation is safe.
-            #[allow(clippy::cast_possible_truncation)]
-            #[allow(clippy::cast_sign_loss)]
+            #[expect(clippy::cast_possible_truncation, reason = "k derived from non-negative i64; truncation safe")]
+            #[expect(clippy::cast_sign_loss, reason = "k is non-negative by construction")]
             let k_usize = k as usize;
             for i in 0..k_usize {
                 cdf += term;
                 // usize → f64: loop index fits well within mantissa.
-                #[allow(clippy::cast_precision_loss)]
+                #[expect(clippy::cast_precision_loss, reason = "loop index fits within f64 mantissa")]
                 let denom = (i + 1) as f64;
                 term *= lambda / denom;
             }
@@ -302,6 +299,7 @@ fn erfc(x: f64) -> f64 {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test code — panics are acceptable")]
 mod tests {
     use super::*;
     use mantis_types::{InstrumentId, Lots, Side, Ticks};

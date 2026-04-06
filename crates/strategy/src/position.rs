@@ -1,4 +1,4 @@
-//! Generic signed position with VWAP entry tracking and PnL accounting.
+//! Generic signed position with `VWAP` entry tracking and `PnL` accounting.
 
 use mantis_fixed::FixedI64;
 use mantis_types::{InstrumentId, Lots, SignedLots, Side};
@@ -7,7 +7,7 @@ use mantis_types::{InstrumentId, Lots, SignedLots, Side};
 ///
 /// Tracks a single instrument's net position (long positive, short negative),
 /// computes a volume-weighted average entry price on increases, and realizes
-/// PnL when the position is reduced or flipped.
+/// `PnL` when the position is reduced or flipped.
 ///
 /// ## Invariants
 ///
@@ -23,7 +23,7 @@ pub struct Position {
     pub qty: SignedLots,
     /// Volume-weighted average entry price. Zero when flat.
     pub avg_entry: FixedI64<6>,
-    /// Cumulative realized PnL since position was opened.
+    /// Cumulative realized `PnL` since position was opened.
     pub realized_pnl: FixedI64<6>,
     /// Total number of fills processed.
     pub fill_count: u32,
@@ -42,7 +42,7 @@ impl Position {
         }
     }
 
-    /// Process a fill: update VWAP on position increase, realize PnL on decrease.
+    /// Process a fill: update `VWAP` on position increase, realize `PnL` on decrease.
     ///
     /// - `side`: direction of the fill (Bid = buy, Ask = sell).
     /// - `qty`: unsigned lot size of the fill.
@@ -137,7 +137,7 @@ impl Position {
         }
     }
 
-    /// Mark-to-market unrealized PnL at `current_mid`.
+    /// Mark-to-market unrealized `PnL` at `current_mid`.
     ///
     /// Returns `ZERO` when the position is flat.
     #[must_use]
@@ -155,7 +155,7 @@ impl Position {
             .unwrap_or(FixedI64::ZERO)
     }
 
-    /// Total PnL = realized + unrealized at `current_mid`.
+    /// Total `PnL` = realized + unrealized at `current_mid`.
     #[must_use]
     pub fn total_pnl(&self, current_mid: FixedI64<6>) -> FixedI64<6> {
         self.realized_pnl
@@ -163,7 +163,7 @@ impl Position {
             .unwrap_or(self.realized_pnl)
     }
 
-    /// Gross notional exposure = |qty| * current_mid.
+    /// Gross notional exposure = `|qty|` * `current_mid`.
     ///
     /// Always non-negative.
     #[must_use]
@@ -176,6 +176,7 @@ impl Position {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test code — panics are acceptable")]
 mod tests {
     use super::*;
 

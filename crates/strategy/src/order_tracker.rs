@@ -198,7 +198,7 @@ impl Default for OrderTracker {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, reason = "test code — panics are acceptable")]
 mod tests {
     use super::*;
     use mantis_types::{InstrumentId, Lots, Side, Ticks};
