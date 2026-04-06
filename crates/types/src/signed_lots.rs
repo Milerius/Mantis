@@ -42,9 +42,12 @@ impl SignedLots {
     }
 
     /// Return the absolute lot count as a [`SignedLots`].
+    ///
+    /// Uses [`i64::saturating_abs`] so `i64::MIN` saturates to `i64::MAX`
+    /// rather than panicking in debug or wrapping in release.
     #[must_use]
     pub const fn abs(self) -> Self {
-        Self(self.0.abs())
+        Self(self.0.saturating_abs())
     }
 }
 

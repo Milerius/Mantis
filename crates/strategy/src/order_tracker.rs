@@ -111,9 +111,10 @@ impl OrderTracker {
     }
 
     /// Order was acknowledged by venue.
-    pub fn on_ack(&mut self, client_order_id: u64, acked_at_ns: u64) {
+    pub fn on_ack(&mut self, client_order_id: u64, exchange_order_id: u64, acked_at_ns: u64) {
         if let Some(order) = self.find_mut(client_order_id) {
             order.state = OrderState::Live;
+            order.exchange_order_id = exchange_order_id;
             order.acked_at_ns = acked_at_ns;
         }
     }
@@ -223,9 +224,10 @@ mod tests {
         assert!(tracker.on_intent_sent(order).is_ok());
         assert_eq!(tracker.active_count(), 1);
 
-        tracker.on_ack(1, 999);
+        tracker.on_ack(1, 42, 999);
         let o = tracker.get(1).unwrap();
         assert_eq!(o.state, OrderState::Live);
+        assert_eq!(o.exchange_order_id, 42);
         assert_eq!(o.acked_at_ns, 999);
     }
 
@@ -233,7 +235,7 @@ mod tests {
     fn fill_updates_qty() {
         let mut tracker = OrderTracker::new();
         tracker.on_intent_sent(make_order(1)).unwrap();
-        tracker.on_ack(1, 100);
+        tracker.on_ack(1, 0, 100);
         tracker.on_fill(1, Lots::from_raw(30));
 
         let o = tracker.get(1).unwrap();
@@ -246,7 +248,7 @@ mod tests {
     fn full_fill_transitions_to_filled() {
         let mut tracker = OrderTracker::new();
         tracker.on_intent_sent(make_order(1)).unwrap();
-        tracker.on_ack(1, 100);
+        tracker.on_ack(1, 0, 100);
         tracker.on_fill(1, Lots::from_raw(100));
 
         let o = tracker.get(1).unwrap();
@@ -258,7 +260,7 @@ mod tests {
     fn cancel_ack() {
         let mut tracker = OrderTracker::new();
         tracker.on_intent_sent(make_order(1)).unwrap();
-        tracker.on_ack(1, 100);
+        tracker.on_ack(1, 0, 100);
         tracker.on_cancel_ack(1);
 
         let o = tracker.get(1).unwrap();
@@ -293,12 +295,12 @@ mod tests {
         let mut o = make_order(1);
         o.original_qty = Lots::from_raw(100);
         tracker.on_intent_sent(o).unwrap();
-        tracker.on_ack(1, 100);
+        tracker.on_ack(1, 0, 100);
 
         let mut o2 = make_order(2);
         o2.original_qty = Lots::from_raw(50);
         tracker.on_intent_sent(o2).unwrap();
-        tracker.on_ack(2, 100);
+        tracker.on_ack(2, 0, 100);
 
         let qty = tracker.open_qty(InstrumentId::from_raw(1), Side::Bid);
         assert_eq!(qty.to_raw(), 150);

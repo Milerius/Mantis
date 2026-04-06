@@ -50,10 +50,8 @@ impl<'a> ExposureView<'a> {
         let mut total = FixedI64::<6>::ZERO;
         for (inst, mid) in mid_prices {
             for pos in self.positions {
-                if pos.instrument_id == *inst
-                    && let Some(n) = pos.notional(*mid).checked_add(total)
-                {
-                    total = n;
+                if pos.instrument_id == *inst {
+                    total = pos.notional(*mid).saturating_add(total);
                 }
             }
         }

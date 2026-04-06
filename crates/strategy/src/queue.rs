@@ -10,6 +10,10 @@ use mantis_types::{InstrumentId, Lots, Side, Ticks};
 /// Maximum simultaneously tracked orders for queue estimation.
 pub const MAX_QUEUED_ORDERS: usize = 64;
 
+/// Error returned when the queue estimator is at capacity.
+#[derive(Debug, Clone, Copy)]
+pub struct QueueFullError;
+
 /// Per-order queue tracking state.
 #[derive(Clone, Copy, Debug)]
 pub struct QueuedOrder {
@@ -63,6 +67,10 @@ impl QueueEstimator {
     ///
     /// `current_level_size` is the total resting quantity at `price` before
     /// our order was posted; our order goes behind all of it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueueFullError`] if all `MAX_QUEUED_ORDERS` slots are occupied.
     #[expect(
         clippy::too_many_arguments,
         reason = "all parameters are semantically distinct and required"
@@ -75,7 +83,7 @@ impl QueueEstimator {
         price: Ticks,
         qty: Lots,
         current_level_size: Lots,
-    ) {
+    ) -> Result<(), QueueFullError> {
         for slot in &mut self.orders {
             if slot.is_none() {
                 *slot = Some(QueuedOrder {
@@ -90,9 +98,10 @@ impl QueueEstimator {
                     ),
                 });
                 self.order_count += 1;
-                return;
+                return Ok(());
             }
         }
+        Err(QueueFullError)
     }
 
     /// Order was filled — remove from tracking.
@@ -329,7 +338,8 @@ mod tests {
             Ticks::from_raw(650),
             Lots::from_raw(100),
             Lots::from_raw(500),
-        );
+        )
+        .expect("capacity not exceeded");
         let ahead = qe.queue_ahead(1).expect("order 1 registered");
         assert_eq!(ahead.to_raw(), 500);
     }
@@ -344,7 +354,8 @@ mod tests {
             Ticks::from_raw(650),
             Lots::from_raw(100),
             Lots::from_raw(500),
-        );
+        )
+        .expect("capacity not exceeded");
         qe.on_trade(
             InstrumentId::from_raw(0),
             Side::Bid,
@@ -365,7 +376,8 @@ mod tests {
             Ticks::from_raw(650),
             Lots::from_raw(100),
             Lots::from_raw(500),
-        );
+        )
+        .expect("capacity not exceeded");
         qe.on_trade(
             InstrumentId::from_raw(0),
             Side::Bid,
@@ -385,7 +397,8 @@ mod tests {
             Ticks::from_raw(650),
             Lots::from_raw(100),
             Lots::from_raw(500),
-        );
+        )
+        .expect("capacity not exceeded");
         // Level shrinks from 600 to 400 (200 cancelled).
         qe.on_level_change(
             InstrumentId::from_raw(0),
@@ -411,7 +424,8 @@ mod tests {
             Ticks::from_raw(650),
             Lots::from_raw(100),
             Lots::from_raw(100),
-        );
+        )
+        .expect("capacity not exceeded");
         qe.register_order(
             2,
             InstrumentId::from_raw(0),
@@ -419,7 +433,8 @@ mod tests {
             Ticks::from_raw(650),
             Lots::from_raw(100),
             Lots::from_raw(1000),
-        );
+        )
+        .expect("capacity not exceeded");
         let p1 = qe.fill_probability(1, 60.0);
         let p2 = qe.fill_probability(2, 60.0);
         assert!(p1 > p2, "p1={p1}, p2={p2}"); // less ahead → higher fill prob
@@ -435,7 +450,8 @@ mod tests {
             Ticks::from_raw(650),
             Lots::from_raw(100),
             Lots::from_raw(500),
-        );
+        )
+        .expect("capacity not exceeded");
         qe.order_cancelled(1);
         assert!(qe.queue_ahead(1).is_none());
     }
