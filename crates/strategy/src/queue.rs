@@ -604,4 +604,180 @@ mod tests {
             "rate1={rate1}, rate2={rate2}"
         );
     }
+
+    #[test]
+    fn fill_probability_zero_lambda_returns_zero() {
+        // lambda = take_rate * time = 1.0 * 0.0 = 0 → should return 0.0
+        let mut qe = QueueEstimator::new(3.0);
+        qe.register_order(
+            1,
+            InstrumentId::from_raw(0),
+            Side::Bid,
+            Ticks::from_raw(100),
+            Lots::from_raw(10),
+            Lots::from_raw(0),
+        )
+        .expect("capacity not exceeded");
+        let p = qe.fill_probability(1, 0.0);
+        assert!(p < f64::EPSILON, "expected 0.0, got {p}");
+    }
+
+    #[test]
+    fn fill_probability_small_lambda_direct_cdf() {
+        // lambda = 1.0 * 5.0 = 5.0 (≤ 20) — exercises direct Poisson CDF path
+        let mut qe = QueueEstimator::new(3.0);
+        qe.register_order(
+            1,
+            InstrumentId::from_raw(0),
+            Side::Bid,
+            Ticks::from_raw(100),
+            Lots::from_raw(1),
+            Lots::from_raw(2),
+        )
+        .expect("capacity not exceeded");
+        let p = qe.fill_probability(1, 5.0); // lambda = 5.0 ≤ 20
+        assert!(p > 0.0 && p <= 1.0, "p={p}");
+    }
+
+    #[test]
+    fn fill_probability_large_lambda_normal_approx() {
+        // lambda > 20 exercises the normal approximation path via erfc
+        let mut qe = QueueEstimator::new(3.0);
+        // Trade many times to push the EWMA take_rate up
+        for _ in 0..50 {
+            qe.on_trade(
+                InstrumentId::from_raw(5),
+                Side::Ask,
+                Ticks::from_raw(200),
+                Lots::from_raw(100),
+            );
+        }
+        qe.register_order(
+            10,
+            InstrumentId::from_raw(5),
+            Side::Ask,
+            Ticks::from_raw(200),
+            Lots::from_raw(1),
+            Lots::from_raw(5),
+        )
+        .expect("capacity not exceeded");
+        // time_remaining large enough that lambda = rate * time > 20
+        let p = qe.fill_probability(10, 1.0);
+        assert!(p > 0.0 && p <= 1.0, "p={p}");
+    }
+
+    #[test]
+    fn fill_probability_unknown_order_returns_zero() {
+        let qe = QueueEstimator::new(3.0);
+        let p = qe.fill_probability(999, 60.0);
+        assert!(p < f64::EPSILON, "expected 0.0 for unknown order, got {p}");
+    }
+
+    #[test]
+    fn on_level_change_increase_is_noop() {
+        let mut qe = QueueEstimator::new(3.0);
+        qe.register_order(
+            1,
+            InstrumentId::from_raw(0),
+            Side::Bid,
+            Ticks::from_raw(650),
+            Lots::from_raw(100),
+            Lots::from_raw(300),
+        )
+        .expect("capacity not exceeded");
+        // Level increases — should be a no-op for queue position
+        qe.on_level_change(
+            InstrumentId::from_raw(0),
+            Side::Bid,
+            Ticks::from_raw(650),
+            Lots::from_raw(400),
+            Lots::from_raw(600),
+        );
+        assert_eq!(qe.queue_ahead(1).expect("order tracked").to_raw(), 300);
+    }
+
+    #[test]
+    fn take_rate_unknown_instrument_returns_default() {
+        let qe = QueueEstimator::new(3.0);
+        // No trades recorded yet — both sides return the 1.0 prior
+        let bid_rate = qe.take_rate(InstrumentId::from_raw(42), Side::Bid);
+        let ask_rate = qe.take_rate(InstrumentId::from_raw(42), Side::Ask);
+        assert!((bid_rate - 1.0).abs() < f64::EPSILON, "bid_rate={bid_rate}");
+        assert!((ask_rate - 1.0).abs() < f64::EPSILON, "ask_rate={ask_rate}");
+    }
+
+    #[test]
+    fn register_order_capacity_full_returns_error() {
+        let mut qe = QueueEstimator::new(3.0);
+        for i in 0..MAX_QUEUED_ORDERS {
+            qe.register_order(
+                i as u64,
+                InstrumentId::from_raw(0),
+                Side::Bid,
+                Ticks::from_raw(100),
+                Lots::from_raw(1),
+                Lots::from_raw(0),
+            )
+            .expect("should fit");
+        }
+        let err = qe.register_order(
+            MAX_QUEUED_ORDERS as u64,
+            InstrumentId::from_raw(0),
+            Side::Bid,
+            Ticks::from_raw(100),
+            Lots::from_raw(1),
+            Lots::from_raw(0),
+        );
+        assert!(err.is_err(), "expected QueueFullError");
+    }
+
+    #[test]
+    fn default_uses_power_3() {
+        // Default::default() should produce a working estimator (power = 3.0)
+        let mut qe = QueueEstimator::default();
+        qe.register_order(
+            1,
+            InstrumentId::from_raw(0),
+            Side::Bid,
+            Ticks::from_raw(100),
+            Lots::from_raw(10),
+            Lots::from_raw(50),
+        )
+        .expect("capacity not exceeded");
+        assert_eq!(qe.queue_ahead(1).expect("tracked").to_raw(), 50);
+    }
+
+    #[test]
+    fn erfc_symmetry_and_bounds() {
+        // erfc(0) ≈ 1.0; erfc(large positive) ≈ 0; erfc(negative) ≈ 2 - erfc(|x|)
+        let at_zero = erfc(0.0);
+        assert!((at_zero - 1.0).abs() < 1e-6, "erfc(0)={at_zero}");
+        let at_large = erfc(5.0);
+        assert!(at_large < 1e-6, "erfc(5)={at_large}");
+        let at_neg = erfc(-1.0);
+        let at_pos = erfc(1.0);
+        assert!((at_neg + at_pos - 2.0).abs() < 1e-6, "erfc(-x)+erfc(x)≈2");
+    }
+
+    #[test]
+    fn per_instrument_take_rate_ask_side_independent() {
+        let mut qe = QueueEstimator::new(3.0);
+        // Trade on ask side should not affect bid rate
+        qe.on_trade(
+            InstrumentId::from_raw(0),
+            Side::Ask,
+            Ticks::from_raw(100),
+            Lots::from_raw(80),
+        );
+        let bid_rate = qe.take_rate(InstrumentId::from_raw(0), Side::Bid);
+        assert!(
+            (bid_rate - 1.0).abs() < f64::EPSILON,
+            "bid_rate should be default; got {bid_rate}"
+        );
+        let ask_rate = qe.take_rate(InstrumentId::from_raw(0), Side::Ask);
+        assert!(
+            (ask_rate - 1.0).abs() > f64::EPSILON,
+            "ask_rate should differ from default; got {ask_rate}"
+        );
+    }
 }

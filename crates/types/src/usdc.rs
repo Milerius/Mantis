@@ -206,4 +206,69 @@ mod tests {
         let u = UsdcAmount::from_fixed(f);
         assert_eq!(u.to_fixed(), f);
     }
+
+    #[test]
+    fn checked_add_no_overflow() {
+        let a = UsdcAmount::from_raw(1_000_000);
+        let b = UsdcAmount::from_raw(2_000_000);
+        assert_eq!(
+            a.checked_add(b).map(|x| x.to_fixed().to_raw()),
+            Some(3_000_000)
+        );
+    }
+
+    #[test]
+    fn checked_sub_no_underflow() {
+        let a = UsdcAmount::from_raw(3_000_000);
+        let b = UsdcAmount::from_raw(1_000_000);
+        assert_eq!(
+            a.checked_sub(b).map(|x| x.to_fixed().to_raw()),
+            Some(2_000_000)
+        );
+    }
+
+    #[test]
+    fn checked_neg_normal_value() {
+        let a = UsdcAmount::from_raw(500_000);
+        assert_eq!(
+            a.checked_neg().map(|x| x.to_fixed().to_raw()),
+            Some(-500_000)
+        );
+    }
+
+    #[test]
+    fn checked_neg_min_value_returns_none() {
+        let min = UsdcAmount::from_raw(i64::MIN);
+        assert!(min.checked_neg().is_none());
+    }
+
+    #[test]
+    fn checked_mul_int_overflow_returns_none() {
+        let large = UsdcAmount::from_raw(i64::MAX / 2 + 1);
+        assert!(large.checked_mul_int(3).is_none());
+    }
+
+    #[test]
+    fn checked_div_int_by_zero_returns_none() {
+        let a = UsdcAmount::from_raw(1_000_000);
+        assert!(a.checked_div_int(0).is_none());
+    }
+
+    #[test]
+    fn display_formats_correctly() {
+        extern crate alloc;
+        use alloc::format;
+        let a = UsdcAmount::from_raw(1_500_000); // 1.5 USDC
+        assert_eq!(format!("{a}"), "1.500000");
+    }
+
+    #[test]
+    fn debug_formats_correctly() {
+        extern crate alloc;
+        use alloc::format;
+        let a = UsdcAmount::from_raw(2_000_000);
+        let s = format!("{a:?}");
+        assert!(s.contains("UsdcAmount"), "debug output: {s}");
+        assert!(s.contains("2.000000"), "debug output: {s}");
+    }
 }

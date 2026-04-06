@@ -207,4 +207,102 @@ mod tests {
         assert_eq!(p.client_order_id, 55);
         assert_eq!(p.reason, RejectReason::InvalidPrice);
     }
+
+    #[test]
+    fn order_status_debug_all_variants() {
+        extern crate alloc;
+        use alloc::format;
+        assert_eq!(
+            format!("{:?}", OrderStatus::Accepted),
+            "OrderStatus::Accepted"
+        );
+        assert_eq!(
+            format!("{:?}", OrderStatus::Cancelled),
+            "OrderStatus::Cancelled"
+        );
+        assert_eq!(
+            format!("{:?}", OrderStatus::Expired),
+            "OrderStatus::Expired"
+        );
+    }
+
+    #[test]
+    fn reject_reason_debug_all_variants() {
+        extern crate alloc;
+        use alloc::format;
+        let cases = [
+            (
+                RejectReason::InsufficientFunds,
+                "RejectReason::InsufficientFunds",
+            ),
+            (RejectReason::InvalidPrice, "RejectReason::InvalidPrice"),
+            (RejectReason::InvalidQty, "RejectReason::InvalidQty"),
+            (
+                RejectReason::DuplicateOrderId,
+                "RejectReason::DuplicateOrderId",
+            ),
+            (
+                RejectReason::RiskLimitBreached,
+                "RejectReason::RiskLimitBreached",
+            ),
+            (RejectReason::VenueError, "RejectReason::VenueError"),
+            (RejectReason::Unknown, "RejectReason::Unknown"),
+        ];
+        for (variant, expected) in cases {
+            assert_eq!(format!("{variant:?}"), expected);
+        }
+    }
+
+    #[test]
+    fn order_ack_payload_all_status_variants() {
+        for status in [
+            OrderStatus::Accepted,
+            OrderStatus::Cancelled,
+            OrderStatus::Expired,
+        ] {
+            let p = OrderAckPayload {
+                order_id: OrderId::from_raw(1),
+                client_order_id: 1,
+                status,
+                _pad: [0; 7],
+            };
+            assert_eq!(p.status, status);
+        }
+    }
+
+    #[test]
+    fn fill_payload_ask_side() {
+        let p = FillPayload {
+            order_id: OrderId::from_raw(10),
+            price: Ticks::from_raw(1000),
+            qty: Lots::from_raw(5),
+            side: Side::Ask,
+            is_maker: 0,
+            _pad: [0; 6],
+        };
+        assert_eq!(p.side, Side::Ask);
+        assert_eq!(p.is_maker, 0);
+    }
+
+    #[test]
+    fn order_reject_payload_all_reasons() {
+        let reasons = [
+            RejectReason::InsufficientFunds,
+            RejectReason::InvalidPrice,
+            RejectReason::InvalidQty,
+            RejectReason::DuplicateOrderId,
+            RejectReason::RiskLimitBreached,
+            RejectReason::VenueError,
+            RejectReason::Unknown,
+        ];
+        for reason in reasons {
+            let p = OrderRejectPayload {
+                order_id: OrderId::from_raw(0),
+                client_order_id: 1,
+                reason,
+                _pad: [0; 7],
+            };
+            assert_eq!(p.reason, reason);
+        }
+    }
 }
