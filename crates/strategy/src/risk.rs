@@ -38,3 +38,56 @@ pub enum RiskCheckResult {
     /// Market data feed is unhealthy.
     RejectFeedUnhealthy,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn risk_check_result_is_copy() {
+        let r = RiskCheckResult::Pass;
+        let r2 = r;
+        assert_eq!(r, r2);
+    }
+
+    #[test]
+    fn all_variants_are_distinct() {
+        let variants = [
+            RiskCheckResult::Pass,
+            RiskCheckResult::RejectPosition,
+            RiskCheckResult::RejectCapital,
+            RiskCheckResult::RejectOrderCount,
+            RiskCheckResult::RejectRate,
+            RiskCheckResult::RejectFeedUnhealthy,
+        ];
+        // Verify each variant is unique (exhaustive coverage).
+        for (i, a) in variants.iter().enumerate() {
+            for (j, b) in variants.iter().enumerate() {
+                if i == j {
+                    assert_eq!(a, b);
+                } else {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn risk_limits_clone() {
+        let limits = RiskLimits {
+            max_position_per_instrument: mantis_types::Lots::from_raw(100),
+            max_capital_deployed: FixedI64::ZERO,
+            max_worst_case_loss: FixedI64::ZERO,
+            max_orders_live: 10,
+            max_intents_per_sec: 5,
+            max_replaces_per_min: 20,
+            capital_budget: FixedI64::ZERO,
+        };
+        let cloned = limits.clone();
+        assert_eq!(
+            cloned.max_position_per_instrument.to_raw(),
+            100
+        );
+        assert_eq!(cloned.max_orders_live, 10);
+    }
+}
