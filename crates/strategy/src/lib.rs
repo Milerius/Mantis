@@ -10,16 +10,20 @@
 #![no_std]
 #![deny(unsafe_code)]
 
+mod exposure;
 mod intent;
 mod order_tracker;
 mod position;
 mod queue;
+mod risk;
 mod traits;
 
+pub use exposure::ExposureView;
 pub use intent::{MAX_INTENTS_PER_TICK, OrderAction, OrderIntent};
 pub use order_tracker::{
     MAX_TRACKED_ORDERS, OrderState, OrderTracker, TrackedOrder, TrackerFullError,
 };
 pub use position::Position;
 pub use queue::{MAX_QUEUED_ORDERS, QueueEstimator, QueuedOrder};
+pub use risk::{RiskCheckResult, RiskLimits};
 pub use traits::Strategy;
