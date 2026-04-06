@@ -134,8 +134,9 @@ jobs:
       - run: cargo +nightly miri test -p mantis-seqlock --lib
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check
-      # Strategy + events + types: safe crates, full Miri coverage
-      - run: cargo +nightly miri test -p mantis-strategy -p mantis-events -p mantis-types -p mantis-market-state --no-default-features
+      # Strategy + events + types + market-state: safe crates
+      # fill_probability tests excluded via #[cfg(not(miri))] (libm uses inline asm)
+      - run: cargo +nightly miri test -p mantis-strategy -p mantis-events -p mantis-types -p mantis-market-state
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check
 

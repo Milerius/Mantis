@@ -498,6 +498,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(miri))]
     fn fill_probability_decreases_with_more_ahead() {
         let mut qe = QueueEstimator::new(3.0);
         qe.register_order(
@@ -606,6 +607,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(miri))]
     fn fill_probability_zero_lambda_returns_zero() {
         // lambda = take_rate * time = 1.0 * 0.0 = 0 → should return 0.0
         let mut qe = QueueEstimator::new(3.0);
@@ -623,6 +625,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(miri))]
     fn fill_probability_small_lambda_direct_cdf() {
         // lambda = 1.0 * 5.0 = 5.0 (≤ 20) — exercises direct Poisson CDF path
         let mut qe = QueueEstimator::new(3.0);
@@ -640,6 +643,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(miri))]
     fn fill_probability_large_lambda_normal_approx() {
         // lambda > 20 exercises the normal approximation path via erfc
         let mut qe = QueueEstimator::new(3.0);
@@ -667,6 +671,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(miri))]
     fn fill_probability_unknown_order_returns_zero() {
         let qe = QueueEstimator::new(3.0);
         let p = qe.fill_probability(999, 60.0);
