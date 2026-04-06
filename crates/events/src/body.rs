@@ -213,4 +213,111 @@ mod tests {
         let body = EventBody::Heartbeat(HeartbeatPayload { counter: 42 });
         assert_eq!(body.kind(), EventKind::Heartbeat);
     }
+
+    // --- mutant-catching: discriminant / kind mapping ---
+
+    #[test]
+    fn event_kind_repr_are_distinct() {
+        let kinds = [
+            EventKind::BookDelta as u16,
+            EventKind::Trade as u16,
+            EventKind::TopOfBook as u16,
+            EventKind::OrderAck as u16,
+            EventKind::Fill as u16,
+            EventKind::OrderReject as u16,
+            EventKind::Timer as u16,
+            EventKind::Heartbeat as u16,
+        ];
+        // Verify all values are unique
+        for i in 0..kinds.len() {
+            for j in (i + 1)..kinds.len() {
+                assert_ne!(kinds[i], kinds[j], "kinds[{i}] == kinds[{j}]");
+            }
+        }
+    }
+
+    #[test]
+    fn body_kind_matches_event_kind_repr() {
+        // EventBody::BookDelta must map to EventKind::BookDelta (value 0), not any other
+        let body = EventBody::BookDelta(BookDeltaPayload {
+            price: Ticks::from_raw(1),
+            qty: Lots::from_raw(1),
+            side: Side::Bid,
+            action: UpdateAction::New,
+            depth: 0,
+            _pad: [0; 5],
+        });
+        assert_eq!(body.kind() as u16, EventKind::BookDelta as u16);
+        assert_ne!(body.kind() as u16, EventKind::Trade as u16);
+    }
+
+    #[test]
+    fn body_kind_trade_not_book_delta() {
+        let body = EventBody::Trade(TradePayload {
+            price: Ticks::from_raw(1),
+            qty: Lots::from_raw(1),
+            aggressor: Side::Ask,
+            _pad: [0; 7],
+        });
+        assert_eq!(body.kind(), EventKind::Trade);
+        assert_ne!(body.kind() as u16, EventKind::BookDelta as u16);
+    }
+
+    #[test]
+    fn body_kind_timer_not_heartbeat() {
+        let timer_body = EventBody::Timer(TimerPayload {
+            timer_id: 1,
+            kind: TimerKind::Periodic,
+            _pad: [0; 3],
+        });
+        let hb_body = EventBody::Heartbeat(HeartbeatPayload { counter: 1 });
+        assert_ne!(timer_body.kind() as u16, hb_body.kind() as u16);
+        assert_eq!(timer_body.kind(), EventKind::Timer);
+        assert_eq!(hb_body.kind(), EventKind::Heartbeat);
+    }
+
+    #[test]
+    fn body_kind_order_reject_not_order_ack() {
+        let ack = EventBody::OrderAck(OrderAckPayload {
+            order_id: OrderId::from_raw(1),
+            client_order_id: 1,
+            status: OrderStatus::Accepted,
+            _pad: [0; 7],
+        });
+        let reject = EventBody::OrderReject(OrderRejectPayload {
+            order_id: OrderId::from_raw(1),
+            client_order_id: 1,
+            reason: RejectReason::InvalidPrice,
+            _pad: [0; 7],
+        });
+        assert_ne!(ack.kind() as u16, reject.kind() as u16);
+        assert_eq!(ack.kind(), EventKind::OrderAck);
+        assert_eq!(reject.kind(), EventKind::OrderReject);
+    }
+
+    #[test]
+    fn body_kind_fill_is_own_kind() {
+        let body = EventBody::Fill(FillPayload {
+            order_id: OrderId::from_raw(7),
+            price: Ticks::from_raw(500),
+            qty: Lots::from_raw(3),
+            side: Side::Bid,
+            is_maker: 1,
+            _pad: [0; 6],
+        });
+        assert_eq!(body.kind(), EventKind::Fill);
+        assert_ne!(body.kind() as u16, EventKind::Trade as u16);
+    }
+
+    #[test]
+    fn top_of_book_kind_not_book_delta() {
+        let body = EventBody::TopOfBook(TopOfBookPayload {
+            bid_price: Ticks::from_raw(99),
+            bid_qty: Lots::from_raw(50),
+            ask_price: Ticks::from_raw(101),
+            ask_qty: Lots::from_raw(30),
+        });
+        assert_eq!(body.kind(), EventKind::TopOfBook);
+        assert_ne!(body.kind() as u16, EventKind::BookDelta as u16);
+    }
 }

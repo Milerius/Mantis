@@ -99,4 +99,70 @@ mod tests {
         let p = HeartbeatPayload { counter: 42 };
         assert_eq!(p.counter, 42);
     }
+
+    // --- mutant-catching: field distinctness and variant coverage ---
+
+    #[test]
+    fn timer_kind_stale_feed_repr() {
+        assert_eq!(TimerKind::StaleFeed as u8, 0);
+    }
+
+    #[test]
+    fn timer_kind_periodic_repr() {
+        assert_eq!(TimerKind::Periodic as u8, 1);
+    }
+
+    #[test]
+    fn timer_kind_deadline_repr() {
+        assert_eq!(TimerKind::Deadline as u8, 2);
+    }
+
+    #[test]
+    fn timer_kind_variants_are_distinct() {
+        assert_ne!(TimerKind::StaleFeed as u8, TimerKind::Periodic as u8);
+        assert_ne!(TimerKind::Periodic as u8, TimerKind::Deadline as u8);
+        assert_ne!(TimerKind::StaleFeed as u8, TimerKind::Deadline as u8);
+    }
+
+    #[test]
+    fn timer_payload_stale_feed_roundtrip() {
+        let p = TimerPayload {
+            timer_id: 0,
+            kind: TimerKind::StaleFeed,
+            _pad: [0; 3],
+        };
+        assert_eq!(p.timer_id, 0);
+        assert_eq!(p.kind, TimerKind::StaleFeed);
+    }
+
+    #[test]
+    fn timer_payload_deadline_roundtrip() {
+        let p = TimerPayload {
+            timer_id: u32::MAX,
+            kind: TimerKind::Deadline,
+            _pad: [0; 3],
+        };
+        assert_eq!(p.timer_id, u32::MAX);
+        assert_eq!(p.kind, TimerKind::Deadline);
+    }
+
+    #[test]
+    fn heartbeat_counter_zero() {
+        let p = HeartbeatPayload { counter: 0 };
+        assert_eq!(p.counter, 0);
+    }
+
+    #[test]
+    fn heartbeat_counter_max() {
+        let p = HeartbeatPayload { counter: u32::MAX };
+        assert_eq!(p.counter, u32::MAX);
+    }
+
+    #[test]
+    fn timer_id_is_independent_of_kind() {
+        let p1 = TimerPayload { timer_id: 1, kind: TimerKind::Periodic, _pad: [0; 3] };
+        let p2 = TimerPayload { timer_id: 2, kind: TimerKind::Periodic, _pad: [0; 3] };
+        assert_ne!(p1.timer_id, p2.timer_id);
+        assert_eq!(p1.kind, p2.kind);
+    }
 }

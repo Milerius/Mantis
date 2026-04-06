@@ -159,4 +159,56 @@ mod tests {
         assert_eq!(p.ask_price, Ticks::from_raw(101));
         assert_eq!(p.ask_qty, Lots::from_raw(30));
     }
+
+    // --- mutant-catching: field distinctness ---
+
+    #[test]
+    fn book_delta_ask_side() {
+        let p = BookDeltaPayload {
+            price: Ticks::from_raw(200),
+            qty: Lots::from_raw(50),
+            side: Side::Ask,
+            action: UpdateAction::Change,
+            depth: 1,
+            _pad: [0; 5],
+        };
+        assert_eq!(p.price, Ticks::from_raw(200));
+        assert_eq!(p.qty, Lots::from_raw(50));
+        assert_eq!(p.side, Side::Ask);
+        assert_eq!(p.action, UpdateAction::Change);
+        assert_eq!(p.depth, 1);
+    }
+
+    #[test]
+    fn book_delta_delete_action() {
+        let p = BookDeltaPayload {
+            price: Ticks::from_raw(100),
+            qty: Lots::ZERO,
+            side: Side::Bid,
+            action: UpdateAction::Delete,
+            depth: 0,
+            _pad: [0; 5],
+        };
+        assert_eq!(p.action, UpdateAction::Delete);
+        assert_eq!(p.qty, Lots::ZERO);
+    }
+
+    #[test]
+    fn trade_bid_aggressor() {
+        let p = TradePayload {
+            price: Ticks::from_raw(150),
+            qty: Lots::from_raw(10),
+            aggressor: Side::Bid,
+            _pad: [0; 7],
+        };
+        assert_eq!(p.aggressor, Side::Bid);
+        assert_eq!(p.price, Ticks::from_raw(150));
+        assert_eq!(p.qty, Lots::from_raw(10));
+    }
+
+    #[test]
+    fn update_action_change_distinct_from_new_and_delete() {
+        assert_ne!(UpdateAction::Change as u8, UpdateAction::New as u8);
+        assert_ne!(UpdateAction::Change as u8, UpdateAction::Delete as u8);
+    }
 }
