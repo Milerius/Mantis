@@ -100,8 +100,16 @@ impl OrderTracker {
     ///
     /// Returns [`TrackerFullError`] if all `MAX_TRACKED_ORDERS` slots are occupied.
     pub fn on_intent_sent(&mut self, order: TrackedOrder) -> Result<(), TrackerFullError> {
+        // Try None slots first, then terminal-state slots (Filled/Cancelled/Rejected).
         for slot in &mut self.orders {
-            if slot.is_none() {
+            let can_reuse = match slot {
+                None => true,
+                Some(o) => matches!(
+                    o.state,
+                    OrderState::Filled | OrderState::Cancelled | OrderState::Rejected
+                ),
+            };
+            if can_reuse {
                 *slot = Some(order);
                 self.active_count += 1;
                 return Ok(());
@@ -130,8 +138,14 @@ impl OrderTracker {
     /// Partial or full fill received.
     pub fn on_fill(&mut self, client_order_id: u64, fill_qty: Lots) {
         if let Some(order) = self.find_mut(client_order_id) {
+            // Ignore fills on terminal orders.
+            if !order.is_active() {
+                return;
+            }
             order.filled_qty += fill_qty;
+            // Clamp to original_qty to prevent overfill.
             if order.filled_qty >= order.original_qty {
+                order.filled_qty = order.original_qty;
                 order.state = OrderState::Filled;
                 self.active_count = self.active_count.saturating_sub(1);
             }
@@ -304,5 +318,56 @@ mod tests {
 
         let qty = tracker.open_qty(InstrumentId::from_raw(1), Side::Bid);
         assert_eq!(qty.to_raw(), 150);
+    }
+
+    #[test]
+    fn terminal_slots_reclaimed() {
+        let mut tracker = OrderTracker::new();
+        // Fill all slots.
+        for i in 0..MAX_TRACKED_ORDERS {
+            tracker.on_intent_sent(make_order(i as u64)).unwrap();
+        }
+        // Transition some to terminal states.
+        tracker.on_ack(0, 0, 100);
+        tracker.on_fill(0, Lots::from_raw(100)); // Filled
+        tracker.on_reject(1); // Rejected
+        tracker.on_ack(2, 0, 100);
+        tracker.on_cancel_ack(2); // Cancelled
+
+        // Should be able to insert 3 new orders into reclaimed slots.
+        assert!(tracker.on_intent_sent(make_order(100)).is_ok());
+        assert!(tracker.on_intent_sent(make_order(101)).is_ok());
+        assert!(tracker.on_intent_sent(make_order(102)).is_ok());
+        // Next should fail — remaining slots are all active.
+        assert!(tracker.on_intent_sent(make_order(103)).is_err());
+    }
+
+    #[test]
+    fn fill_clamped_at_original_qty() {
+        let mut tracker = OrderTracker::new();
+        let mut o = make_order(1);
+        o.original_qty = Lots::from_raw(100);
+        tracker.on_intent_sent(o).unwrap();
+        tracker.on_ack(1, 0, 100);
+        // Overfill: 120 > original 100.
+        tracker.on_fill(1, Lots::from_raw(120));
+        let o = tracker.get(1).unwrap();
+        assert_eq!(o.filled_qty.to_raw(), 100); // clamped
+        assert_eq!(o.state, OrderState::Filled);
+    }
+
+    #[test]
+    fn fill_ignored_on_terminal_order() {
+        let mut tracker = OrderTracker::new();
+        tracker.on_intent_sent(make_order(1)).unwrap();
+        tracker.on_ack(1, 0, 100);
+        tracker.on_fill(1, Lots::from_raw(100)); // fully filled
+        assert_eq!(tracker.active_count(), 0);
+
+        // Late fill on a terminal order should be ignored.
+        tracker.on_fill(1, Lots::from_raw(50));
+        let o = tracker.get(1).unwrap();
+        assert_eq!(o.filled_qty.to_raw(), 100); // unchanged
+        assert_eq!(tracker.active_count(), 0); // unchanged
     }
 }
