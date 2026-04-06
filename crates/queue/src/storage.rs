@@ -159,7 +159,7 @@ unsafe impl<T: Send> Storage<T> for HeapStorage<T> {
     }
 }
 
-#[cfg(all(test, not(miri)))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

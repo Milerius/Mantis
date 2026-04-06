@@ -1,5 +1,5 @@
 #![cfg(not(miri))]
-//! Skip under Miri — queue uses inline assembly (cold_path, prefetch).
+//! Skip under Miri — queue uses inline assembly (`cold_path`, `prefetch`).
 //! Integration tests for all SPSC ring presets.
 
 use mantis_queue::{QueueError, SpscRing, SpscRingInstrumented};
