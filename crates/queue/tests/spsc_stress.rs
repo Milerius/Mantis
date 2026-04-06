@@ -1,4 +1,3 @@
-#![cfg(not(miri))]
 //! Skip under Miri — queue uses inline assembly (`cold_path`, `prefetch`).
 //! Two-thread stress test: 10M sequential u64 values.
 
