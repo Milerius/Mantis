@@ -201,4 +201,78 @@ mod tests {
         let b = BtcQty::from_fixed(f);
         assert_eq!(b.to_fixed(), f);
     }
+
+    #[test]
+    fn checked_add_no_overflow() {
+        let a = BtcQty::from_raw(100_000_000); // 1 BTC
+        let b = BtcQty::from_raw(200_000_000); // 2 BTC
+        assert_eq!(
+            a.checked_add(b).map(|x| x.to_fixed().to_raw()),
+            Some(300_000_000)
+        );
+    }
+
+    #[test]
+    fn checked_sub_no_underflow() {
+        let a = BtcQty::from_raw(300_000_000);
+        let b = BtcQty::from_raw(100_000_000);
+        assert_eq!(
+            a.checked_sub(b).map(|x| x.to_fixed().to_raw()),
+            Some(200_000_000)
+        );
+    }
+
+    #[test]
+    fn checked_neg_normal_value() {
+        let a = BtcQty::from_raw(50_000_000);
+        assert_eq!(
+            a.checked_neg().map(|x| x.to_fixed().to_raw()),
+            Some(-50_000_000)
+        );
+    }
+
+    #[test]
+    fn checked_neg_min_value_returns_none() {
+        let min = BtcQty::from_raw(i64::MIN);
+        assert!(min.checked_neg().is_none());
+    }
+
+    #[test]
+    fn checked_mul_int_overflow_returns_none() {
+        let large = BtcQty::from_raw(i64::MAX / 2 + 1);
+        assert!(large.checked_mul_int(3).is_none());
+    }
+
+    #[test]
+    fn checked_div_int_by_zero_returns_none() {
+        let a = BtcQty::from_raw(100_000_000);
+        assert!(a.checked_div_int(0).is_none());
+    }
+
+    #[test]
+    fn checked_abs_positive_value() {
+        let pos = BtcQty::from_raw(100_000_000);
+        assert_eq!(
+            pos.checked_abs().map(|x| x.to_fixed().to_raw()),
+            Some(100_000_000)
+        );
+    }
+
+    #[test]
+    fn display_formats_correctly() {
+        extern crate alloc;
+        use alloc::format;
+        let a = BtcQty::from_raw(150_000_000); // 1.5 BTC
+        assert_eq!(format!("{a}"), "1.50000000");
+    }
+
+    #[test]
+    fn debug_formats_correctly() {
+        extern crate alloc;
+        use alloc::format;
+        let a = BtcQty::from_raw(100_000_000); // 1 BTC
+        let s = format!("{a:?}");
+        assert!(s.contains("BtcQty"), "debug output: {s}");
+        assert!(s.contains("1.00000000"), "debug output: {s}");
+    }
 }

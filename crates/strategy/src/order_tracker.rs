@@ -370,4 +370,54 @@ mod tests {
         assert_eq!(o.filled_qty.to_raw(), 100); // unchanged
         assert_eq!(tracker.active_count(), 0); // unchanged
     }
+
+    #[test]
+    fn active_orders_iterator() {
+        let mut tracker = OrderTracker::new();
+        tracker.on_intent_sent(make_order(1)).unwrap();
+        tracker.on_intent_sent(make_order(2)).unwrap();
+        tracker.on_ack(2, 0, 100);
+        tracker.on_fill(2, Lots::from_raw(100)); // fully filled — terminal
+
+        let mut count = 0;
+        let mut found_id = 0;
+        for o in tracker.active_orders() {
+            count += 1;
+            found_id = o.client_order_id;
+        }
+        assert_eq!(count, 1);
+        assert_eq!(found_id, 1);
+    }
+
+    #[test]
+    fn open_qty_no_matching_orders_returns_zero() {
+        let tracker = OrderTracker::new();
+        // Tracker is empty — open_qty must return ZERO
+        let qty = tracker.open_qty(InstrumentId::from_raw(99), Side::Ask);
+        assert_eq!(qty.to_raw(), 0);
+    }
+
+    #[test]
+    fn open_qty_excludes_filled_orders() {
+        let mut tracker = OrderTracker::new();
+        let mut o = make_order(1);
+        o.original_qty = Lots::from_raw(100);
+        tracker.on_intent_sent(o).unwrap();
+        tracker.on_ack(1, 0, 100);
+        tracker.on_fill(1, Lots::from_raw(100)); // fully filled
+
+        let qty = tracker.open_qty(InstrumentId::from_raw(1), Side::Bid);
+        assert_eq!(
+            qty.to_raw(),
+            0,
+            "filled order should not count toward open qty"
+        );
+    }
+
+    #[test]
+    fn default_tracker_is_empty() {
+        let tracker = OrderTracker::default();
+        assert_eq!(tracker.active_count(), 0);
+        assert_eq!(tracker.active_orders().count(), 0);
+    }
 }

@@ -257,4 +257,61 @@ mod tests {
         // mid = 110: unrealized = -10 * (110 - 100) = -100
         assert_eq!(pos.unrealized_pnl(price(110)), price(-100));
     }
+
+    #[test]
+    fn position_flip_long_to_short() {
+        // Buy 100, then sell 150 → should end up short 50, with avg_entry = sell price
+        let mut pos = Position::new(instrument());
+        pos.on_fill(Side::Bid, Lots::from_raw(100), price(100));
+        pos.on_fill(Side::Ask, Lots::from_raw(150), price(120));
+
+        // Net qty: 100 - 150 = -50 (short)
+        assert_eq!(pos.qty.to_raw(), -50);
+        // After flip, avg_entry is the flip price
+        assert_eq!(pos.avg_entry, price(120));
+        // Realized PnL from closing 100 lots long at 120: 100 * (120 - 100) = 2000
+        assert_eq!(pos.realized_pnl, price(2000));
+        assert_eq!(pos.fill_count, 2);
+    }
+
+    #[test]
+    fn notional_long_position() {
+        let mut pos = Position::new(instrument());
+        pos.on_fill(Side::Bid, Lots::from_raw(10), price(100));
+        // notional = |10| * 200 = 2000
+        assert_eq!(pos.notional(price(200)), price(2000));
+    }
+
+    #[test]
+    fn notional_short_position() {
+        let mut pos = Position::new(instrument());
+        pos.on_fill(Side::Ask, Lots::from_raw(5), price(100));
+        // qty = -5, notional = |-5| * 100 = 500 (non-negative)
+        assert_eq!(pos.notional(price(100)), price(500));
+    }
+
+    #[test]
+    fn notional_flat_position() {
+        let pos = Position::new(instrument());
+        assert!(pos.notional(price(100)).is_zero());
+    }
+
+    #[test]
+    fn total_pnl_combines_realized_and_unrealized() {
+        let mut pos = Position::new(instrument());
+        // Buy 10 at 100
+        pos.on_fill(Side::Bid, Lots::from_raw(10), price(100));
+        // Partially sell 5 at 110 → realized = 5 * (110 - 100) = 50
+        pos.on_fill(Side::Ask, Lots::from_raw(5), price(110));
+        // Remaining: long 5 lots, avg_entry = 100
+        // Unrealized at mid=120: 5 * (120 - 100) = 100
+        // total_pnl = 50 + 100 = 150
+        assert_eq!(pos.total_pnl(price(120)), price(150));
+    }
+
+    #[test]
+    fn unrealized_pnl_flat_returns_zero() {
+        let pos = Position::new(instrument());
+        assert!(pos.unrealized_pnl(price(100)).is_zero());
+    }
 }
