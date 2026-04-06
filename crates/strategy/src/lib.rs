@@ -1,5 +1,11 @@
 //! Venue-agnostic strategy runtime primitives for the Mantis SDK.
 //!
+//! # Crate Overview
+//!
+//! This crate provides the building blocks for implementing trading strategies
+//! in the Mantis ecosystem. All types are `no_std` compatible and use fixed-size
+//! arrays for zero heap allocation on the hot path.
+//!
 //! Provides the `Strategy` trait, `OrderIntent`, position tracking,
 //! queue estimation, and risk limits. All types are `no_std` compatible,
 //! use fixed-size arrays, and allocate nothing on the heap.
