@@ -11,5 +11,7 @@
 #![deny(unsafe_code)]
 
 mod intent;
+mod traits;
 
 pub use intent::{MAX_INTENTS_PER_TICK, OrderAction, OrderIntent};
+pub use traits::Strategy;
