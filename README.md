@@ -23,8 +23,7 @@
 
 <p align="center">
   <a href="https://codecov.io/gh/Milerius/Mantis"><img src="https://img.shields.io/codecov/c/github/Milerius/Mantis?style=for-the-badge&label=coverage" alt="Coverage"></a>
-  <a href="https://github.com/Milerius/Mantis/actions/workflows/nightly.yml"><img src="https://img.shields.io/badge/miri-clean-2ea44f?style=for-the-badge" alt="Miri clean"></a>
-  <a href="https://github.com/Milerius/Mantis/actions/workflows/verify.yml"><img src="https://img.shields.io/badge/kani-proven-2ea44f?style=for-the-badge" alt="Kani proven"></a>
+  <a href="https://github.com/Milerius/Mantis/actions/workflows/nightly.yml"><img src="https://img.shields.io/github/actions/workflow/status/Milerius/Mantis/nightly.yml?style=for-the-badge&label=miri%20%2B%20kani" alt="Miri + Kani"></a>
 </p>
 
 <p align="center">
