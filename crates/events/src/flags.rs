@@ -135,4 +135,73 @@ mod tests {
     fn size_is_2() {
         assert_eq!(core::mem::size_of::<EventFlags>(), 2);
     }
+
+    // --- mutant-catching: raw bit value checks ---
+
+    #[test]
+    fn is_snapshot_raw_bit_is_1() {
+        assert_eq!(EventFlags::IS_SNAPSHOT.to_raw(), 1 << 0);
+    }
+
+    #[test]
+    fn last_in_batch_raw_bit_is_2() {
+        assert_eq!(EventFlags::LAST_IN_BATCH.to_raw(), 1 << 1);
+    }
+
+    #[test]
+    fn is_snapshot_does_not_contain_last_in_batch() {
+        assert!(!EventFlags::IS_SNAPSHOT.contains(EventFlags::LAST_IN_BATCH));
+    }
+
+    #[test]
+    fn last_in_batch_does_not_contain_is_snapshot() {
+        assert!(!EventFlags::LAST_IN_BATCH.contains(EventFlags::IS_SNAPSHOT));
+    }
+
+    #[test]
+    fn empty_does_not_contain_is_snapshot() {
+        assert!(!EventFlags::EMPTY.contains(EventFlags::IS_SNAPSHOT));
+    }
+
+    #[test]
+    fn empty_does_not_contain_last_in_batch() {
+        assert!(!EventFlags::EMPTY.contains(EventFlags::LAST_IN_BATCH));
+    }
+
+    #[test]
+    fn snapshot_flag_is_not_empty() {
+        assert!(!EventFlags::IS_SNAPSHOT.is_empty());
+    }
+
+    #[test]
+    fn last_in_batch_flag_is_not_empty() {
+        assert!(!EventFlags::LAST_IN_BATCH.is_empty());
+    }
+
+    #[test]
+    fn with_combines_without_mutation() {
+        let base = EventFlags::IS_SNAPSHOT;
+        let combined = base.with(EventFlags::LAST_IN_BATCH);
+        // base must be unchanged
+        assert!(!base.contains(EventFlags::LAST_IN_BATCH));
+        // combined must have both
+        assert!(combined.contains(EventFlags::IS_SNAPSHOT));
+        assert!(combined.contains(EventFlags::LAST_IN_BATCH));
+        assert_eq!(combined.to_raw(), 0x0003);
+    }
+
+    #[test]
+    fn contains_self_is_true() {
+        assert!(EventFlags::IS_SNAPSHOT.contains(EventFlags::IS_SNAPSHOT));
+        assert!(EventFlags::LAST_IN_BATCH.contains(EventFlags::LAST_IN_BATCH));
+        assert!(EventFlags::EMPTY.contains(EventFlags::EMPTY));
+    }
+
+    #[test]
+    fn bitor_assign_does_not_clear_existing() {
+        let mut f = EventFlags::IS_SNAPSHOT | EventFlags::LAST_IN_BATCH;
+        f |= EventFlags::EMPTY;
+        assert!(f.contains(EventFlags::IS_SNAPSHOT));
+        assert!(f.contains(EventFlags::LAST_IN_BATCH));
+    }
 }

@@ -1,0 +1,15 @@
+# Mutation testing configuration
+# Exclude crates that can't be meaningfully mutation-tested:
+# - bench: benchmark harness, no unit-testable logic
+# - layout: CLI inspector tool
+# - platform: hardware-specific code (inline asm, CPUID, kperf)
+# - transport: Mo's WIP, network I/O heavy
+# - verify: contains proofs/property tests, not application logic
+
+exclude_globs = [
+    "crates/bench/**",
+    "crates/layout/**",
+    "crates/platform/**",
+    "crates/transport/**",
+    "crates/verify/**",
+]

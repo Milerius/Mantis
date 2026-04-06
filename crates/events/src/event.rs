@@ -444,4 +444,97 @@ mod tests {
         assert_eq!(event.kind(), EventKind::TopOfBook);
         assert!(event.header.flags.contains(EventFlags::LAST_IN_BATCH));
     }
+
+    // --- mutant-catching: header field propagation ---
+
+    #[test]
+    fn constructor_trade_header_fields() {
+        let ts = Timestamp::from_nanos(12_345);
+        let seq = SeqNum::from_raw(99);
+        let iid = InstrumentId::from_raw(42);
+        let sid = SourceId::from_raw(7);
+        let flags = EventFlags::IS_SNAPSHOT;
+        let payload = TradePayload {
+            price: Ticks::from_raw(300),
+            qty: Lots::from_raw(2),
+            aggressor: Side::Bid,
+            _pad: [0; 7],
+        };
+        let event = HotEvent::trade(ts, seq, iid, sid, flags, payload);
+        assert_eq!(event.kind(), EventKind::Trade);
+        assert_eq!(event.header.recv_ts, ts);
+        assert_eq!(event.header.seq, seq);
+        assert_eq!(event.header.instrument_id, iid);
+        assert_eq!(event.header.source_id, sid);
+        assert!(event.header.flags.contains(EventFlags::IS_SNAPSHOT));
+        assert_eq!(event.kind(), EventKind::Trade);
+        if let EventBody::Trade(p) = event.body {
+            assert_eq!(p.aggressor, Side::Bid);
+            assert_eq!(p.price, Ticks::from_raw(300));
+        }
+    }
+
+    #[test]
+    fn constructor_book_delta_snapshot_flag() {
+        let flags = EventFlags::IS_SNAPSHOT | EventFlags::LAST_IN_BATCH;
+        let payload = BookDeltaPayload {
+            price: Ticks::from_raw(50),
+            qty: Lots::from_raw(100),
+            side: Side::Ask,
+            action: UpdateAction::New,
+            depth: 2,
+            _pad: [0; 5],
+        };
+        let event = HotEvent::book_delta(
+            Timestamp::from_nanos(0),
+            SeqNum::ZERO,
+            InstrumentId::from_raw(1),
+            SourceId::from_raw(1),
+            flags,
+            payload,
+        );
+        assert!(event.header.flags.contains(EventFlags::IS_SNAPSHOT));
+        assert!(event.header.flags.contains(EventFlags::LAST_IN_BATCH));
+        assert_eq!(event.kind(), EventKind::BookDelta);
+        if let EventBody::BookDelta(p) = event.body {
+            assert_eq!(p.side, Side::Ask);
+            assert_eq!(p.depth, 2);
+        }
+    }
+
+    #[test]
+    fn constructor_heartbeat_counter_propagates() {
+        let payload = HeartbeatPayload { counter: 77 };
+        let event = HotEvent::heartbeat(
+            Timestamp::from_nanos(0),
+            SeqNum::ZERO,
+            SourceId::from_raw(1),
+            EventFlags::EMPTY,
+            payload,
+        );
+        assert_eq!(event.kind(), EventKind::Heartbeat);
+        assert_eq!(event.kind(), EventKind::Heartbeat);
+        if let EventBody::Heartbeat(p) = event.body {
+            assert_eq!(p.counter, 77);
+        }
+    }
+
+    #[test]
+    fn seq_num_propagates_correctly() {
+        // Ensure seq field is actually stored, not silently dropped
+        let seq_a = SeqNum::from_raw(1);
+        let seq_b = SeqNum::from_raw(2);
+        let make_event = |seq: SeqNum| {
+            HotEvent::heartbeat(
+                Timestamp::from_nanos(0),
+                seq,
+                SourceId::from_raw(1),
+                EventFlags::EMPTY,
+                HeartbeatPayload { counter: 0 },
+            )
+        };
+        assert_eq!(make_event(seq_a).header.seq, seq_a);
+        assert_eq!(make_event(seq_b).header.seq, seq_b);
+        assert_ne!(make_event(seq_a).header.seq, seq_b);
+    }
 }

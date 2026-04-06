@@ -1,3 +1,4 @@
+//! Skip under Miri — queue uses inline assembly (`cold_path`, `prefetch`).
 //! Integration tests for the copy-optimized SPSC ring.
 use mantis_queue::{SpscRingCopy, SpscRingCopyInstrumented};
 

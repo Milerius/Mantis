@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 permissions:
   checks: write
   contents: read
@@ -123,10 +127,16 @@ jobs:
         with:
           components: miri
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: cargo +nightly miri test -p mantis-queue --all-features
+      # Queue: --lib only (integration tests use inline asm via cold_path/prefetch)
+      - run: cargo +nightly miri test -p mantis-queue --lib --all-features
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check
       - run: cargo +nightly miri test -p mantis-seqlock --lib
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check
+      # Strategy + events + types + market-state: safe crates
+      # fill_probability tests excluded via #[cfg(not(miri))] (libm uses inline asm)
+      - run: cargo +nightly miri test -p mantis-strategy -p mantis-events -p mantis-types -p mantis-market-state
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check
 
