@@ -19,9 +19,7 @@
 pub mod book;
 mod engine;
 mod state;
-mod strategy;
 
 pub use book::{ArrayBook, OrderBook};
 pub use engine::MarketStateEngine;
 pub use state::{InstrumentState, TopOfBook, TradeInfo};
-pub use strategy::{MAX_INTENTS_PER_TICK, OrderAction, OrderIntent, Strategy};
