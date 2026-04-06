@@ -113,10 +113,6 @@ jobs:
   kani:
     name: Kani Proofs
     runs-on: ubuntu-latest
-    # Known issue: Kani 0.67.0 bundles rustc 1.93.0-nightly which is below
-    # our MSRV of 1.95.0. Proofs will fail until Kani ships a newer rustc.
-    # Track: https://github.com/model-checking/kani/releases
-    continue-on-error: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

@@ -5,8 +5,9 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-# clippy.toml already uses 1.95, keep consistent
-rust-version = "1.95.0"
+# Lowered to 1.93 to match Kani 0.67.0's bundled rustc.
+# Uses edition 2024 (stable since 1.85) + cold_path (nightly feature).
+rust-version = "1.93.0"
 license = "Apache-2.0"
 repository = "https://github.com/Milerius/Mantis"
 
