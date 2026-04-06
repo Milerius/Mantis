@@ -851,7 +851,9 @@ dependencies = [
  "crossbeam-queue",
  "fixed",
  "mantis-core",
+ "mantis-events",
  "mantis-fixed",
+ "mantis-market-state",
  "mantis-platform",
  "mantis-queue",
  "mantis-seqlock",
@@ -887,6 +889,7 @@ version = "0.1.0"
 dependencies = [
  "mantis-core",
  "mantis-events",
+ "mantis-market-state",
  "mantis-queue",
  "mantis-seqlock",
  "mantis-types",
@@ -936,6 +939,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mantis-strategy"
+version = "0.1.0"
+dependencies = [
+ "mantis-events",
+ "mantis-fixed",
+ "mantis-market-state",
+ "mantis-types",
+]
+
+[[package]]
 name = "mantis-transport"
 version = "0.1.0"
 dependencies = [
@@ -971,7 +984,9 @@ version = "0.1.0"
 dependencies = [
  "bolero",
  "mantis-core",
+ "mantis-events",
  "mantis-fixed",
+ "mantis-market-state",
  "mantis-queue",
  "mantis-seqlock",
  "mantis-types",

@@ -1,0 +1,23 @@
+[package]
+name = "mantis-strategy"
+description = "Venue-agnostic strategy runtime primitives for the Mantis low-latency financial SDK"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+std = ["mantis-types/std", "mantis-events/std", "mantis-market-state/std"]
+
+[dependencies]
+mantis-events = { workspace = true }
+mantis-types = { workspace = true }
+mantis-market-state = { workspace = true }
+mantis-fixed = { workspace = true }
+
+[dev-dependencies]
+
+[lints]
+workspace = true
