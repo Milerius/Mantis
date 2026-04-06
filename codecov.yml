@@ -24,3 +24,8 @@ comment:
 
 github_checks:
   annotations: true
+
+ignore:
+  - "crates/bench/**"
+  - "crates/layout/**"
+  - "crates/platform/src/metering/**"
