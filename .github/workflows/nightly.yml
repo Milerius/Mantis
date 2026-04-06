@@ -41,11 +41,11 @@ jobs:
           components: miri
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Miri with stacked borrows
-        run: cargo miri test -p mantis-queue --all-features
+        run: cargo +nightly miri test -p mantis-queue --all-features
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check
       - name: Miri with tree borrows
-        run: cargo miri test -p mantis-queue --all-features
+        run: cargo +nightly miri test -p mantis-queue --all-features
         env:
           MIRIFLAGS: -Zmiri-tree-borrows -Zmiri-strict-provenance
 
