@@ -16,7 +16,10 @@ fn pin_to_core(core_id: usize) {
         .into_iter()
         .find(|c| c.id == core_id)
         .unwrap_or_else(|| panic!("core {core_id} not found"));
-    core_affinity::set_for_current(target);
+    assert!(
+        core_affinity::set_for_current(target),
+        "failed to pin thread to core {core_id}"
+    );
 }
 
 /// Run a two-thread SPSC latency benchmark.
@@ -36,6 +39,10 @@ where
     Q::Producer: 'static,
     Q::Consumer: 'static,
 {
+    assert_ne!(
+        producer_core, consumer_core,
+        "producer and consumer must be on different cores"
+    );
     let total = warmup + messages;
     let (mut tx, rx) = queue.split();
 

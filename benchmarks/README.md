@@ -96,13 +96,16 @@ Profile the benchmark under `perf` to inspect cache behavior and generate flameg
 
 ```bash
 # CPU profiling (cycles, instructions, IPC)
-scripts/perf_profile.sh --producer-core 2 --consumer-core 3 --queue mantis-inline
+scripts/perf_profile.sh ./rust/target/release/mantis-spsc-bench \
+    --producer-core 2 --consumer-core 3 --queue mantis-inline --runs 1
 
 # Cache miss analysis (L1d, LLC loads/misses)
-scripts/perf_cache.sh --producer-core 2 --consumer-core 3 --queue mantis-inline
+scripts/perf_cache.sh ./rust/target/release/mantis-spsc-bench \
+    --producer-core 2 --consumer-core 3 --queue mantis-inline --runs 1
 
 # Generate a flamegraph SVG
-scripts/perf_flamegraph.sh --producer-core 2 --consumer-core 3 --queue mantis-inline
+scripts/perf_flamegraph.sh ./rust/target/release/mantis-spsc-bench \
+    --producer-core 2 --consumer-core 3 --queue mantis-inline --runs 1
 ```
 
 ## Adding a Contender

@@ -4,6 +4,9 @@
 #[cfg(target_arch = "x86_64")]
 #[inline]
 pub fn rdtsc_serialized() -> u64 {
+    // SAFETY: `_mm_lfence` and `_rdtsc` are x86_64 intrinsics guarded by
+    // `cfg(target_arch = "x86_64")`. The lfence serializes prior instructions
+    // before reading TSC. No memory is accessed — only CPU registers.
     unsafe {
         core::arch::x86_64::_mm_lfence();
         core::arch::x86_64::_rdtsc()
