@@ -1,4 +1,9 @@
 //! Two-thread SPSC benchmark harness with core pinning and rdtsc timestamping.
+//!
+//! Protocol matches HFT University's ring buffer challenge:
+//! - Both producer and consumer are spawned threads (pinned to isolated cores)
+//! - Consumer records raw cycle deltas into a pre-allocated array
+//! - Percentiles computed after the run by sorting (no hot-loop histogram)
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -41,9 +46,11 @@ fn pin_to_core(_core_id: usize) {
 
 /// Run a two-thread SPSC latency benchmark.
 ///
-/// The producer runs on the calling thread (pinned to `producer_core`),
-/// the consumer runs on a spawned thread (pinned to `consumer_core`).
-/// Returns the consumer-side latency histogram.
+/// Both producer and consumer run on spawned threads pinned to their
+/// respective cores. The consumer records raw cycle deltas into a
+/// pre-allocated Vec, then builds the histogram after the measurement
+/// loop completes. This avoids cache pollution from histogram writes
+/// during the hot loop.
 pub fn run_bench<Q>(
     queue: Q,
     producer_core: usize,
@@ -61,68 +68,79 @@ where
         "producer and consumer must be on different cores"
     );
     let total = warmup + messages;
-    let (mut tx, rx) = queue.split();
+    let (tx, rx) = queue.split();
 
     let consumer_ready = Arc::new(AtomicBool::new(false));
     let producer_ready = Arc::new(AtomicBool::new(false));
 
-    let cr = Arc::clone(&consumer_ready);
-    let pr = Arc::clone(&producer_ready);
+    let cr_consumer = Arc::clone(&consumer_ready);
+    let pr_consumer = Arc::clone(&producer_ready);
+    let cr_producer = Arc::clone(&consumer_ready);
+    let pr_producer = Arc::clone(&producer_ready);
 
     // Spawn consumer thread
     let consumer_handle = thread::spawn(move || {
         pin_to_core(consumer_core);
 
         let mut rx = rx;
-        let mut histogram = CycleHistogram::new();
         let mut msg = Message48::default();
         let mut received: u64 = 0;
 
+        // Pre-allocate storage for raw deltas (no allocation in hot loop)
+        let mut deltas = Vec::with_capacity(messages as usize);
+
         // Signal consumer is ready
-        cr.store(true, Ordering::Release);
+        cr_consumer.store(true, Ordering::Release);
 
         // Wait for producer to be ready
-        while !pr.load(Ordering::Acquire) {
+        while !pr_consumer.load(Ordering::Acquire) {
             std::hint::spin_loop();
         }
 
-        // Consumer loop
+        // Consumer loop — only record raw delta, no histogram work
         while received < total {
             if rx.try_pop(&mut msg) {
                 if received >= warmup {
                     let now = rdtsc_serialized();
-                    let delta = now.wrapping_sub(msg.timestamp);
-                    histogram.record(delta);
+                    deltas.push(now.wrapping_sub(msg.timestamp));
                 }
                 received += 1;
-            } else {
-                std::hint::spin_loop();
             }
         }
 
+        // Build histogram from collected deltas (cold path, after measurement)
+        let mut histogram = CycleHistogram::new();
+        for &d in &deltas {
+            histogram.record(d);
+        }
         histogram
     });
 
-    // Pin producer to its core
-    pin_to_core(producer_core);
+    // Spawn producer thread
+    let producer_handle = thread::spawn(move || {
+        pin_to_core(producer_core);
 
-    // Wait for consumer to be ready
-    while !consumer_ready.load(Ordering::Acquire) {
-        std::hint::spin_loop();
-    }
+        let mut tx = tx;
 
-    // Signal producer is ready
-    producer_ready.store(true, Ordering::Release);
+        // Signal producer is ready
+        pr_producer.store(true, Ordering::Release);
 
-    // Producer loop
-    for i in 0..total {
-        let mut msg = make_msg(i);
-        msg.timestamp = rdtsc_serialized();
-
-        while !tx.try_push(&msg) {
+        // Wait for consumer to be ready
+        while !cr_producer.load(Ordering::Acquire) {
             std::hint::spin_loop();
         }
-    }
 
+        // Producer loop
+        for i in 0..total {
+            let mut msg = make_msg(i);
+            msg.timestamp = rdtsc_serialized();
+
+            while !tx.try_push(&msg) {
+                std::hint::spin_loop();
+            }
+        }
+    });
+
+    producer_handle.join().expect("producer thread panicked");
     consumer_handle.join().expect("consumer thread panicked")
 }

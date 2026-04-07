@@ -1,4 +1,10 @@
 #pragma once
+/// Two-thread SPSC benchmark harness with core pinning and rdtsc timestamping.
+///
+/// Protocol matches HFT University's ring buffer challenge:
+/// - Both producer and consumer are spawned threads (pinned to isolated cores)
+/// - Consumer records raw cycle deltas into a pre-allocated vector
+/// - Histogram built after the run (no hot-loop cache pollution)
 
 #include <atomic>
 #include <cerrno>
@@ -6,17 +12,17 @@
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
+#include <vector>
 
 #include "message.hpp"
 #include "rdtsc.hpp"
 #include "stats.hpp"
 
 // ---------------------------------------------------------------------------
-// Core pinning
+// Core pinning via sched_setaffinity (works on isolcpus cores)
 // ---------------------------------------------------------------------------
 
 #ifdef __linux__
-#include <pthread.h>
 #include <sched.h>
 
 inline void pin_thread(unsigned core_id) {
@@ -58,12 +64,9 @@ inline void pin_thread(unsigned /*core_id*/) {
 
 /// Run a two-thread SPSC latency benchmark.
 ///
-/// push_fn:  (const Message48&) -> bool   (try_push semantics)
-/// pop_fn:   (Message48&)       -> bool   (try_pop semantics)
-///
-/// The producer runs on the calling thread (pinned to producer_core),
-/// the consumer runs on a spawned thread (pinned to consumer_core).
-/// Returns the consumer-side latency histogram.
+/// Both producer and consumer run on spawned threads. Consumer records
+/// raw cycle deltas into a pre-allocated vector, then builds the histogram
+/// after the measurement loop (no cache pollution in the hot path).
 template <typename PushFn, typename PopFn>
 CycleHistogram run_bench(
     PushFn push_fn,
@@ -79,15 +82,17 @@ CycleHistogram run_bench(
     std::atomic<bool> producer_ready{false};
 
     CycleHistogram result_hist;
-    std::atomic<bool> consumer_done{false};
 
     // Spawn consumer thread
     std::thread consumer_thread([&]() {
         pin_thread(consumer_core);
 
-        CycleHistogram histogram;
         Message48 msg{};
         uint64_t received = 0;
+
+        // Pre-allocate storage for raw deltas
+        std::vector<uint64_t> deltas;
+        deltas.reserve(messages);
 
         // Signal consumer is ready
         consumer_ready.store(true, std::memory_order_release);
@@ -97,43 +102,49 @@ CycleHistogram run_bench(
             // spin
         }
 
-        // Consumer loop
+        // Consumer loop — only record raw delta, no histogram work
         while (received < total) {
             if (pop_fn(msg)) {
                 if (received >= warmup) {
                     uint64_t now = rdtsc_serialized();
-                    uint64_t delta = now - msg.timestamp;
-                    histogram.record(delta);
+                    deltas.push_back(now - msg.timestamp);
                 }
                 received++;
             }
         }
 
+        // Build histogram from collected deltas (cold path)
+        CycleHistogram histogram;
+        for (uint64_t d : deltas) {
+            histogram.record(d);
+        }
         result_hist = histogram;
-        consumer_done.store(true, std::memory_order_release);
     });
 
-    // Pin producer to its core
-    pin_thread(producer_core);
+    // Spawn producer thread
+    std::thread producer_thread([&]() {
+        pin_thread(producer_core);
 
-    // Wait for consumer to be ready
-    while (!consumer_ready.load(std::memory_order_acquire)) {
-        // spin
-    }
+        // Signal producer is ready
+        producer_ready.store(true, std::memory_order_release);
 
-    // Signal producer is ready
-    producer_ready.store(true, std::memory_order_release);
-
-    // Producer loop
-    for (uint64_t i = 0; i < total; ++i) {
-        Message48 msg = make_msg(i);
-        msg.timestamp = rdtsc_serialized();
-
-        while (!push_fn(msg)) {
+        // Wait for consumer to be ready
+        while (!consumer_ready.load(std::memory_order_acquire)) {
             // spin
         }
-    }
 
+        // Producer loop
+        for (uint64_t i = 0; i < total; ++i) {
+            Message48 msg = make_msg(i);
+            msg.timestamp = rdtsc_serialized();
+
+            while (!push_fn(msg)) {
+                // spin
+            }
+        }
+    });
+
+    producer_thread.join();
     consumer_thread.join();
 
     return result_hist;
