@@ -4,10 +4,6 @@ use serde::Deserialize;
 
 /// Polymarket `"book"` message — orderbook snapshot with variable-length levels.
 #[derive(Debug, Deserialize)]
-#[expect(
-    dead_code,
-    reason = "fields present for JSON deserialization completeness"
-)]
 pub(crate) struct PolymarketBookMsg<'a> {
     /// The Polymarket token identifier for this asset.
     pub asset_id: &'a str,
@@ -21,10 +17,6 @@ pub(crate) struct PolymarketBookMsg<'a> {
 
 /// A single orderbook level.
 #[derive(Debug, Deserialize)]
-#[expect(
-    dead_code,
-    reason = "fields present for JSON deserialization completeness"
-)]
 pub(crate) struct BookLevel<'a> {
     /// Price as a decimal string.
     pub price: &'a str,
@@ -34,10 +26,6 @@ pub(crate) struct BookLevel<'a> {
 
 /// Polymarket `"price_change"` message.
 #[derive(Debug, Deserialize)]
-#[expect(
-    dead_code,
-    reason = "fields present for JSON deserialization completeness"
-)]
 pub(crate) struct PolymarketPriceChangeMsg<'a> {
     /// The Polymarket token identifier for this asset.
     pub asset_id: &'a str,
@@ -51,10 +39,6 @@ pub(crate) struct PolymarketPriceChangeMsg<'a> {
 
 /// Polymarket `"last_trade_price"` message.
 #[derive(Debug, Deserialize)]
-#[expect(
-    dead_code,
-    reason = "fields present for JSON deserialization completeness"
-)]
 pub(crate) struct PolymarketTradeMsg<'a> {
     /// The Polymarket token identifier for this asset.
     pub asset_id: &'a str,
