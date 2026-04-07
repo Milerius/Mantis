@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 mantis-queue = { path = "../../crates/queue", features = ["alloc"] }
+mantis-platform = { path = "../../crates/platform" }
 core_affinity = "0.8"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

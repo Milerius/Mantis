@@ -1,0 +1,12 @@
+results/*.json
+results/*.txt
+results/*.md
+results/*.svg
+results/perf.data
+!results/.gitkeep
+rust/target/
+cpp/build/
+cpp/vendor/SPSCQueue/
+cpp/vendor/SPSC-Queue/
+!cpp/vendor/SPSCQueue/.gitkeep
+!cpp/vendor/SPSC-Queue/.gitkeep

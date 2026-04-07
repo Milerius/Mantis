@@ -13,14 +13,8 @@
 
 pub mod bench_runner;
 pub mod measurement;
-pub mod messages;
 pub mod report;
-pub mod workloads;
 
-#[cfg(feature = "bench-contenders-cpp")]
-pub mod drogalis_ffi;
-#[cfg(feature = "bench-contenders-cpp")]
-pub mod rigtorp_ffi;
 #[cfg(feature = "bench-seqlock-contenders-cpp")]
 pub mod seqlock_ffi;
 

@@ -39,16 +39,6 @@ jobs:
       - name: Allow perf_event_open (Linux)
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.perf_event_paranoid=1
-      # ── SPSC benchmarks (custom harness, outputs JSON directly) ──
-      - name: Run SPSC benchmarks
-        run: cargo +nightly bench --bench spsc --all-features
-        env:
-          RUSTFLAGS: "-C target-cpu=native"
-      - name: Convert SPSC report for CI tracking
-        run: |
-          jq '[.results[] | {name: .workload, unit: "ns/op", value: .ns_per_op}]' \
-            target/bench-report-spsc.json > bench-output-spsc.json
-
       # ── Seqlock benchmarks (Criterion) ──
       # IMPORTANT: Each Criterion bench must be converted IMMEDIATELY after running,
       # before the next `rm -rf target/criterion`. The criterion-to-json.sh script
@@ -97,7 +87,7 @@ jobs:
             target/bench-report-market_state.json > bench-output-market_state.json
       - name: Merge benchmark outputs
         run: |
-          jq -s 'add' bench-output-spsc.json bench-output-seqlock.json bench-output-fixed.json bench-output-market_state.json > bench-output.json
+          jq -s 'add' bench-output-seqlock.json bench-output-fixed.json bench-output-market_state.json > bench-output.json
       - name: Restore Cargo.lock before gh-pages switch
         run: git checkout -- Cargo.lock
       - name: Store benchmark result
@@ -117,7 +107,6 @@ jobs:
         with:
           name: benchmark-results-${{ matrix.os }}
           path: |
-            target/bench-report-spsc.json
             target/bench-report-seqlock.json
             target/bench-report-fixed.json
             target/bench-report-market_state.json
@@ -149,15 +138,13 @@ jobs:
         continue-on-error: true
       - name: Generate markdown report
         run: |
-          linux_spsc="results/linux/target/bench-report-spsc.json"
-          macos_spsc="results/macos/target/bench-report-spsc.json"
           linux_seqlock="results/linux/target/bench-report-seqlock.json"
           macos_seqlock="results/macos/target/bench-report-seqlock.json"
           linux_fixed="results/linux/target/bench-report-fixed.json"
           macos_fixed="results/macos/target/bench-report-fixed.json"
           linux_market_state="results/linux/target/bench-report-market_state.json"
           macos_market_state="results/macos/target/bench-report-market_state.json"
-          bash .github/scripts/bench-report.sh "$linux_spsc" "$macos_spsc" "$linux_seqlock" "$macos_seqlock" "$linux_fixed" "$macos_fixed" "$linux_market_state" "$macos_market_state" > report.md
+          bash .github/scripts/bench-report.sh "$linux_seqlock" "$macos_seqlock" "$linux_fixed" "$macos_fixed" "$linux_market_state" "$macos_market_state" > report.md
       - name: Post PR comment
         uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2.9.1
         with:
