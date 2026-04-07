@@ -167,8 +167,7 @@ impl<'r, const D: u8> PolymarketMarketDecoder<'r, D> {
             return 0;
         };
 
-        let total = msg.bids.len() + msg.asks.len();
-        if total == 0 {
+        if msg.bids.is_empty() && msg.asks.is_empty() {
             return 0;
         }
 
@@ -182,20 +181,13 @@ impl<'r, const D: u8> PolymarketMarketDecoder<'r, D> {
                 continue;
             };
 
-            let is_last = count + 1 == total;
-            let flags = if is_last {
-                EventFlags::IS_SNAPSHOT | EventFlags::LAST_IN_BATCH
-            } else {
-                EventFlags::IS_SNAPSHOT
-            };
-
             self.seq += 1;
             out[count] = HotEvent::book_delta(
                 recv_ts,
                 SeqNum::from_raw(self.seq),
                 instrument_id,
                 self.source_id,
-                flags,
+                EventFlags::IS_SNAPSHOT,
                 BookDeltaPayload {
                     price,
                     qty,
@@ -216,20 +208,13 @@ impl<'r, const D: u8> PolymarketMarketDecoder<'r, D> {
                 continue;
             };
 
-            let is_last = count + 1 == total;
-            let flags = if is_last {
-                EventFlags::IS_SNAPSHOT | EventFlags::LAST_IN_BATCH
-            } else {
-                EventFlags::IS_SNAPSHOT
-            };
-
             self.seq += 1;
             out[count] = HotEvent::book_delta(
                 recv_ts,
                 SeqNum::from_raw(self.seq),
                 instrument_id,
                 self.source_id,
-                flags,
+                EventFlags::IS_SNAPSHOT,
                 BookDeltaPayload {
                     price,
                     qty,
@@ -240,6 +225,11 @@ impl<'r, const D: u8> PolymarketMarketDecoder<'r, D> {
                 },
             );
             count += 1;
+        }
+
+        // Set LAST_IN_BATCH on the final emitted event (not based on raw JSON count).
+        if count > 0 {
+            out[count - 1].header.flags |= EventFlags::LAST_IN_BATCH;
         }
 
         count

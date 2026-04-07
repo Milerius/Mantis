@@ -250,12 +250,7 @@ pub fn read_system_info() -> SystemInfo {
             turbo: read_file_trimmed(
                 "/sys/devices/system/cpu/intel_pstate/no_turbo",
             ),
-            isolcpus: read_proc_field("/proc/cmdline", "isolcpus")
-                .chars()
-                .skip_while(|c| *c != '=')
-                .skip(1)
-                .take_while(|c| *c != ' ')
-                .collect::<String>(),
+            isolcpus: parse_cmdline_param("/proc/cmdline", "isolcpus"),
             tsc: read_dmesg_tsc(),
             kernel: read_file_trimmed("/proc/version"),
         }
@@ -302,6 +297,21 @@ fn read_proc_field(path: &str, field: &str) -> String {
                 })
         })
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Parse a `key=value` parameter from `/proc/cmdline` (space-separated, single line).
+#[cfg(target_os = "linux")]
+fn parse_cmdline_param(path: &str, key: &str) -> String {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| {
+            let prefix = format!("{key}=");
+            contents
+                .split_whitespace()
+                .find(|tok| tok.starts_with(&prefix))
+                .map(|tok| tok[prefix.len()..].to_string())
+        })
+        .unwrap_or_else(|| "none".to_string())
 }
 
 #[cfg(target_os = "linux")]

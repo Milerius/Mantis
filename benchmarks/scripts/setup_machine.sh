@@ -12,14 +12,14 @@ install_packages() {
     if command -v apt-get &>/dev/null; then
         echo "Detected apt-based system"
         sudo apt-get update
-        sudo apt-get install -y cmake g++ linux-tools-common linux-tools-generic \
+        sudo apt-get install -y git curl cmake g++ linux-tools-common linux-tools-generic \
             linux-tools-"$(uname -r)" perf || true
     elif command -v dnf &>/dev/null; then
         echo "Detected dnf-based system"
-        sudo dnf install -y cmake gcc-c++ perf
+        sudo dnf install -y git curl cmake gcc-c++ perf
     elif command -v pacman &>/dev/null; then
         echo "Detected pacman-based system"
-        sudo pacman -Sy --noconfirm cmake gcc perf
+        sudo pacman -Sy --noconfirm git curl cmake gcc perf
     else
         echo "WARNING: Unknown package manager. Please install cmake, g++, and perf manually."
     fi
