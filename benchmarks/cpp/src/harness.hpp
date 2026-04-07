@@ -1,7 +1,10 @@
 #pragma once
 
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <thread>
 
 #include "message.hpp"
@@ -20,7 +23,11 @@ inline void pin_thread(unsigned core_id) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(core_id, &cpuset);
-    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+    int rc = sched_setaffinity(0, sizeof(cpu_set_t), &cpuset);
+    if (rc != 0) {
+        fprintf(stderr, "ERROR: sched_setaffinity failed for core %u (errno=%d)\n", core_id, errno);
+        exit(1);
+    }
 }
 
 #elif defined(__APPLE__)
