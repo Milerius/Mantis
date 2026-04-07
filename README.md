@@ -99,13 +99,21 @@ Feed the same event tape → get identical order intents.
 
 ## Highlights
 
-- **42ns market state engine** — single-core event processing, no locks, no allocation on hot path
-- **130ns cross-core SPSC** — measured on isolated cores with `rdtsc`, beating C++ rigtorp on same hardware
-- **Zero-alloc hot path** — fixed-size arrays, `repr(C)` types, `no_std` everywhere
-- **Formally verified** — Miri (zero UB), Kani (bounded model checking), Bolero (property tests), fuzz targets
-- **Deterministic replay** — event-driven strategy trait: same tape = same intents
-- **14 modular crates** — compose what you need, leave the rest
-- **L2 queue position model** — probabilistic fill estimation using `PowerProbQueueFunc`
+⚡ **42ns market state engine** — single-core event processing, no locks, no allocation on hot path
+
+🏎️ **130ns cross-core SPSC** — measured on isolated cores with `rdtsc`, beating C++ rigtorp on same hardware
+
+🔒 **Zero-alloc hot path** — fixed-size arrays, `repr(C)` types, `no_std` everywhere
+
+🧪 **Formally verified** — Miri (zero UB), Kani (bounded model checking), Bolero (property tests), fuzz targets
+
+🔄 **Deterministic replay** — event-driven strategy trait: same tape = same intents
+
+📊 **Live POC** — Nim prototype with FTXUI terminal dashboard capturing Polymarket + Binance in real-time
+
+🏗️ **14 modular crates** — compose what you need, leave the rest
+
+📈 **L2 queue position model** — probabilistic fill estimation using `PowerProbQueueFunc`
 
 ---
 
