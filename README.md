@@ -43,7 +43,7 @@
 | **Replay** | **Deterministic** | Best-effort | Hard |
 | **`no_std`** | All core crates | Rarely | N/A |
 
-SPSC latency measured on isolated cores (AMD Ryzen 7 PRO 8700GE, `isolcpus`, `rdtsc`).
+Inspired by Optiver/LMAX-class software systems. SPSC latency measured on isolated cores (AMD Ryzen 7 PRO 8700GE, `isolcpus`, `rdtsc`).
 See [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) for full methodology and comparison with C++ rigtorp.
 
 ---
