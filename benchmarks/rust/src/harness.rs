@@ -9,17 +9,34 @@ use crate::queues::{QueueBench, QueueConsumer, QueueProducer};
 use crate::rdtsc::rdtsc_serialized;
 use crate::stats::CycleHistogram;
 
-/// Pin the current thread to the given logical core id.
+/// Pin the current thread to a specific logical core using `sched_setaffinity`.
+///
+/// Works on isolated cores (`isolcpus`) unlike `core_affinity` which only
+/// sees cores in the process's default affinity mask.
+#[cfg(target_os = "linux")]
 fn pin_to_core(core_id: usize) {
-    let core_ids = core_affinity::get_core_ids().expect("failed to get core ids");
-    let target = core_ids
-        .into_iter()
-        .find(|c| c.id == core_id)
-        .unwrap_or_else(|| panic!("core {core_id} not found"));
-    assert!(
-        core_affinity::set_for_current(target),
-        "failed to pin thread to core {core_id}"
-    );
+    // SAFETY: cpu_set is zeroed, then we set exactly one bit for the target core.
+    // sched_setaffinity(0, ...) targets the calling thread. The cpu_set lives
+    // on the stack and is valid for the duration of the call.
+    unsafe {
+        let mut cpu_set: libc::cpu_set_t = std::mem::zeroed();
+        libc::CPU_SET(core_id, &mut cpu_set);
+        let ret = libc::sched_setaffinity(
+            0, // 0 = calling thread
+            std::mem::size_of::<libc::cpu_set_t>(),
+            &cpu_set,
+        );
+        assert!(
+            ret == 0,
+            "sched_setaffinity failed for core {core_id}: errno {}",
+            *libc::__errno_location()
+        );
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pin_to_core(_core_id: usize) {
+    eprintln!("WARNING: core pinning not supported on this platform");
 }
 
 /// Run a two-thread SPSC latency benchmark.
