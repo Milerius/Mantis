@@ -114,6 +114,14 @@ where
     pub fn try_push(&mut self, value: T) -> Result<(), PushError<T>> {
         self.engine.try_push(value)
     }
+
+    /// Push a value. Returns `true` on success, `false` if full.
+    ///
+    /// Zero-overhead alternative to `try_push`. The value is dropped on failure.
+    #[inline(always)]
+    pub fn push(&mut self, value: T) -> bool {
+        self.engine.push(value)
+    }
 }
 
 #[cfg(feature = "alloc")]
@@ -132,6 +140,20 @@ where
     #[inline]
     pub fn try_pop(&mut self) -> Result<T, QueueError> {
         self.engine.try_pop()
+    }
+
+    /// Pop a value into `out`. Returns `true` on success, `false` if empty.
+    ///
+    /// Zero-overhead alternative to `try_pop`. Writes directly to the caller's
+    /// buffer instead of returning `T` by value through `Result`.
+    ///
+    /// # Safety
+    ///
+    /// `out` must be a valid, writeable, properly aligned pointer to `T`.
+    #[expect(unsafe_code, reason = "exposes engine's unsafe pop API")]
+    #[inline(always)]
+    pub unsafe fn pop_into(&mut self, out: *mut T) -> bool {
+        unsafe { self.engine.pop(out) }
     }
 }
 
@@ -234,6 +256,28 @@ where
     #[inline]
     pub fn try_pop(&mut self) -> Result<T, QueueError> {
         self.engine.try_pop()
+    }
+
+    /// Push a value. Returns `true` on success, `false` if full.
+    ///
+    /// Zero-overhead alternative to `try_push`. The value is dropped on failure.
+    #[inline(always)]
+    pub fn push(&mut self, value: T) -> bool {
+        self.engine.push(value)
+    }
+
+    /// Pop a value into `out`. Returns `true` on success, `false` if empty.
+    ///
+    /// Zero-overhead alternative to `try_pop`. Writes directly to the caller's
+    /// buffer instead of returning `T` by value through `Result`.
+    ///
+    /// # Safety
+    ///
+    /// `out` must be a valid, writeable, properly aligned pointer to `T`.
+    #[expect(unsafe_code, reason = "exposes engine's unsafe pop API")]
+    #[inline(always)]
+    pub unsafe fn pop_into(&mut self, out: *mut T) -> bool {
+        unsafe { self.engine.pop(out) }
     }
 
     /// Number of elements currently in the ring.

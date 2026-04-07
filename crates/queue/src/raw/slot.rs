@@ -16,7 +16,7 @@ use crate::storage::Storage;
 /// - `index` must be less than `storage.capacity()`
 /// - The slot at `index` must be logically empty
 /// - No other thread may concurrently access this slot
-#[inline]
+#[inline(always)]
 pub(crate) unsafe fn write<T, S: Storage<T>>(storage: &S, index: usize, value: T) {
     // SAFETY: Caller guarantees index < capacity and exclusive access.
     let slot = unsafe { storage.slot_ptr(index) };
@@ -33,12 +33,30 @@ pub(crate) unsafe fn write<T, S: Storage<T>>(storage: &S, index: usize, value: T
 /// - The slot must contain a valid, initialized value
 /// - After this call the slot is logically empty
 /// - No other thread may concurrently access this slot
-#[inline]
+#[inline(always)]
 pub(crate) unsafe fn read<T, S: Storage<T>>(storage: &S, index: usize) -> T {
     // SAFETY: Caller guarantees index < capacity and exclusive access.
     let slot = unsafe { storage.slot_ptr(index) };
     // SAFETY: Caller guarantees the slot contains an initialized value.
     unsafe { ptr::read((*slot).as_ptr()) }
+}
+
+/// Copy the value from the slot at `index` into a caller-provided buffer.
+///
+/// # Safety
+///
+/// - `index` must be less than `storage.capacity()`
+/// - The slot must contain a valid, initialized value
+/// - After this call the slot is logically empty
+/// - No other thread may concurrently access this slot
+/// - `out` must be a valid, writeable, properly aligned pointer to `T`
+#[inline(always)]
+pub(crate) unsafe fn read_into<T, S: Storage<T>>(storage: &S, index: usize, out: *mut T) {
+    // SAFETY: Caller guarantees index < capacity and exclusive access.
+    let slot = unsafe { storage.slot_ptr(index) };
+    // SAFETY: Caller guarantees the slot contains an initialized value
+    // and out is valid, writeable, properly aligned.
+    unsafe { ptr::copy_nonoverlapping((*slot).as_ptr(), out, 1) };
 }
 
 /// Drop the value in the slot at `index` in place.

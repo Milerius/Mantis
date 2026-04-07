@@ -136,8 +136,8 @@ pub(crate) fn read_batch_copy<T: Copy, S: Storage<T>>(
 // makes it !Sync. We need Sync for Arc<CopyRingEngine> in split handles.
 //
 // SAFETY: The SPSC protocol guarantees disjoint access:
-// - Producer ONLY accesses: head (AtomicUsize), producer cache (head_local, tail_remote)
-// - Consumer ONLY accesses: tail (AtomicUsize), consumer cache (tail_local, head_remote)
+// - ProducerLine (1 cache line): head (AtomicUsize), head_local (aarch64), tail_cached
+// - ConsumerLine (1 cache line): tail (AtomicUsize), tail_local (aarch64), head_cached
 // These two sides never touch each other's Cells. Atomics are inherently
 // Sync. Storage is Sync (required by trait bound). The split-handle design
 // enforces this partition at compile time. Validated by Miri on every PR.
