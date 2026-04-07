@@ -5,7 +5,7 @@
 use std::fmt::Write as _;
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use mantis_binance::BinanceDecoder;
 use mantis_events::{EventFlags, HeartbeatPayload, HotEvent};
 use mantis_fixed::FixedI64;
@@ -93,8 +93,7 @@ fn polymarket_registry() -> &'static mantis_registry::InstrumentRegistry<6> {
         window_end: Timestamp::from_nanos(900_000_000_000),
         condition_id: None,
     };
-    reg.bind_polymarket_current(id, binding)
-        .expect("bind ok");
+    reg.bind_polymarket_current(id, binding).expect("bind ok");
     Box::leak(Box::new(reg))
 }
 
@@ -138,8 +137,10 @@ fn bench_polymarket_decode(c: &mut Criterion) {
 
     // book (20 levels)
     group.bench_function("book_20_levels", |b| {
-        let mut decoder =
-            mantis_polymarket::market::PolymarketMarketDecoder::new(SourceId::from_raw(1), registry);
+        let mut decoder = mantis_polymarket::market::PolymarketMarketDecoder::new(
+            SourceId::from_raw(1),
+            registry,
+        );
 
         let mut json = String::from(r#"{"type":"book","asset_id":"abc123","bids":["#);
         for i in 0..10 {
