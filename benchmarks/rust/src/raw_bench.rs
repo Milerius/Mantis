@@ -63,16 +63,17 @@ fn pin(_core: usize) {}
 #[inline(always)]
 fn rdtsc() -> u64 {
     unsafe {
-        let lo: u32;
-        let hi: u32;
+        let val: u64;
         core::arch::asm!(
             "lfence",
             "rdtsc",
-            out("eax") lo,
-            out("edx") hi,
+            "shl rdx, 32",
+            "or rax, rdx",
+            out("rax") val,
+            out("rdx") _,
             options(nostack, nomem),
         );
-        ((hi as u64) << 32) | lo as u64
+        val
     }
 }
 
@@ -94,6 +95,7 @@ const CAPACITY: usize = 1024;
 #[repr(C, align(64))]
 struct ProducerLine {
     head: core::sync::atomic::AtomicUsize,
+    head_local: core::cell::Cell<usize>,
     tail_cached: core::cell::Cell<usize>,
 }
 
@@ -101,6 +103,7 @@ struct ProducerLine {
 #[repr(C, align(64))]
 struct ConsumerLine {
     tail: core::sync::atomic::AtomicUsize,
+    tail_local: core::cell::Cell<usize>,
     head_cached: core::cell::Cell<usize>,
 }
 
@@ -119,10 +122,12 @@ impl StandaloneRing {
         Self {
             producer: ProducerLine {
                 head: core::sync::atomic::AtomicUsize::new(0),
+                head_local: core::cell::Cell::new(0),
                 tail_cached: core::cell::Cell::new(0),
             },
             consumer: ConsumerLine {
                 tail: core::sync::atomic::AtomicUsize::new(0),
+                tail_local: core::cell::Cell::new(0),
                 head_cached: core::cell::Cell::new(0),
             },
             slots: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
@@ -131,7 +136,7 @@ impl StandaloneRing {
 
     #[inline(always)]
     fn push(&self, msg: Msg) -> bool {
-        let head = self.producer.head.load(Ordering::Relaxed);
+        let head = self.producer.head_local.get();
         let next = head + 1;
         let next = if next == CAPACITY { 0 } else { next };
 
@@ -149,12 +154,13 @@ impl StandaloneRing {
         }
 
         self.producer.head.store(next, Ordering::Release);
+        self.producer.head_local.set(next);
         true
     }
 
     #[inline(always)]
     fn pop(&self, out: *mut Msg) -> bool {
-        let tail = self.consumer.tail.load(Ordering::Relaxed);
+        let tail = self.consumer.tail_local.get();
 
         if tail == self.consumer.head_cached.get() {
             let head = self.producer.head.load(Ordering::Acquire);
@@ -172,6 +178,7 @@ impl StandaloneRing {
         let next = tail + 1;
         let next = if next == CAPACITY { 0 } else { next };
         self.consumer.tail.store(next, Ordering::Release);
+        self.consumer.tail_local.set(next);
         true
     }
 }
