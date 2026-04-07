@@ -1,22 +1,21 @@
 //! Zero-overhead SPSC benchmark matching HFT University protocol.
 //!
-//! Bypasses all Rust API overhead:
-//! - No Arc (stack-local engine, raw pointer field projections)
-//! - No Result (inline push/pop returning bool)
-//! - No &mut self (raw pointer access, same as C++ does)
-//! - No traits, no Vec, no histogram in hot loop
-//! - sum += delta like HFT University reference
+//! Optimized ring with:
+//! - 64-byte cache-line padding (x86_64 native, not 128-byte Apple)
+//! - Colocated producer fields (head + tail_cached on same cache line)
+//! - Colocated consumer fields (tail + head_cached on same cache line)
+//! - Branch-based wrapping (branch predictor > always-execute AND)
+//! - No Arc, no Result, bool API, sum += delta
+//! - LTO + codegen-units=1 for guaranteed cross-crate inlining
 
 #![allow(unsafe_code)]
-
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::thread;
 
 use core::cell::Cell;
 use core::mem::MaybeUninit;
 use core::ptr;
-
-use mantis_platform::CachePadded;
+use core::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::thread;
 
 // ─── Message ────────────────────────────────────────────────────────────────
 
@@ -43,52 +42,65 @@ impl Default for Msg {
     }
 }
 
-// ─── Minimal ring engine (inlined, no generics, no Result) ──────────────────
+// ─── Optimized ring engine ──────────────────────────────────────────────────
 
 const CAPACITY: usize = 1024;
-const MASK: usize = CAPACITY - 1;
 
-/// Minimal SPSC ring — same algorithm as RingEngine but with bool returns
-/// and no generic parameters. Stack-allocated, zero indirection.
+/// Producer-local cache line: head atomic + cached tail.
+/// Both accessed only by the producer thread — no false sharing.
+#[repr(C, align(64))]
+struct ProducerLine {
+    head: AtomicUsize,
+    tail_cached: Cell<usize>,
+}
+
+/// Consumer-local cache line: tail atomic + cached head.
+/// Both accessed only by the consumer thread — no false sharing.
+#[repr(C, align(64))]
+struct ConsumerLine {
+    tail: AtomicUsize,
+    head_cached: Cell<usize>,
+}
+
+/// Minimal SPSC ring — colocated cache lines, 64-byte padding, branch wrap.
 #[repr(C)]
 struct RawRing {
-    head: CachePadded<AtomicUsize>,
-    tail: CachePadded<AtomicUsize>,
-    // Producer-local: cached tail (avoids cross-core Acquire on hot path)
-    tail_cached: CachePadded<Cell<usize>>,
-    // Consumer-local: cached head
-    head_cached: CachePadded<Cell<usize>>,
-    // Slot buffer
+    producer: ProducerLine,
+    consumer: ConsumerLine,
     slots: [MaybeUninit<Msg>; CAPACITY],
 }
 
 // SAFETY: SPSC protocol — producer and consumer access disjoint fields.
-// Producer: head (write), tail_cached (read/write local), slots[head] (write)
-// Consumer: tail (write), head_cached (read/write local), slots[tail] (read)
 unsafe impl Sync for RawRing {}
 
 impl RawRing {
     fn new() -> Self {
         Self {
-            head: CachePadded::new(AtomicUsize::new(0)),
-            tail: CachePadded::new(AtomicUsize::new(0)),
-            tail_cached: CachePadded::new(Cell::new(0)),
-            head_cached: CachePadded::new(Cell::new(0)),
+            producer: ProducerLine {
+                head: AtomicUsize::new(0),
+                tail_cached: Cell::new(0),
+            },
+            consumer: ConsumerLine {
+                tail: AtomicUsize::new(0),
+                head_cached: Cell::new(0),
+            },
             // SAFETY: MaybeUninit doesn't require initialization
             slots: unsafe { MaybeUninit::uninit().assume_init() },
         }
     }
 
     /// Push a message. Returns true on success, false if full.
-    /// Caller must be the SOLE producer thread.
     #[inline(always)]
     fn push(&self, msg: Msg) -> bool {
-        let head = self.head.load(Ordering::Relaxed);
-        let next = (head + 1) & MASK;
+        let head = self.producer.head.load(Ordering::Relaxed);
 
-        if next == self.tail_cached.get() {
-            let tail = self.tail.load(Ordering::Acquire);
-            self.tail_cached.set(tail);
+        // Branch-based wrap — branch predictor learns "never taken"
+        let next = head + 1;
+        let next = if next == CAPACITY { 0 } else { next };
+
+        if next == self.producer.tail_cached.get() {
+            let tail = self.consumer.tail.load(Ordering::Acquire);
+            self.producer.tail_cached.set(tail);
             if next == tail {
                 return false;
             }
@@ -100,19 +112,18 @@ impl RawRing {
             ptr::write(slot, msg);
         }
 
-        self.head.store(next, Ordering::Release);
+        self.producer.head.store(next, Ordering::Release);
         true
     }
 
     /// Pop a message into `out`. Returns true on success, false if empty.
-    /// Caller must be the SOLE consumer thread.
     #[inline(always)]
-    fn pop(&self, out: &mut Msg) -> bool {
-        let tail = self.tail.load(Ordering::Relaxed);
+    fn pop(&self, out: *mut Msg) -> bool {
+        let tail = self.consumer.tail.load(Ordering::Relaxed);
 
-        if tail == self.head_cached.get() {
-            let head = self.head.load(Ordering::Acquire);
-            self.head_cached.set(head);
+        if tail == self.consumer.head_cached.get() {
+            let head = self.producer.head.load(Ordering::Acquire);
+            self.consumer.head_cached.set(head);
             if tail == head {
                 return false;
             }
@@ -124,8 +135,10 @@ impl RawRing {
             ptr::copy_nonoverlapping(slot, out, 1);
         }
 
-        let next = (tail + 1) & MASK;
-        self.tail.store(next, Ordering::Release);
+        // Branch-based wrap
+        let next = tail + 1;
+        let next = if next == CAPACITY { 0 } else { next };
+        self.consumer.tail.store(next, Ordering::Release);
         true
     }
 }
@@ -176,42 +189,42 @@ fn rdtsc() -> u64 {
 
 // ─── Benchmark ──────────────────────────────────────────────────────────────
 
-/// Run benchmark returning total latency (sum of all rdtsc deltas).
-/// Protocol matches HFT University run_latency() exactly.
 fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
-    // Stack-local ring — Box to avoid stack overflow, then leak for 'static
     let ring = Box::leak(Box::new(RawRing::new()));
     let ring_addr = ring as *const RawRing as usize;
 
     let consumer_ready = Box::leak(Box::new(AtomicBool::new(false)));
     let ready_addr = consumer_ready as *const AtomicBool as usize;
 
-    // Consumer thread — spawned first, signals ready
+    let total_latency = Box::leak(Box::new(AtomicU64::new(0)));
+    let latency_addr = total_latency as *const AtomicU64 as usize;
+
+    // Consumer — spawned first, signals ready
     let consumer = thread::spawn(move || {
         pin(consumer_core);
         let ring = unsafe { &*(ring_addr as *const RawRing) };
         let ready = unsafe { &*(ready_addr as *const AtomicBool) };
+        let latency = unsafe { &*(latency_addr as *const AtomicU64) };
         ready.store(true, Ordering::Release);
 
         let mut msg = Msg::default();
         let mut sum: u64 = 0;
         let mut count: u64 = 0;
         while count < total_ops {
-            if ring.pop(&mut msg) {
+            if ring.pop(&mut msg as *mut Msg) {
                 let now = rdtsc();
                 sum += now - msg.timestamp;
                 count += 1;
             }
         }
-        sum
+        latency.store(sum, Ordering::Release);
     });
 
-    // Producer thread
+    // Producer
     let producer = thread::spawn(move || {
         pin(producer_core);
         let ring = unsafe { &*(ring_addr as *const RawRing) };
         let ready = unsafe { &*(ready_addr as *const AtomicBool) };
-
         while !ready.load(Ordering::Acquire) {}
 
         for i in 0..total_ops {
@@ -230,12 +243,15 @@ fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
     });
 
     producer.join().unwrap();
-    let sum = consumer.join().unwrap();
+    consumer.join().unwrap();
 
-    // Reclaim leaked memory
+    let sum = unsafe { &*(latency_addr as *const AtomicU64) }.load(Ordering::Acquire);
+
+    // Reclaim
     unsafe {
         drop(Box::from_raw(ring_addr as *mut RawRing));
         drop(Box::from_raw(ready_addr as *mut AtomicBool));
+        drop(Box::from_raw(latency_addr as *mut AtomicU64));
     }
 
     sum

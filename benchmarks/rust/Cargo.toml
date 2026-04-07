@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[profile.release]
+lto = true
+codegen-units = 1
+
 [dependencies]
 mantis-queue = { path = "../../crates/queue", features = ["alloc"] }
 mantis-platform = { path = "../../crates/platform" }
