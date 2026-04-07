@@ -1,6 +1,7 @@
 //! Raw SPSC benchmark matching HFT University protocol exactly.
 //!
-//! Zero overhead: no traits, no Arc, no Vec, no Result unwrapping.
+//! Zero overhead where possible: no traits, no Vec, no histogram in hot loop.
+//! Uses split handles (Arc-based) to avoid aliasing UB.
 //! Just `sum += delta` in the consumer loop, like the reference.
 
 #![allow(unsafe_code)]
@@ -8,7 +9,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
-use mantis_queue::SpscRing;
+use mantis_queue::spsc_ring;
 
 /// 48-byte message matching HFT University's `hftu::Message`.
 #[repr(C, align(16))]
@@ -69,46 +70,31 @@ fn rdtsc() -> u64 {
         .as_nanos() as u64
 }
 
-/// Shared state leaked onto the heap so both threads can reference it
-/// with 'static lifetime. Matches HFT University's stack-local approach
-/// (they use lambdas capturing by reference; we use leaked Box).
-struct BenchState {
-    ring: SpscRing<Msg, 1024>,
-    consumer_ready: AtomicBool,
-}
-
-// SAFETY: SPSC protocol — producer and consumer access disjoint fields.
-unsafe impl Sync for BenchState {}
-
-/// Run the raw benchmark. Returns total_cycles (sum of all deltas).
+/// Run the benchmark. Returns total_cycles (sum of all deltas).
 ///
-/// Protocol matches HFT University `run_latency()` exactly:
+/// Protocol matches HFT University `run_latency()`:
 /// - Consumer spawned first, signals ready
 /// - Producer spawned after consumer ready
 /// - Consumer: `sum += rdtsc() - msg.timestamp` per pop
 /// - Returns total sum
 fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
-    let state = Box::leak(Box::new(BenchState {
-        ring: SpscRing::new(),
-        consumer_ready: AtomicBool::new(false),
-    }));
+    // Split handles — Arc-based, no aliasing UB
+    let (mut tx, mut rx) = spsc_ring::<Msg, 1024>();
 
-    // SAFETY: We need &mut references from both threads. SPSC protocol
-    // guarantees disjoint field access (producer: head/tail_cached,
-    // consumer: tail/head_cached). We cast to *mut to get two &mut.
-    let state_addr = state as *mut BenchState as usize;
+    let consumer_ready = AtomicBool::new(false);
+    let ready_addr = &consumer_ready as *const AtomicBool as usize;
 
+    // Consumer thread
     let consumer = thread::spawn(move || {
         pin(consumer_core);
-        // SAFETY: state_addr points to leaked BenchState, valid for program lifetime.
-        // SPSC consumer only calls try_pop (disjoint from producer's try_push).
-        let s = unsafe { &mut *(state_addr as *mut BenchState) };
-        s.consumer_ready.store(true, Ordering::Release);
+        // SAFETY: ready_addr points to stack-local AtomicBool that outlives
+        // this thread (we join before run_raw returns).
+        unsafe { &*(ready_addr as *const AtomicBool) }.store(true, Ordering::Release);
 
         let mut sum: u64 = 0;
         let mut count: u64 = 0;
         while count < total_ops {
-            if let Ok(msg) = s.ring.try_pop() {
+            if let Ok(msg) = rx.try_pop() {
                 let now = rdtsc();
                 sum += now - msg.timestamp;
                 count += 1;
@@ -117,11 +103,11 @@ fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
         sum
     });
 
+    // Producer thread
     let producer = thread::spawn(move || {
         pin(producer_core);
-        // SAFETY: same as consumer — leaked BenchState, SPSC producer only calls try_push.
-        let s = unsafe { &mut *(state_addr as *mut BenchState) };
-        while !s.consumer_ready.load(Ordering::Acquire) {}
+        // Wait for consumer
+        while !unsafe { &*(ready_addr as *const AtomicBool) }.load(Ordering::Acquire) {}
 
         for i in 0..total_ops {
             let msg = Msg {
@@ -134,17 +120,12 @@ fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
                 quantity: ((i & 0xFF) + 1) as i64,
                 order_id: i as i64,
             };
-            while s.ring.try_push(msg).is_err() {}
+            while tx.try_push(msg).is_err() {}
         }
     });
 
     producer.join().unwrap();
-    let sum = consumer.join().unwrap();
-
-    // SAFETY: Both threads joined, safe to reclaim.
-    unsafe { drop(Box::from_raw(state_addr as *mut BenchState)) };
-
-    sum
+    consumer.join().unwrap()
 }
 
 /// Run multiple iterations and print cycles/op (matching HFT University output).
