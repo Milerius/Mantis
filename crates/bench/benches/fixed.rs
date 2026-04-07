@@ -113,6 +113,56 @@ fn bench_parse(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_decimal_parse(c: &mut Criterion) {
+    let mut group = c.benchmark_group("fixed/decimal_parse");
+
+    // Mantis parse_decimal_bytes
+    group.bench_function("mantis_bytes/short_0.53", |b| {
+        b.iter(|| F6::parse_decimal_bytes(black_box(b"0.53")));
+    });
+    group.bench_function("mantis_bytes/medium_67396.70", |b| {
+        b.iter(|| F2::parse_decimal_bytes(black_box(b"67396.70")));
+    });
+    group.bench_function("mantis_bytes/long_0.00012345", |b| {
+        b.iter(|| F8::parse_decimal_bytes(black_box(b"0.00012345")));
+    });
+    group.bench_function("mantis_bytes/integer_67396", |b| {
+        b.iter(|| F6::parse_decimal_bytes(black_box(b"67396")));
+    });
+
+    // Mantis from_str_decimal (for comparison)
+    group.bench_function("mantis_str/short_0.53", |b| {
+        b.iter(|| F6::from_str_decimal(black_box("0.53")));
+    });
+    group.bench_function("mantis_str/medium_67396.70", |b| {
+        b.iter(|| F2::from_str_decimal(black_box("67396.70")));
+    });
+
+    // f64 roundtrip
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "benchmark: f64-to-i64 truncation is intentional for roundtrip measurement"
+    )]
+    group.bench_function("f64_roundtrip/short_0.53", |b| {
+        b.iter(|| {
+            let f: f64 = black_box("0.53").parse().unwrap_or(0.0);
+            F6::from_raw((f * 1_000_000.0) as i64)
+        });
+    });
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "benchmark: f64-to-i64 truncation is intentional for roundtrip measurement"
+    )]
+    group.bench_function("f64_roundtrip/medium_67396.70", |b| {
+        b.iter(|| {
+            let f: f64 = black_box("67396.70").parse().unwrap_or(0.0);
+            F2::from_raw((f * 100.0) as i64)
+        });
+    });
+
+    group.finish();
+}
+
 fn bench_display(c: &mut Criterion) {
     use std::fmt::Write;
     let mut group = c.benchmark_group("fixed/display");
@@ -245,6 +295,108 @@ fn bench_contender_parse(c: &mut Criterion) {
 }
 
 #[cfg(feature = "bench-fixed-contenders")]
+fn bench_contender_decimal_parse(c: &mut Criterion) {
+    use std::str::FromStr;
+
+    let mut group = c.benchmark_group("fixed/contender_decimal_parse");
+
+    let short = "0.53";
+    let medium = "67396.70";
+
+    // Mantis (baseline)
+    group.bench_function("mantis_bytes/short", |b| {
+        b.iter(|| F6::parse_decimal_bytes(black_box(short.as_bytes())));
+    });
+    group.bench_function("mantis_bytes/medium", |b| {
+        b.iter(|| F2::parse_decimal_bytes(black_box(medium.as_bytes())));
+    });
+
+    // rust_decimal
+    group.bench_function("rust_decimal/short", |b| {
+        b.iter(|| Decimal::from_str(black_box(short)));
+    });
+    group.bench_function("rust_decimal/medium", |b| {
+        b.iter(|| Decimal::from_str(black_box(medium)));
+    });
+
+    // fixed crate
+    group.bench_function("fixed_crate/short", |b| {
+        b.iter(|| FixedCrateI38F26::from_str(black_box(short)));
+    });
+    group.bench_function("fixed_crate/medium", |b| {
+        b.iter(|| FixedCrateI38F26::from_str(black_box(medium)));
+    });
+
+    // fast-float
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "benchmark: f64-to-i64 truncation is intentional"
+    )]
+    group.bench_function("fast_float/short", |b| {
+        b.iter(|| {
+            let f: f64 = fast_float2::parse(black_box(short)).unwrap_or(0.0);
+            F6::from_raw((f * 1_000_000.0) as i64)
+        });
+    });
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "benchmark: f64-to-i64 truncation is intentional"
+    )]
+    group.bench_function("fast_float/medium", |b| {
+        b.iter(|| {
+            let f: f64 = fast_float2::parse(black_box(medium)).unwrap_or(0.0);
+            F2::from_raw((f * 100.0) as i64)
+        });
+    });
+
+    // lexical-core
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "benchmark: f64-to-i64 truncation is intentional"
+    )]
+    group.bench_function("lexical_core/short", |b| {
+        b.iter(|| {
+            let f: f64 = lexical_core::parse(black_box(short.as_bytes())).unwrap_or(0.0);
+            F6::from_raw((f * 1_000_000.0) as i64)
+        });
+    });
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "benchmark: f64-to-i64 truncation is intentional"
+    )]
+    group.bench_function("lexical_core/medium", |b| {
+        b.iter(|| {
+            let f: f64 = lexical_core::parse(black_box(medium.as_bytes())).unwrap_or(0.0);
+            F2::from_raw((f * 100.0) as i64)
+        });
+    });
+
+    // stdlib f64 parse
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "benchmark: f64-to-i64 truncation is intentional"
+    )]
+    group.bench_function("stdlib_f64/short", |b| {
+        b.iter(|| {
+            let f: f64 = black_box(short).parse().unwrap_or(0.0);
+            F6::from_raw((f * 1_000_000.0) as i64)
+        });
+    });
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "benchmark: f64-to-i64 truncation is intentional"
+    )]
+    group.bench_function("stdlib_f64/medium", |b| {
+        b.iter(|| {
+            let f: f64 = black_box(medium).parse().unwrap_or(0.0);
+            F2::from_raw((f * 100.0) as i64)
+        });
+    });
+
+    group.finish();
+}
+
+#[cfg(feature = "bench-fixed-contenders")]
 fn bench_contender_display(c: &mut Criterion) {
     use std::fmt::Write;
 
@@ -291,6 +443,7 @@ criterion_group!(
     bench_checked_div,
     bench_rescale,
     bench_parse,
+    bench_decimal_parse,
     bench_display,
 );
 
@@ -301,6 +454,7 @@ criterion_group!(
     bench_contender_mul,
     bench_contender_div,
     bench_contender_parse,
+    bench_contender_decimal_parse,
     bench_contender_display,
 );
 

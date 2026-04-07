@@ -27,7 +27,10 @@ fn binance_bookticker_live() {
     let handle = spawn_reference_feed(config, move |msg| {
         let n = r.fetch_add(1, Ordering::Relaxed);
         if n < 3 {
-            println!("[binance] #{n}: {}", &msg[..msg.len().min(120)]);
+            println!(
+                "[binance] #{n}: {}",
+                std::str::from_utf8(&msg[..msg.len().min(120)]).unwrap_or("<binary>")
+            );
         }
         n < 9
     })
@@ -73,7 +76,10 @@ fn polymarket_market_connect_live() {
     let handle = mantis_transport::FeedThread::spawn(config, move |msg| {
         let n = r.fetch_add(1, Ordering::Relaxed);
         if n < 5 {
-            println!("[polymarket] #{n}: {}", &msg[..msg.len().min(120)]);
+            println!(
+                "[polymarket] #{n}: {}",
+                std::str::from_utf8(&msg[..msg.len().min(120)]).unwrap_or("<binary>")
+            );
         }
         true
     })

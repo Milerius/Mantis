@@ -110,8 +110,30 @@ impl<const D: u8> FixedI64<D> {
     /// Returns [`ParseFixedError::InvalidFormat`] for malformed input,
     /// [`ParseFixedError::Overflow`] if the value exceeds `i64` range,
     /// or [`ParseFixedError::ExcessPrecision`] if fractional digits exceed D.
-    pub const fn from_str_decimal(s: &str) -> Result<Self, ParseFixedError> {
-        let bytes = s.as_bytes();
+    /// Parse a decimal byte slice like `b"1.23"` or `b"-0.5"` into `FixedI64<D>`.
+    ///
+    /// This is the hot-path parser for venue decoders — it operates directly on
+    /// byte slices from JSON buffers without requiring UTF-8 `&str` conversion.
+    ///
+    /// Accepts:
+    /// - Optional sign prefix (`-` or `+`)
+    /// - Integer-only: `b"123"`
+    /// - Decimal: `b"1.23"`, `b".5"`, `b"0.5"`
+    /// - Leading zeros: `b"007.50"`
+    ///
+    /// Rejects:
+    /// - Empty slices
+    /// - Exponent notation (`b"1e5"`)
+    /// - Double dots (`b"1..2"`)
+    /// - Non-digit characters
+    /// - Fractional digits exceeding D
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseFixedError::InvalidFormat`] for malformed input,
+    /// [`ParseFixedError::Overflow`] if the value exceeds `i64` range,
+    /// or [`ParseFixedError::ExcessPrecision`] if fractional digits exceed D.
+    pub const fn parse_decimal_bytes(bytes: &[u8]) -> Result<Self, ParseFixedError> {
         if bytes.is_empty() {
             return Err(ParseFixedError::InvalidFormat);
         }
@@ -223,6 +245,30 @@ impl<const D: u8> FixedI64<D> {
         }
 
         Ok(Self::from_raw(signed as i64))
+    }
+
+    /// Parse a decimal string like `"1.23"` or `"-0.5"` into `FixedI64<D>`.
+    ///
+    /// Accepts:
+    /// - Optional sign prefix (`-` or `+`)
+    /// - Integer-only: `"123"`
+    /// - Decimal: `"1.23"`, `".5"`, `"0.5"`
+    /// - Leading zeros: `"007.50"`
+    ///
+    /// Rejects:
+    /// - Empty strings
+    /// - Exponent notation (`"1e5"`)
+    /// - Double dots (`"1..2"`)
+    /// - Non-digit characters
+    /// - Fractional digits exceeding D
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseFixedError::InvalidFormat`] for malformed input,
+    /// [`ParseFixedError::Overflow`] if the value exceeds `i64` range,
+    /// or [`ParseFixedError::ExcessPrecision`] if fractional digits exceed D.
+    pub const fn from_str_decimal(s: &str) -> Result<Self, ParseFixedError> {
+        Self::parse_decimal_bytes(s.as_bytes())
     }
 }
 
@@ -418,5 +464,83 @@ mod tests {
     fn parse_d8_precision() {
         let v = F8::from_str_decimal("0.00000001").expect("valid");
         assert_eq!(v.to_raw(), 1);
+    }
+
+    // --- parse_decimal_bytes tests ---
+
+    #[test]
+    fn parse_bytes_short_price() {
+        let result = FixedI64::<6>::parse_decimal_bytes(b"0.53");
+        assert_eq!(result, Ok(FixedI64::<6>::from_raw(530_000)));
+    }
+
+    #[test]
+    fn parse_bytes_medium_price() {
+        let result = FixedI64::<2>::parse_decimal_bytes(b"67396.70");
+        assert_eq!(result, Ok(FixedI64::<2>::from_raw(6_739_670)));
+    }
+
+    #[test]
+    fn parse_bytes_integer_only() {
+        let result = FixedI64::<6>::parse_decimal_bytes(b"67396");
+        assert_eq!(result, Ok(FixedI64::<6>::from_raw(67_396_000_000)));
+    }
+
+    #[test]
+    fn parse_bytes_negative() {
+        let result = FixedI64::<6>::parse_decimal_bytes(b"-1.5");
+        assert_eq!(result, Ok(FixedI64::<6>::from_raw(-1_500_000)));
+    }
+
+    #[test]
+    fn parse_bytes_no_whole_part() {
+        let result = FixedI64::<6>::parse_decimal_bytes(b".5");
+        assert_eq!(result, Ok(FixedI64::<6>::from_raw(500_000)));
+    }
+
+    #[test]
+    fn parse_bytes_leading_zeros() {
+        let result = FixedI64::<6>::parse_decimal_bytes(b"007.50");
+        assert_eq!(result, Ok(FixedI64::<6>::from_raw(7_500_000)));
+    }
+
+    #[test]
+    fn parse_bytes_trailing_zero_preserved() {
+        let result = FixedI64::<2>::parse_decimal_bytes(b"0.10");
+        assert_eq!(result, Ok(FixedI64::<2>::from_raw(10)));
+    }
+
+    #[test]
+    fn parse_bytes_empty_fails() {
+        assert_eq!(
+            FixedI64::<6>::parse_decimal_bytes(b""),
+            Err(ParseFixedError::InvalidFormat)
+        );
+    }
+
+    #[test]
+    fn parse_bytes_malformed_fails() {
+        assert_eq!(
+            FixedI64::<6>::parse_decimal_bytes(b"abc"),
+            Err(ParseFixedError::InvalidFormat)
+        );
+    }
+
+    #[test]
+    fn parse_bytes_excess_precision_fails() {
+        assert_eq!(
+            FixedI64::<2>::parse_decimal_bytes(b"1.234"),
+            Err(ParseFixedError::ExcessPrecision)
+        );
+    }
+
+    #[test]
+    fn parse_bytes_agrees_with_str() {
+        let inputs = &["0.53", "67396.70", "-42.000001", "123456", ".5", "007.50"];
+        for input in inputs {
+            let from_str = FixedI64::<6>::from_str_decimal(input);
+            let from_bytes = FixedI64::<6>::parse_decimal_bytes(input.as_bytes());
+            assert_eq!(from_str, from_bytes, "mismatch for {input:?}");
+        }
     }
 }

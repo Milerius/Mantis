@@ -1,6 +1,6 @@
 //! Curated preset type aliases for common SPSC ring configurations.
 
-use mantis_core::{CountingInstr, ImmediatePush, NoInstr, Pow2Masked};
+use mantis_core::{BranchWrap, CountingInstr, ImmediatePush, NoInstr, Pow2Masked};
 
 use crate::handle::RawRing;
 use crate::storage::InlineStorage;
@@ -21,6 +21,27 @@ impl<T: Send, const N: usize> SpscRing<T, N> {
 }
 
 impl<T: Send, const N: usize> Default for SpscRing<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Low-latency SPSC ring — branch-based wrapping for hot-path optimization.
+///
+/// Uses `BranchWrap` instead of `Pow2Masked` — the branch predictor learns
+/// the wrap-around almost never happens, making it effectively free.
+pub type SpscRingFast<T, const N: usize> =
+    RawRing<T, InlineStorage<T, N>, BranchWrap, ImmediatePush, NoInstr>;
+
+impl<T: Send, const N: usize> SpscRingFast<T, N> {
+    /// Create a new low-latency SPSC ring.
+    #[must_use]
+    pub fn new() -> Self {
+        RawRing::with_strategies(InlineStorage::new(), NoInstr)
+    }
+}
+
+impl<T: Send, const N: usize> Default for SpscRingFast<T, N> {
     fn default() -> Self {
         Self::new()
     }

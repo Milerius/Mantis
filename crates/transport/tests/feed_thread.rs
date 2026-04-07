@@ -109,7 +109,7 @@ async fn feed_thread_receives_messages() {
     let r = Arc::clone(&received);
 
     let config = make_config(url);
-    let handle = FeedThread::spawn(config, move |_msg| {
+    let handle = FeedThread::spawn(config, move |_msg: &mut [u8]| {
         r.fetch_add(1, Ordering::Relaxed);
         true
     })
@@ -128,7 +128,7 @@ async fn feed_thread_shutdown_graceful() {
     let mut config = make_config(url);
     config.ws.read_timeout = Some(Duration::from_millis(200));
 
-    let handle = FeedThread::spawn(config, |_msg| true).unwrap();
+    let handle = FeedThread::spawn(config, |_msg: &mut [u8]| true).unwrap();
     // Let the thread enter the read loop
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(handle.is_running());
@@ -143,7 +143,7 @@ async fn feed_thread_callback_stop() {
     let r = Arc::clone(&received);
 
     let config = make_config(url);
-    let handle = FeedThread::spawn(config, move |_msg| {
+    let handle = FeedThread::spawn(config, move |_msg: &mut [u8]| {
         let n = r.fetch_add(1, Ordering::Relaxed);
         n < 4
     })
@@ -178,7 +178,7 @@ async fn feed_thread_reconnects_on_server_close() {
         },
     };
 
-    let handle = FeedThread::spawn(config, move |_msg| {
+    let handle = FeedThread::spawn(config, move |_msg: &mut [u8]| {
         r.fetch_add(1, Ordering::Relaxed);
         true
     })
@@ -233,7 +233,7 @@ async fn feed_thread_subscription_message() {
         backoff: BackoffConfig::default(),
     };
 
-    let handle = FeedThread::spawn(config, |_msg| true).unwrap();
+    let handle = FeedThread::spawn(config, |_msg: &mut [u8]| true).unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(sub_received.load(Ordering::Relaxed), 1);
     handle.shutdown();

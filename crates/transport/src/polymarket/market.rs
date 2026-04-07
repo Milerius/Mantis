@@ -51,7 +51,7 @@ pub fn spawn_market_feed<F>(
     on_message: F,
 ) -> Result<FeedHandle, std::io::Error>
 where
-    F: FnMut(&str) -> bool + Send + 'static,
+    F: FnMut(&mut [u8]) -> bool + Send + 'static,
 {
     if config.token_ids.is_empty() {
         return Err(std::io::Error::new(

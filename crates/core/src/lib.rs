@@ -44,6 +44,18 @@ impl IndexStrategy for Pow2Masked {
     }
 }
 
+/// Branch-based index wrapping. Uses a branch (predicted not-taken)
+/// instead of bitwise AND. Faster on `x86_64` where the branch predictor
+/// learns the wrap-around almost never happens.
+pub struct BranchWrap;
+
+impl IndexStrategy for BranchWrap {
+    #[inline(always)]
+    fn wrap(index: usize, capacity: usize) -> usize {
+        if index >= capacity { 0 } else { index }
+    }
+}
+
 /// Push immediately returns `Err(Full)` when queue is full.
 pub struct ImmediatePush;
 
@@ -155,5 +167,18 @@ mod tests {
         assert_eq!(instr.pop_count(), 1);
         assert_eq!(instr.push_full_count(), 1);
         assert_eq!(instr.pop_empty_count(), 2);
+    }
+
+    #[test]
+    fn branch_wrap_normal() {
+        assert_eq!(BranchWrap::wrap(0, 1024), 0);
+        assert_eq!(BranchWrap::wrap(500, 1024), 500);
+        assert_eq!(BranchWrap::wrap(1023, 1024), 1023);
+    }
+
+    #[test]
+    fn branch_wrap_at_boundary() {
+        assert_eq!(BranchWrap::wrap(1024, 1024), 0);
+        assert_eq!(BranchWrap::wrap(2048, 1024), 0);
     }
 }

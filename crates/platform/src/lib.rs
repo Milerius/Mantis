@@ -57,6 +57,7 @@ pub use metering::PmuCounter;
 pub use metering::RdtscCounter;
 pub use metering::{CycleCounter, Measurement};
 pub use numerics::{POW10_I64, pow10_i64};
+pub use pad::CacheLine;
 pub use pad::CachePadded;
 // DefaultCounter is available on all platforms where at least one counter is defined.
 #[cfg(feature = "std")]

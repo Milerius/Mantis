@@ -106,34 +106,36 @@ impl WsConnection {
         Ok(conn)
     }
 
-    /// Read the next text message from the WebSocket.
+    /// Read the next text frame into `buf`, returning the number of bytes written.
     ///
+    /// Returns `Ok(0)` for non-text frames, heartbeat responses, and timeouts.
     /// Handles ping/pong internally. Sends periodic PING heartbeats.
-    /// Returns `None` for non-text messages (binary, pong, close).
     ///
     /// # Errors
     ///
     /// Returns `WsError::Read` on read failure or `WsError::Closed` if
     /// the connection was closed by the server.
-    pub fn read_text(&mut self) -> Result<Option<String>, WsError> {
+    pub fn read_bytes(&mut self, buf: &mut Vec<u8>) -> Result<usize, WsError> {
         // Send heartbeat if due
         self.maybe_send_ping()?;
 
         match self.ws.read() {
             Ok(Message::Text(text)) => {
-                let text = text.to_string();
-                if text == "PONG" {
-                    return Ok(None);
+                let text_bytes = text.as_bytes();
+                if text_bytes == b"PONG" {
+                    return Ok(0);
                 }
-                Ok(Some(text))
+                buf.clear();
+                buf.extend_from_slice(text_bytes);
+                Ok(buf.len())
             }
             Ok(Message::Ping(data)) => {
                 self.ws
                     .send(Message::Pong(data))
                     .map_err(|e| WsError::Send(format!("pong: {e}")))?;
-                Ok(None)
+                Ok(0)
             }
-            Ok(Message::Pong(_) | Message::Binary(_) | Message::Frame(_)) => Ok(None),
+            Ok(Message::Pong(_) | Message::Binary(_) | Message::Frame(_)) => Ok(0),
             Ok(Message::Close(frame)) => {
                 debug!(?frame, "server sent close");
                 Err(WsError::Closed)
@@ -144,7 +146,7 @@ impl WsConnection {
             {
                 // Read timeout — send heartbeat if due (checks elapsed time, won't double-ping)
                 self.maybe_send_ping()?;
-                Ok(None)
+                Ok(0)
             }
             Err(e) => Err(WsError::Read(format!("{e}"))),
         }

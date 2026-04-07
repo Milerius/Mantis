@@ -111,7 +111,8 @@ impl Drop for FeedHandle {
 
 /// A feed thread that connects to a WebSocket and processes messages.
 ///
-/// The callback `F` receives each text message as a `&str`. It is responsible
+/// The callback `F` receives each message as a `&mut [u8]` buffer suitable
+/// for in-place parsing (e.g., `simd_json::from_slice`). It is responsible
 /// for parsing, normalizing, and pushing events into the SPSC queue.
 /// The callback returns `true` to continue or `false` to stop the feed.
 pub struct FeedThread;
@@ -129,7 +130,7 @@ impl FeedThread {
     /// Returns an error if the OS fails to spawn the thread.
     pub fn spawn<F>(config: FeedConfig, on_message: F) -> Result<FeedHandle, std::io::Error>
     where
-        F: FnMut(&str) -> bool + Send + 'static,
+        F: FnMut(&mut [u8]) -> bool + Send + 'static,
     {
         let shutdown = Arc::new(AtomicBool::new(false));
         let drops = Arc::new(AtomicU64::new(0));
@@ -184,7 +185,7 @@ fn feed_loop<F>(
     reconnects: &Arc<AtomicU64>,
     msg_count: &Arc<AtomicU64>,
 ) where
-    F: FnMut(&str) -> bool + Send + 'static,
+    F: FnMut(&mut [u8]) -> bool + Send + 'static,
 {
     config.tuning.apply_affinity();
 
@@ -223,21 +224,24 @@ fn feed_loop<F>(
             }
         };
 
+        // Allocate read buffer once per connection (IO thread, allowed to alloc)
+        let mut read_buf = Vec::with_capacity(4096);
+
         loop {
             if shutdown.load(Ordering::Acquire) {
                 info!(feed = %config.name, "shutdown requested");
                 return;
             }
 
-            match conn.read_text() {
-                Ok(Some(text)) => {
+            match conn.read_bytes(&mut read_buf) {
+                Ok(0) => {} // no data (timeout, pong, non-text)
+                Ok(_n) => {
                     msg_count.fetch_add(1, Ordering::Relaxed);
-                    if !on_message(&text) {
+                    if !on_message(&mut read_buf) {
                         info!(feed = %config.name, "callback requested stop");
                         return;
                     }
                 }
-                Ok(None) => {}
                 Err(WsError::Closed) => {
                     warn!(feed = %config.name, "server closed connection");
                     break;

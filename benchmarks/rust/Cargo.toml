@@ -1,0 +1,17 @@
+[package]
+name = "mantis-spsc-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[dependencies]
+mantis-queue = { path = "../../crates/queue", features = ["alloc"] }
+mantis-core = { path = "../../crates/core" }
+mantis-platform = { path = "../../crates/platform", features = ["std", "perf-counters"] }
+libc = "0.2"
+clap = { version = "4", features = ["derive"] }
+rtrb = "0.3"

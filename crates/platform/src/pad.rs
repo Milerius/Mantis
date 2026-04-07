@@ -35,6 +35,39 @@ impl<T> DerefMut for CachePadded<T> {
     }
 }
 
+/// Cache-line-sized padding using the native line size for the target.
+/// 64 bytes on `x86_64`, 128 bytes on `aarch64` (Apple Silicon).
+/// Use this for hot-path structures where minimizing cache footprint matters.
+#[derive(Debug)]
+#[cfg_attr(target_arch = "x86_64", repr(align(64)))]
+#[cfg_attr(not(target_arch = "x86_64"), repr(align(128)))]
+pub struct CacheLine<T> {
+    value: T,
+}
+
+impl<T> CacheLine<T> {
+    /// Wrap a value with native cache-line alignment.
+    #[inline]
+    pub const fn new(value: T) -> Self {
+        Self { value }
+    }
+}
+
+impl<T> Deref for CacheLine<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        &self.value
+    }
+}
+
+impl<T> DerefMut for CacheLine<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.value
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,5 +88,18 @@ mod tests {
         let mut padded = CachePadded::new(42u64);
         *padded = 99;
         assert_eq!(*padded, 99);
+    }
+
+    #[test]
+    fn cache_line_native_alignment() {
+        // On x86_64 this is 64, on aarch64 this is 128
+        let align = core::mem::align_of::<CacheLine<u64>>();
+        assert!(align == 64 || align == 128);
+    }
+
+    #[test]
+    fn cache_line_deref() {
+        let padded = CacheLine::new(42u64);
+        assert_eq!(*padded, 42);
     }
 }

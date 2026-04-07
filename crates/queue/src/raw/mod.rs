@@ -18,7 +18,7 @@ use mantis_core::IndexStrategy;
 /// The ring engine maintains the invariant that `index` is obtained via
 /// `IndexStrategy::wrap` (always < capacity), and the producer
 /// exclusively owns slots from `tail_cached..head`.
-#[inline]
+#[inline(always)]
 pub(crate) fn write_slot<T, S: Storage<T>>(storage: &S, index: usize, value: T) {
     // SAFETY: The ring engine maintains the invariant that `index` is
     // obtained via IndexStrategy::wrap (always < capacity), and the
@@ -31,12 +31,30 @@ pub(crate) fn write_slot<T, S: Storage<T>>(storage: &S, index: usize, value: T) 
 /// The ring engine maintains the invariant that `index` is obtained via
 /// `IndexStrategy::wrap` (always < capacity), and the consumer
 /// exclusively owns slots from `tail..head_cached`.
-#[inline]
+#[inline(always)]
 pub(crate) fn read_slot<T, S: Storage<T>>(storage: &S, index: usize) -> T {
     // SAFETY: The ring engine maintains the invariant that `index` is
     // obtained via IndexStrategy::wrap (always < capacity), and the
     // consumer exclusively owns slots from tail..head_cached.
     unsafe { slot::read(storage, index) }
+}
+
+/// Read a slot's value into a caller-provided buffer via raw pointer.
+///
+/// The ring engine maintains the invariant that `index` is obtained via
+/// `IndexStrategy::wrap` (always < capacity), and the consumer
+/// exclusively owns slots from `tail..head_cached`.
+///
+/// **NOT truly safe** — `out` must still be valid. This exists solely so
+/// `engine.rs` (which has `deny(unsafe_code)`) can call it; the unsafety
+/// is logically pushed to `RingEngine::pop`'s own `unsafe fn` contract.
+#[inline(always)]
+pub(crate) fn read_slot_into_unchecked<T, S: Storage<T>>(storage: &S, index: usize, out: *mut T) {
+    // SAFETY: Caller (RingEngine::pop) guarantees:
+    // - index < capacity (obtained via IndexStrategy::wrap)
+    // - consumer exclusively owns slot at index
+    // - out is valid, writeable, properly aligned (pop's safety contract)
+    unsafe { slot::read_into(storage, index, out) }
 }
 
 /// Drop a value in a slot during ring teardown.
@@ -97,8 +115,8 @@ pub(crate) fn prefetch_slot_read<T, S: Storage<T>>(storage: &S, index: usize) {
 // makes it !Sync. We need Sync for Arc<RingEngine> in split handles.
 //
 // SAFETY: The SPSC protocol guarantees disjoint access:
-// - Producer ONLY accesses: head (AtomicUsize), producer cache (head_local, tail_remote)
-// - Consumer ONLY accesses: tail (AtomicUsize), consumer cache (tail_local, head_remote)
+// - ProducerLine (1 cache line): head (AtomicUsize), head_local (aarch64), tail_cached
+// - ConsumerLine (1 cache line): tail (AtomicUsize), tail_local (aarch64), head_cached
 // - These two sides never touch each other's Cells
 // - Atomics are inherently Sync
 // - Storage is Sync (required by trait bound)

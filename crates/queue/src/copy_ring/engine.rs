@@ -33,7 +33,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::storage::Storage;
 use mantis_core::{IndexStrategy, Instrumentation, PushPolicy};
-use mantis_platform::{CachePadded, CopyPolicy};
+use mantis_platform::{CacheLine, CopyPolicy};
 
 /// Cold slow-path for full ring. `#[cold]` tells LLVM to move this
 /// out of the hot path even on stable.
@@ -50,35 +50,37 @@ fn slow_empty() -> bool {
     false
 }
 
-/// Producer-local cache line: own head position + remote tail cache.
-///
-/// Both fields are only accessed by the producer thread, so they
-/// share a single cache line without false sharing.
-pub(crate) struct ProducerCache {
+/// Producer-local cache line: head atomic + cached remote tail.
+/// Both accessed ONLY by the producer thread — colocated to minimize
+/// cache footprint (1 cache line instead of 2).
+#[repr(C)]
+pub(crate) struct ProducerLine {
+    /// Head position atomic — published to consumer via Release store.
+    pub(crate) head: AtomicUsize,
     /// Local copy of head — avoids atomic load of own position (ARM only).
     #[cfg(target_arch = "aarch64")]
     pub(crate) head_local: Cell<usize>,
     /// Cached snapshot of consumer's tail — avoids cross-thread read.
-    pub(crate) tail_remote: Cell<usize>,
+    pub(crate) tail_cached: Cell<usize>,
 }
 
-/// Consumer-local cache line: own tail position + remote head cache.
-///
-/// Both fields are only accessed by the consumer thread, so they
-/// share a single cache line without false sharing.
-pub(crate) struct ConsumerCache {
+/// Consumer-local cache line: tail atomic + cached remote head.
+/// Both accessed ONLY by the consumer thread.
+#[repr(C)]
+pub(crate) struct ConsumerLine {
+    /// Tail position atomic — published to producer via Release store.
+    pub(crate) tail: AtomicUsize,
     /// Local copy of tail — avoids atomic load of own position (ARM only).
     #[cfg(target_arch = "aarch64")]
     pub(crate) tail_local: Cell<usize>,
     /// Cached snapshot of producer's head — avoids cross-thread read.
-    pub(crate) head_remote: Cell<usize>,
+    pub(crate) head_cached: Cell<usize>,
 }
 
+/// Layout: 2 cache lines (producer + consumer) instead of 4 `CachePadded` fields.
 pub(crate) struct CopyRingEngine<T: Copy, S, I, P, Instr, CP> {
-    head: CachePadded<AtomicUsize>,
-    tail: CachePadded<AtomicUsize>,
-    producer: CachePadded<ProducerCache>,
-    consumer: CachePadded<ConsumerCache>,
+    producer: CacheLine<ProducerLine>,
+    consumer: CacheLine<ConsumerLine>,
     storage: S,
     instr: Instr,
     _marker: PhantomData<(T, I, P, CP)>,
@@ -95,17 +97,17 @@ where
 {
     pub(crate) fn new(storage: S, instr: Instr) -> Self {
         Self {
-            head: CachePadded::new(AtomicUsize::new(0)),
-            tail: CachePadded::new(AtomicUsize::new(0)),
-            producer: CachePadded::new(ProducerCache {
+            producer: CacheLine::new(ProducerLine {
+                head: AtomicUsize::new(0),
                 #[cfg(target_arch = "aarch64")]
                 head_local: Cell::new(0),
-                tail_remote: Cell::new(0),
+                tail_cached: Cell::new(0),
             }),
-            consumer: CachePadded::new(ConsumerCache {
+            consumer: CacheLine::new(ConsumerLine {
+                tail: AtomicUsize::new(0),
                 #[cfg(target_arch = "aarch64")]
                 tail_local: Cell::new(0),
-                head_remote: Cell::new(0),
+                head_cached: Cell::new(0),
             }),
             storage,
             instr,
@@ -120,16 +122,16 @@ where
         #[cfg(target_arch = "aarch64")]
         let head = self.producer.head_local.get();
         #[cfg(not(target_arch = "aarch64"))]
-        let head = self.head.load(Ordering::Relaxed);
+        let head = self.producer.head.load(Ordering::Relaxed);
 
         let next_head = I::wrap(head + 1, self.storage.capacity());
 
         #[cfg(feature = "prefetch")]
         crate::raw::prefetch_slot_write(&self.storage, next_head);
 
-        if next_head == self.producer.tail_remote.get() {
-            let tail = self.tail.load(Ordering::Acquire);
-            self.producer.tail_remote.set(tail);
+        if next_head == self.producer.tail_cached.get() {
+            let tail = self.consumer.tail.load(Ordering::Acquire);
+            self.producer.tail_cached.set(tail);
             if next_head == tail {
                 core::hint::cold_path();
                 self.instr.on_push_full();
@@ -138,7 +140,7 @@ where
         }
 
         crate::copy_ring::raw::write_slot_copy::<T, S, CP>(&self.storage, head, value);
-        self.head.store(next_head, Ordering::Release);
+        self.producer.head.store(next_head, Ordering::Release);
         #[cfg(target_arch = "aarch64")]
         self.producer.head_local.set(next_head);
         self.instr.on_push();
@@ -150,14 +152,14 @@ where
         #[cfg(target_arch = "aarch64")]
         let tail = self.consumer.tail_local.get();
         #[cfg(not(target_arch = "aarch64"))]
-        let tail = self.tail.load(Ordering::Relaxed);
+        let tail = self.consumer.tail.load(Ordering::Relaxed);
 
         #[cfg(feature = "prefetch")]
         crate::raw::prefetch_slot_read(&self.storage, tail);
 
-        if tail == self.consumer.head_remote.get() {
-            let head = self.head.load(Ordering::Acquire);
-            self.consumer.head_remote.set(head);
+        if tail == self.consumer.head_cached.get() {
+            let head = self.producer.head.load(Ordering::Acquire);
+            self.consumer.head_cached.set(head);
             if tail == head {
                 core::hint::cold_path();
                 self.instr.on_pop_empty();
@@ -167,7 +169,7 @@ where
 
         crate::copy_ring::raw::read_slot_copy::<T, S, CP>(&self.storage, tail, out);
         let next_tail = I::wrap(tail + 1, self.storage.capacity());
-        self.tail.store(next_tail, Ordering::Release);
+        self.consumer.tail.store(next_tail, Ordering::Release);
         #[cfg(target_arch = "aarch64")]
         self.consumer.tail_local.set(next_tail);
         self.instr.on_pop();
@@ -183,8 +185,8 @@ where
         #[cfg(target_arch = "aarch64")]
         let head = self.producer.head_local.get();
         #[cfg(not(target_arch = "aarch64"))]
-        let head = self.head.load(Ordering::Relaxed);
-        let cached_tail = self.producer.tail_remote.get();
+        let head = self.producer.head.load(Ordering::Relaxed);
+        let cached_tail = self.producer.tail_cached.get();
         let cap = self.storage.capacity();
         let usable = cap - 1;
 
@@ -196,8 +198,8 @@ where
         let mut free = usable - len;
 
         if free < src.len() {
-            let tail = self.tail.load(Ordering::Acquire);
-            self.producer.tail_remote.set(tail);
+            let tail = self.consumer.tail.load(Ordering::Acquire);
+            self.producer.tail_cached.set(tail);
             let len = if head >= tail {
                 head - tail
             } else {
@@ -233,7 +235,7 @@ where
         }
 
         let new_head = I::wrap(head + n, cap);
-        self.head.store(new_head, Ordering::Release);
+        self.producer.head.store(new_head, Ordering::Release);
         #[cfg(target_arch = "aarch64")]
         self.producer.head_local.set(new_head);
         n
@@ -248,8 +250,8 @@ where
         #[cfg(target_arch = "aarch64")]
         let tail = self.consumer.tail_local.get();
         #[cfg(not(target_arch = "aarch64"))]
-        let tail = self.tail.load(Ordering::Relaxed);
-        let cached_head = self.consumer.head_remote.get();
+        let tail = self.consumer.tail.load(Ordering::Relaxed);
+        let cached_head = self.consumer.head_cached.get();
         let cap = self.storage.capacity();
 
         let mut avail = if cached_head >= tail {
@@ -259,8 +261,8 @@ where
         };
 
         if avail < dst.len() {
-            let head = self.head.load(Ordering::Acquire);
-            self.consumer.head_remote.set(head);
+            let head = self.producer.head.load(Ordering::Acquire);
+            self.consumer.head_cached.set(head);
             avail = if head >= tail {
                 head - tail
             } else {
@@ -303,7 +305,7 @@ where
         }
 
         let new_tail = I::wrap(tail + n, cap);
-        self.tail.store(new_tail, Ordering::Release);
+        self.consumer.tail.store(new_tail, Ordering::Release);
         #[cfg(target_arch = "aarch64")]
         self.consumer.tail_local.set(new_tail);
         n
@@ -316,8 +318,8 @@ where
 
     #[inline]
     pub(crate) fn len(&self) -> usize {
-        let head = self.head.load(Ordering::Relaxed);
-        let tail = self.tail.load(Ordering::Relaxed);
+        let head = self.producer.head.load(Ordering::Relaxed);
+        let tail = self.consumer.tail.load(Ordering::Relaxed);
         let cap = self.storage.capacity();
         if head >= tail {
             head - tail
