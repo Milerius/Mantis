@@ -86,10 +86,10 @@ fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
     // SpscRing uses CacheLine-colocated fields internally.
     let mut ring = SpscRing::<Msg, 1024>::new();
 
-    // Cast to usize for Send across threads.
-    // SAFETY: ring lives on this stack frame and we join both threads before returning.
-    // SPSC protocol guarantees disjoint access (producer: push, consumer: pop_into).
-    let ring_addr = &mut ring as *mut SpscRing<Msg, 1024> as usize;
+    // Use &self shared references — no &mut aliasing UB.
+    // SAFETY: SPSC protocol guarantees disjoint access. Ring lives on stack
+    // and we join both threads before returning.
+    let ring_addr = &ring as *const SpscRing<Msg, 1024> as usize;
 
     let consumer_ready = AtomicBool::new(false);
     let ready_addr = &consumer_ready as *const AtomicBool as usize;
@@ -104,12 +104,13 @@ fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
         let latency = unsafe { &*(latency_addr as *const AtomicU64) };
         ready.store(true, Ordering::Release);
 
-        let rb = unsafe { &mut *(ring_addr as *mut SpscRing<Msg, 1024>) };
+        // SAFETY: SPSC consumer — only pops. &self avoids noalias interference.
+        let rb = unsafe { &*(ring_addr as *const SpscRing<Msg, 1024>) };
         let mut msg = Msg::default();
         let mut sum: u64 = 0;
         let mut count: u64 = 0;
         while count < total_ops {
-            if unsafe { rb.pop_into(&mut msg as *mut Msg) } {
+            if unsafe { rb.pop_shared(&mut msg as *mut Msg) } {
                 let now = rdtsc();
                 sum += now - msg.timestamp;
                 count += 1;
@@ -124,7 +125,8 @@ fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
         let ready = unsafe { &*(ready_addr as *const AtomicBool) };
         while !ready.load(Ordering::Acquire) {}
 
-        let rb = unsafe { &mut *(ring_addr as *mut SpscRing<Msg, 1024>) };
+        // SAFETY: SPSC producer — only pushes. &self avoids noalias interference.
+        let rb = unsafe { &*(ring_addr as *const SpscRing<Msg, 1024>) };
         for i in 0..total_ops {
             let msg = Msg {
                 timestamp: rdtsc(),
@@ -136,7 +138,7 @@ fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
                 quantity: ((i & 0xFF) + 1) as i64,
                 order_id: i as i64,
             };
-            while !rb.push(msg) {}
+            while !unsafe { rb.push_shared(msg) } {}
         }
     });
 
@@ -146,14 +148,135 @@ fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
     total_latency.load(Ordering::Acquire)
 }
 
-/// Run multiple iterations and print cycles/op.
-pub fn run_raw_bench(producer_core: usize, consumer_core: usize, ops: u64, iterations: usize) {
+// ─── SpscRingCopy variant ────────────────────────────────────────────────────
+
+fn run_raw_copy(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
+    use mantis_queue::SpscRingCopy;
+
+    let ring = SpscRingCopy::<Msg, 1024>::new();
+    let ring_addr = &ring as *const SpscRingCopy<Msg, 1024> as usize;
+
+    let consumer_ready = AtomicBool::new(false);
+    let ready_addr = &consumer_ready as *const AtomicBool as usize;
+    let total_latency = AtomicU64::new(0);
+    let latency_addr = &total_latency as *const AtomicU64 as usize;
+
+    let consumer = thread::spawn(move || {
+        pin(consumer_core);
+        let ready = unsafe { &*(ready_addr as *const AtomicBool) };
+        let latency = unsafe { &*(latency_addr as *const AtomicU64) };
+        ready.store(true, Ordering::Release);
+
+        let rb = unsafe { &*(ring_addr as *const SpscRingCopy<Msg, 1024>) };
+        let mut msg = Msg::default();
+        let mut sum: u64 = 0;
+        let mut count: u64 = 0;
+        while count < total_ops {
+            if unsafe { rb.pop_shared(&mut msg) } {
+                let now = rdtsc();
+                sum += now - msg.timestamp;
+                count += 1;
+            }
+        }
+        latency.store(sum, Ordering::Release);
+    });
+
+    let producer = thread::spawn(move || {
+        pin(producer_core);
+        let ready = unsafe { &*(ready_addr as *const AtomicBool) };
+        while !ready.load(Ordering::Acquire) {}
+
+        let rb = unsafe { &*(ring_addr as *const SpscRingCopy<Msg, 1024>) };
+        for i in 0..total_ops {
+            let msg = Msg {
+                timestamp: rdtsc(),
+                sequence: i,
+                symbol_id: (i & 0xFFF) as u32,
+                side: (i & 1) as u16,
+                _pad: 0,
+                price: (i * 100 + 1) as i64,
+                quantity: ((i & 0xFF) + 1) as i64,
+                order_id: i as i64,
+            };
+            while !unsafe { rb.push_shared(&msg) } {}
+        }
+    });
+
+    producer.join().unwrap();
+    consumer.join().unwrap();
+    total_latency.load(Ordering::Acquire)
+}
+
+// ─── rtrb variant ────────────────────────────────────────────────────────────
+
+fn run_raw_rtrb(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
+    let (mut tx, mut rx) = rtrb::RingBuffer::<Msg>::new(1024);
+
+    let consumer_ready = AtomicBool::new(false);
+    let ready_addr = &consumer_ready as *const AtomicBool as usize;
+    let total_latency = AtomicU64::new(0);
+    let latency_addr = &total_latency as *const AtomicU64 as usize;
+
+    let consumer = thread::spawn(move || {
+        pin(consumer_core);
+        let ready = unsafe { &*(ready_addr as *const AtomicBool) };
+        let latency = unsafe { &*(latency_addr as *const AtomicU64) };
+        ready.store(true, Ordering::Release);
+
+        let mut sum: u64 = 0;
+        let mut count: u64 = 0;
+        while count < total_ops {
+            if let Ok(msg) = rx.pop() {
+                let now = rdtsc();
+                sum += now - msg.timestamp;
+                count += 1;
+            }
+        }
+        latency.store(sum, Ordering::Release);
+    });
+
+    let producer = thread::spawn(move || {
+        pin(producer_core);
+        let ready = unsafe { &*(ready_addr as *const AtomicBool) };
+        while !ready.load(Ordering::Acquire) {}
+
+        for i in 0..total_ops {
+            let msg = Msg {
+                timestamp: rdtsc(),
+                sequence: i,
+                symbol_id: (i & 0xFFF) as u32,
+                side: (i & 1) as u16,
+                _pad: 0,
+                price: (i * 100 + 1) as i64,
+                quantity: ((i & 0xFF) + 1) as i64,
+                order_id: i as i64,
+            };
+            while tx.push(msg).is_err() {}
+        }
+    });
+
+    producer.join().unwrap();
+    consumer.join().unwrap();
+    total_latency.load(Ordering::Acquire)
+}
+
+// ─── Runner ──────────────────────────────────────────────────────────────────
+
+fn run_variant(
+    name: &str,
+    run_fn: fn(usize, usize, u64) -> u64,
+    producer_core: usize,
+    consumer_core: usize,
+    ops: u64,
+    iterations: usize,
+) {
+    eprintln!("[{name}]");
     // Warmup
-    let _ = run_raw(producer_core, consumer_core, ops);
+    let _ = run_fn(producer_core, consumer_core, ops);
 
     let mut best = u64::MAX;
     for i in 1..=iterations {
-        let total_cycles = run_raw(producer_core, consumer_core, ops);
+        let total_cycles = run_fn(producer_core, consumer_core, ops);
         let cycles_per_op = total_cycles as f64 / ops as f64;
         if total_cycles < best {
             best = total_cycles;
@@ -162,4 +285,13 @@ pub fn run_raw_bench(producer_core: usize, consumer_core: usize, ops: u64, itera
     }
     let best_per_op = best as f64 / ops as f64;
     eprintln!("  BEST: {best_per_op:.1} cycles/op");
+}
+
+/// Run all variants or a specific one.
+pub fn run_raw_bench(producer_core: usize, consumer_core: usize, ops: u64, iterations: usize) {
+    run_variant("mantis-inline (push_shared/pop_shared)", run_raw, producer_core, consumer_core, ops, iterations);
+    eprintln!();
+    run_variant("mantis-copy (push/pop &self)", run_raw_copy, producer_core, consumer_core, ops, iterations);
+    eprintln!();
+    run_variant("rtrb (push/pop Result)", run_raw_rtrb, producer_core, consumer_core, ops, iterations);
 }

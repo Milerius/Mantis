@@ -280,6 +280,37 @@ where
         unsafe { self.engine.pop(out) }
     }
 
+    /// Push via shared reference. Returns `true` on success, `false` if full.
+    ///
+    /// # Safety
+    ///
+    /// The caller must uphold the SPSC protocol: exactly one thread calls
+    /// `push_shared` (the producer), and a different thread calls `pop_shared`
+    /// (the consumer). No two threads may call the same method concurrently.
+    #[expect(
+        unsafe_code,
+        reason = "SPSC shared-reference push for zero-overhead two-thread use"
+    )]
+    #[inline(always)]
+    pub unsafe fn push_shared(&self, value: T) -> bool {
+        self.engine.push(value)
+    }
+
+    /// Pop via shared reference into `out`. Returns `true` on success, `false` if empty.
+    ///
+    /// # Safety
+    ///
+    /// Same SPSC contract as `push_shared`. Additionally, `out` must be
+    /// a valid, writeable, properly aligned pointer to `T`.
+    #[expect(
+        unsafe_code,
+        reason = "SPSC shared-reference pop for zero-overhead two-thread use"
+    )]
+    #[inline(always)]
+    pub unsafe fn pop_shared(&self, out: *mut T) -> bool {
+        unsafe { self.engine.pop(out) }
+    }
+
     /// Number of elements currently in the ring.
     #[must_use]
     pub fn len(&self) -> usize {

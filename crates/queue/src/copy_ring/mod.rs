@@ -51,6 +51,29 @@ where
         self.engine.pop(out)
     }
 
+    /// Push via shared reference. Returns `true` on success, `false` if full.
+    ///
+    /// # Safety
+    ///
+    /// The caller must uphold the SPSC protocol: exactly one producer thread,
+    /// one consumer thread, never concurrent same-side access.
+    #[expect(unsafe_code, reason = "SPSC shared-reference push")]
+    #[inline(always)]
+    pub unsafe fn push_shared(&self, value: &T) -> bool {
+        self.engine.push(value)
+    }
+
+    /// Pop via shared reference. Returns `true` on success, `false` if empty.
+    ///
+    /// # Safety
+    ///
+    /// Same SPSC contract as `push_shared`.
+    #[expect(unsafe_code, reason = "SPSC shared-reference pop")]
+    #[inline(always)]
+    pub unsafe fn pop_shared(&self, out: &mut T) -> bool {
+        self.engine.pop(out)
+    }
+
     /// Push a batch of values. Returns the number actually pushed.
     #[inline]
     pub fn push_batch(&mut self, src: &[T]) -> usize {
