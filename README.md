@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <b>42ns per event · Zero allocation on hot path · Deterministic replay · Miri + Kani verified</b>
+  <b>42ns market state engine · 130ns cross-core SPSC · Zero allocation on hot path · Miri + Kani verified</b>
 </p>
 
 ---
@@ -37,13 +37,14 @@
 | | Mantis | Typical HFT Software | Top-Tier (FPGA) |
 |---|---|---|---|
 | **Event processing** | **42ns** p50 | 1-10µs | <100ns |
-| **SPSC ring push/pop** | **<10ns** | 10-50ns (Disruptor) | N/A |
+| **SPSC ring (cross-core)** | **130ns** (472 cycles) | 200-500ns | N/A |
 | **Memory allocation** | **Zero** on hot path | Minimal | Fixed in fabric |
 | **Verification** | Miri + Kani + Fuzz + Bolero | Unit tests | Hardware proofs |
 | **Replay** | **Deterministic** | Best-effort | Hard |
 | **`no_std`** | All core crates | Rarely | N/A |
 
-Same ballpark as Optiver/LMAX-class software systems — before network.
+SPSC latency measured on isolated cores (AMD Ryzen 7 PRO 8700GE, `isolcpus`, `rdtsc`).
+See [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) for full methodology and comparison with C++ rigtorp.
 
 ---
 
@@ -61,7 +62,7 @@ Same ballpark as Optiver/LMAX-class software systems — before network.
      │                  │ │                 │  │ state           │
      │  Strategy trait  │ │  SPSC ring buf  │  │  ArrayBook      │
      │  Position, PnL   │ │  lock-free I/O  │  │  Engine, BBO    │
-     │  QueueEstimator  │ │  <10ns push/pop │  │  42ns/event     │
+     │  QueueEstimator  │ │  130ns x-core   │  │  42ns/event     │
      │  OrderTracker    │ └────────┬────────┘  └────────┬────────┘
      └────────┬─────────┘          │                    │
               │           ┌────────▼────────┐  ┌────────▼────────┐
@@ -98,21 +99,13 @@ Feed the same event tape → get identical order intents.
 
 ## Highlights
 
-⚡ **42ns event processing** — single-core, no locks, no allocation on hot path
-
-🔒 **Zero-alloc hot path** — fixed-size arrays, `repr(C)` types, `no_std` everywhere
-
-🧪 **Formally verified** — Miri (zero UB), Kani (bounded model checking), Bolero (property tests), fuzz targets
-
-🔄 **Deterministic replay** — event-driven strategy trait: same tape = same intents
-
-📊 **Live POC** — Nim prototype with FTXUI terminal dashboard capturing Polymarket + Binance in real-time
-
-🏗️ **14 modular crates** — compose what you need, leave the rest
-
-📈 **L2 queue position model** — probabilistic fill estimation using PowerProbQueueFunc
-
-🎯 **3 rounds of AI code review** — every type pressure-tested by adversarial review
+- **42ns market state engine** — single-core event processing, no locks, no allocation on hot path
+- **130ns cross-core SPSC** — measured on isolated cores with `rdtsc`, beating C++ rigtorp on same hardware
+- **Zero-alloc hot path** — fixed-size arrays, `repr(C)` types, `no_std` everywhere
+- **Formally verified** — Miri (zero UB), Kani (bounded model checking), Bolero (property tests), fuzz targets
+- **Deterministic replay** — event-driven strategy trait: same tape = same intents
+- **14 modular crates** — compose what you need, leave the rest
+- **L2 queue position model** — probabilistic fill estimation using `PowerProbQueueFunc`
 
 ---
 
@@ -139,28 +132,40 @@ Feed the same event tape → get identical order intents.
 
 ## Benchmarks
 
-<table>
-<tr><th>SPSC Ring (Apple M4 Pro)</th><th>Fixed-Point Math</th></tr>
-<tr><td>
+### SPSC Ring — Two-Thread Cross-Core Latency
 
-| Workload | Mantis | rtrb | crossbeam |
-|---|---:|---:|---:|
-| single push+pop | **2.14 ns** | 2.48 ns | 3.93 ns |
-| burst 100 | **422 ns** | 332 ns | 546 ns |
+Measured on AMD Ryzen 7 PRO 8700GE with `isolcpus`, `rdtsc`, `chrt -f 99`.
+48-byte messages, capacity 1024, 1M operations per run.
 
-</td><td>
+| Queue | Language | Mean (TSC cycles) | Stability |
+|-------|----------|---:|---:|
+| **Mantis `SpscRingFast`** | Rust | **472** | +/-8 |
+| Mantis `SpscRing` | Rust | 554 | +/-14 |
+| Mantis `SpscRingCopy` | Rust | 552 | +/-11 |
+| rigtorp `SPSCQueue` | C++ | 510 best, 1315 median | +/-400 |
+| rtrb | Rust | 1090 best, 2345 median | +/-750 |
+
+At 3.65 GHz TSC, 472 cycles = **129 ns** per cross-core message handoff.
+
+See [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) for full methodology, hardware configuration, and reproduction steps.
+
+### Fixed-Point Math
 
 | Operation | Mantis | `fixed` crate | `rust_decimal` |
 |---|---:|---:|---:|
-| mul | **1.10 ns** | 1.20 ns | — |
-| add | **0.28 ns** | — | 1.12 ns (4x slower) |
-
-</td></tr>
-</table>
+| mul | **1.10 ns** | 1.20 ns | -- |
+| add | **0.28 ns** | -- | 1.12 ns (4x slower) |
 
 Run benchmarks:
 ```bash
-cargo bench --features bench-contenders
+# Fixed-point
+cargo +nightly bench --bench fixed
+
+# SPSC (requires isolated cores on Linux)
+cd benchmarks/rust
+RUSTFLAGS='-C target-cpu=native' cargo +nightly build --release
+chrt -f 99 taskset -c 2,3 ./target/release/mantis-spsc-bench \
+    --producer-core 2 --consumer-core 3 --messages 1000000 --runs 10
 ```
 
 ---
@@ -169,10 +174,10 @@ cargo bench --features bench-contenders
 
 ```bash
 # Build everything
-cargo +nightly build --all-features
+cargo +nightly build --features alloc,std
 
-# Run all 656 tests
-cargo +nightly test --all-features
+# Run tests
+cargo +nightly test --features alloc,std
 
 # Check coverage
 cargo +nightly llvm-cov --all-features
@@ -180,8 +185,7 @@ cargo +nightly llvm-cov --all-features
 # Inspect struct layouts
 cargo run -p mantis-layout
 
-# Run benchmarks
-cargo +nightly bench --bench spsc
+# Run fixed-point benchmarks
 cargo +nightly bench --bench fixed
 ```
 
