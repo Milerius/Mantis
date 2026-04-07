@@ -64,7 +64,7 @@ pub fn spawn_reference_feed<F>(
     on_message: F,
 ) -> Result<FeedHandle, std::io::Error>
 where
-    F: FnMut(&str) -> bool + Send + 'static,
+    F: FnMut(&mut [u8]) -> bool + Send + 'static,
 {
     if config.symbols.is_empty() {
         return Err(std::io::Error::new(
