@@ -691,8 +691,7 @@ mod tests {
     fn decode_book_empty_levels_returns_zero() {
         let (reg, _) = test_registry();
         let mut decoder = PolymarketMarketDecoder::<6>::new(SourceId::from_raw(10), &reg);
-        let mut buf =
-            br#"{"type":"book","asset_id":"abc123","bids":[],"asks":[]}"#.to_vec();
+        let mut buf = br#"{"type":"book","asset_id":"abc123","bids":[],"asks":[]}"#.to_vec();
         let mut out = make_out();
 
         let n = decoder.decode(&mut buf, Timestamp::from_nanos(0), &mut out);
