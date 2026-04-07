@@ -86,7 +86,166 @@ fn rdtsc() -> u64 {
         .as_nanos() as u64
 }
 
-// ─── Benchmark ──────────────────────────────────────────────────────────────
+// ─── Standalone RawRing (zero generics, zero traits, zero library) ──────────
+
+const CAPACITY: usize = 1024;
+
+/// Producer-local cache line.
+#[repr(C, align(64))]
+struct ProducerLine {
+    head: core::sync::atomic::AtomicUsize,
+    tail_cached: core::cell::Cell<usize>,
+}
+
+/// Consumer-local cache line.
+#[repr(C, align(64))]
+struct ConsumerLine {
+    tail: core::sync::atomic::AtomicUsize,
+    head_cached: core::cell::Cell<usize>,
+}
+
+/// Minimal standalone SPSC ring — no generics, no traits, no library.
+#[repr(C)]
+struct StandaloneRing {
+    producer: ProducerLine,
+    consumer: ConsumerLine,
+    slots: [core::mem::MaybeUninit<Msg>; CAPACITY],
+}
+
+unsafe impl Sync for StandaloneRing {}
+
+impl StandaloneRing {
+    fn new() -> Self {
+        Self {
+            producer: ProducerLine {
+                head: core::sync::atomic::AtomicUsize::new(0),
+                tail_cached: core::cell::Cell::new(0),
+            },
+            consumer: ConsumerLine {
+                tail: core::sync::atomic::AtomicUsize::new(0),
+                head_cached: core::cell::Cell::new(0),
+            },
+            slots: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
+        }
+    }
+
+    #[inline(always)]
+    fn push(&self, msg: Msg) -> bool {
+        let head = self.producer.head.load(Ordering::Relaxed);
+        let next = head + 1;
+        let next = if next == CAPACITY { 0 } else { next };
+
+        if next == self.producer.tail_cached.get() {
+            let tail = self.consumer.tail.load(Ordering::Acquire);
+            self.producer.tail_cached.set(tail);
+            if next == tail {
+                return false;
+            }
+        }
+
+        unsafe {
+            let slot = self.slots.as_ptr().add(head) as *mut Msg;
+            core::ptr::write(slot, msg);
+        }
+
+        self.producer.head.store(next, Ordering::Release);
+        true
+    }
+
+    #[inline(always)]
+    fn pop(&self, out: *mut Msg) -> bool {
+        let tail = self.consumer.tail.load(Ordering::Relaxed);
+
+        if tail == self.consumer.head_cached.get() {
+            let head = self.producer.head.load(Ordering::Acquire);
+            self.consumer.head_cached.set(head);
+            if tail == head {
+                return false;
+            }
+        }
+
+        unsafe {
+            let slot = self.slots.as_ptr().add(tail) as *const Msg;
+            core::ptr::copy_nonoverlapping(slot, out, 1);
+        }
+
+        let next = tail + 1;
+        let next = if next == CAPACITY { 0 } else { next };
+        self.consumer.tail.store(next, Ordering::Release);
+        true
+    }
+}
+
+fn run_standalone(producer_core: usize, consumer_core: usize, total_ops: u64) -> RunResult {
+    let ring = Box::leak(Box::new(StandaloneRing::new()));
+    let ring_addr = ring as *const StandaloneRing as usize;
+
+    let consumer_ready = AtomicBool::new(false);
+    let ready_addr = &consumer_ready as *const AtomicBool as usize;
+    let total_latency = AtomicU64::new(0);
+    let latency_addr = &total_latency as *const AtomicU64 as usize;
+    let mut hw_result: Option<HwCounterDeltas> = None;
+    let hw_result_addr = &mut hw_result as *mut Option<HwCounterDeltas> as usize;
+
+    let consumer = thread::spawn(move || {
+        pin(consumer_core);
+        let ring = unsafe { &*(ring_addr as *const StandaloneRing) };
+        let ready = unsafe { &*(ready_addr as *const AtomicBool) };
+        let latency = unsafe { &*(latency_addr as *const AtomicU64) };
+        let hw_counters = DefaultHwCounters::try_new().ok();
+        ready.store(true, Ordering::Release);
+        let snapshot = hw_counters.as_ref().and_then(|c| c.start());
+
+        let mut msg = Msg::default();
+        let mut sum: u64 = 0;
+        let mut count: u64 = 0;
+        while count < total_ops {
+            if ring.pop(&mut msg as *mut Msg) {
+                let now = rdtsc();
+                sum += now - msg.timestamp;
+                count += 1;
+            }
+        }
+
+        let deltas = hw_counters.as_ref().and_then(|c| c.read(&snapshot));
+        latency.store(sum, Ordering::Release);
+        unsafe { *(hw_result_addr as *mut Option<HwCounterDeltas>) = deltas; }
+    });
+
+    let producer = thread::spawn(move || {
+        pin(producer_core);
+        let ring = unsafe { &*(ring_addr as *const StandaloneRing) };
+        let ready = unsafe { &*(ready_addr as *const AtomicBool) };
+        while !ready.load(Ordering::Acquire) {}
+
+        for i in 0..total_ops {
+            let msg = Msg {
+                timestamp: rdtsc(),
+                sequence: i,
+                symbol_id: (i & 0xFFF) as u32,
+                side: (i & 1) as u16,
+                _pad: 0,
+                price: (i * 100 + 1) as i64,
+                quantity: ((i & 0xFF) + 1) as i64,
+                order_id: i as i64,
+            };
+            while !ring.push(msg) {}
+        }
+    });
+
+    producer.join().unwrap();
+    consumer.join().unwrap();
+
+    let sum = total_latency.load(Ordering::Acquire);
+    unsafe { drop(Box::from_raw(ring_addr as *mut StandaloneRing)); }
+
+    RunResult {
+        total_cycles: sum,
+        hw: hw_result,
+    }
+}
+
+// ─── Benchmark (library variants) ───────────────────────────────────────────
 
 fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> RunResult {
     let ring = SpscRing::<Msg, 1024>::new();
@@ -393,8 +552,17 @@ fn run_variant(
     eprintln!("  BEST: {best_per_op:.1} cycles/op");
 }
 
-/// Run all variants or a specific one.
+/// Run all variants.
 pub fn run_raw_bench(producer_core: usize, consumer_core: usize, ops: u64, iterations: usize) {
+    run_variant(
+        "standalone RawRing (no library, no generics)",
+        run_standalone,
+        producer_core,
+        consumer_core,
+        ops,
+        iterations,
+    );
+    eprintln!();
     run_variant(
         "mantis-inline Pow2Masked",
         run_raw,
