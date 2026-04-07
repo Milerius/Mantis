@@ -13,7 +13,14 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 
+use mantis_platform::metering::{DefaultHwCounters, HwCounterDeltas, HwCounters};
 use mantis_queue::SpscRing;
+
+/// Result from a single benchmark run.
+struct RunResult {
+    total_cycles: u64,
+    hw: Option<HwCounterDeltas>,
+}
 
 /// 48-byte message matching HFT University's `hftu::Message`.
 #[repr(C, align(16))]
@@ -81,12 +88,12 @@ fn rdtsc() -> u64 {
 
 // ─── Benchmark ──────────────────────────────────────────────────────────────
 
-fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
+fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> RunResult {
     let ring = SpscRing::<Msg, 1024>::new();
     run_raw_ring(&ring, producer_core, consumer_core, total_ops)
 }
 
-fn run_raw_fast(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
+fn run_raw_fast(producer_core: usize, consumer_core: usize, total_ops: u64) -> RunResult {
     use mantis_queue::SpscRingFast;
     let ring = SpscRingFast::<Msg, 1024>::new();
     run_raw_ring(&ring, producer_core, consumer_core, total_ops)
@@ -98,7 +105,7 @@ fn run_raw_ring<S, I, P, Instr>(
     producer_core: usize,
     consumer_core: usize,
     total_ops: u64,
-) -> u64
+) -> RunResult
 where
     S: mantis_queue::Storage<Msg>,
     I: mantis_core::IndexStrategy,
@@ -116,12 +123,23 @@ where
     let total_latency = AtomicU64::new(0);
     let latency_addr = &total_latency as *const AtomicU64 as usize;
 
+    // Storage for HW counter deltas — written by consumer, read after join.
+    let mut hw_result: Option<HwCounterDeltas> = None;
+    let hw_result_addr = &mut hw_result as *mut Option<HwCounterDeltas> as usize;
+
     // Consumer — spawned first
     let consumer = thread::spawn(move || {
         pin(consumer_core);
         let ready = unsafe { &*(ready_addr as *const AtomicBool) };
         let latency = unsafe { &*(latency_addr as *const AtomicU64) };
+
+        // Try to set up HW counters on this (consumer) thread.
+        let hw_counters = DefaultHwCounters::try_new().ok();
+
         ready.store(true, Ordering::Release);
+
+        // Start HW counters before the hot loop.
+        let snapshot = hw_counters.as_ref().and_then(|c| c.start());
 
         // SAFETY: SPSC consumer — only pops. &self avoids noalias interference.
         let rb = unsafe { &*(ring_addr as *const mantis_queue::RawRing<Msg, S, I, P, Instr>) };
@@ -135,7 +153,17 @@ where
                 count += 1;
             }
         }
+
+        // Read HW counters after the hot loop.
+        let deltas = hw_counters.as_ref().and_then(|c| c.read(&snapshot));
+
         latency.store(sum, Ordering::Release);
+
+        // SAFETY: hw_result_addr points to stack variable in the caller frame.
+        // We join this thread before reading hw_result, so no data race.
+        unsafe {
+            *(hw_result_addr as *mut Option<HwCounterDeltas>) = deltas;
+        }
     });
 
     // Producer
@@ -164,12 +192,15 @@ where
     producer.join().unwrap();
     consumer.join().unwrap();
 
-    total_latency.load(Ordering::Acquire)
+    RunResult {
+        total_cycles: total_latency.load(Ordering::Acquire),
+        hw: hw_result,
+    }
 }
 
 // ─── SpscRingCopy variant ────────────────────────────────────────────────────
 
-fn run_raw_copy(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
+fn run_raw_copy(producer_core: usize, consumer_core: usize, total_ops: u64) -> RunResult {
     use mantis_queue::SpscRingCopy;
 
     let ring = SpscRingCopy::<Msg, 1024>::new();
@@ -179,12 +210,19 @@ fn run_raw_copy(producer_core: usize, consumer_core: usize, total_ops: u64) -> u
     let ready_addr = &consumer_ready as *const AtomicBool as usize;
     let total_latency = AtomicU64::new(0);
     let latency_addr = &total_latency as *const AtomicU64 as usize;
+    let mut hw_result: Option<HwCounterDeltas> = None;
+    let hw_result_addr = &mut hw_result as *mut Option<HwCounterDeltas> as usize;
 
     let consumer = thread::spawn(move || {
         pin(consumer_core);
         let ready = unsafe { &*(ready_addr as *const AtomicBool) };
         let latency = unsafe { &*(latency_addr as *const AtomicU64) };
+
+        let hw_counters = DefaultHwCounters::try_new().ok();
+
         ready.store(true, Ordering::Release);
+
+        let snapshot = hw_counters.as_ref().and_then(|c| c.start());
 
         let rb = unsafe { &*(ring_addr as *const SpscRingCopy<Msg, 1024>) };
         let mut msg = Msg::default();
@@ -197,7 +235,14 @@ fn run_raw_copy(producer_core: usize, consumer_core: usize, total_ops: u64) -> u
                 count += 1;
             }
         }
+
+        let deltas = hw_counters.as_ref().and_then(|c| c.read(&snapshot));
         latency.store(sum, Ordering::Release);
+
+        // SAFETY: hw_result_addr points to caller's stack, joined before read.
+        unsafe {
+            *(hw_result_addr as *mut Option<HwCounterDeltas>) = deltas;
+        }
     });
 
     let producer = thread::spawn(move || {
@@ -223,24 +268,35 @@ fn run_raw_copy(producer_core: usize, consumer_core: usize, total_ops: u64) -> u
 
     producer.join().unwrap();
     consumer.join().unwrap();
-    total_latency.load(Ordering::Acquire)
+
+    RunResult {
+        total_cycles: total_latency.load(Ordering::Acquire),
+        hw: hw_result,
+    }
 }
 
 // ─── rtrb variant ────────────────────────────────────────────────────────────
 
-fn run_raw_rtrb(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
+fn run_raw_rtrb(producer_core: usize, consumer_core: usize, total_ops: u64) -> RunResult {
     let (mut tx, mut rx) = rtrb::RingBuffer::<Msg>::new(1024);
 
     let consumer_ready = AtomicBool::new(false);
     let ready_addr = &consumer_ready as *const AtomicBool as usize;
     let total_latency = AtomicU64::new(0);
     let latency_addr = &total_latency as *const AtomicU64 as usize;
+    let mut hw_result: Option<HwCounterDeltas> = None;
+    let hw_result_addr = &mut hw_result as *mut Option<HwCounterDeltas> as usize;
 
     let consumer = thread::spawn(move || {
         pin(consumer_core);
         let ready = unsafe { &*(ready_addr as *const AtomicBool) };
         let latency = unsafe { &*(latency_addr as *const AtomicU64) };
+
+        let hw_counters = DefaultHwCounters::try_new().ok();
+
         ready.store(true, Ordering::Release);
+
+        let snapshot = hw_counters.as_ref().and_then(|c| c.start());
 
         let mut sum: u64 = 0;
         let mut count: u64 = 0;
@@ -251,7 +307,14 @@ fn run_raw_rtrb(producer_core: usize, consumer_core: usize, total_ops: u64) -> u
                 count += 1;
             }
         }
+
+        let deltas = hw_counters.as_ref().and_then(|c| c.read(&snapshot));
         latency.store(sum, Ordering::Release);
+
+        // SAFETY: hw_result_addr points to caller's stack, joined before read.
+        unsafe {
+            *(hw_result_addr as *mut Option<HwCounterDeltas>) = deltas;
+        }
     });
 
     let producer = thread::spawn(move || {
@@ -276,14 +339,28 @@ fn run_raw_rtrb(producer_core: usize, consumer_core: usize, total_ops: u64) -> u
 
     producer.join().unwrap();
     consumer.join().unwrap();
-    total_latency.load(Ordering::Acquire)
+
+    RunResult {
+        total_cycles: total_latency.load(Ordering::Acquire),
+        hw: hw_result,
+    }
 }
 
 // ─── Runner ──────────────────────────────────────────────────────────────────
 
+/// Format a per-op HW counter value (total / ops).
+fn fmt_per_op(total: u64, ops: u64) -> String {
+    let v = total as f64 / ops as f64;
+    if v < 0.05 {
+        format!("{v:.2}")
+    } else {
+        format!("{v:.1}")
+    }
+}
+
 fn run_variant(
     name: &str,
-    run_fn: fn(usize, usize, u64) -> u64,
+    run_fn: fn(usize, usize, u64) -> RunResult,
     producer_core: usize,
     consumer_core: usize,
     ops: u64,
@@ -295,12 +372,22 @@ fn run_variant(
 
     let mut best = u64::MAX;
     for i in 1..=iterations {
-        let total_cycles = run_fn(producer_core, consumer_core, ops);
-        let cycles_per_op = total_cycles as f64 / ops as f64;
-        if total_cycles < best {
-            best = total_cycles;
+        let result = run_fn(producer_core, consumer_core, ops);
+        let cycles_per_op = result.total_cycles as f64 / ops as f64;
+        if result.total_cycles < best {
+            best = result.total_cycles;
         }
-        eprintln!("  run {i}/{iterations}: {cycles_per_op:.1} cycles/op");
+        if let Some(hw) = result.hw {
+            eprintln!(
+                "  run {i}/{iterations}: {cycles_per_op:.1} cycles/op | insns={} bmiss={} l1d={} llc={}",
+                fmt_per_op(hw.instructions, ops),
+                fmt_per_op(hw.branch_misses, ops),
+                fmt_per_op(hw.l1d_misses, ops),
+                fmt_per_op(hw.llc_misses, ops),
+            );
+        } else {
+            eprintln!("  run {i}/{iterations}: {cycles_per_op:.1} cycles/op");
+        }
     }
     let best_per_op = best as f64 / ops as f64;
     eprintln!("  BEST: {best_per_op:.1} cycles/op");

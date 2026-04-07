@@ -19,6 +19,7 @@
 
 struct Args {
     std::string queue       = "all";
+    std::string mode        = "histogram";
     unsigned producer_core  = 0;
     unsigned consumer_core  = 1;
     uint64_t messages       = 1'000'000;
@@ -31,6 +32,7 @@ static void usage(const char* prog) {
     fprintf(stderr,
         "Usage: %s [OPTIONS]\n"
         "  --queue all|rigtorp|drogalis\n"
+        "  --mode histogram|raw  (default: histogram)\n"
         "  --producer-core N\n"
         "  --consumer-core N\n"
         "  --messages N\n"
@@ -53,6 +55,7 @@ static Args parse_args(int argc, char* argv[]) {
         };
 
         if (match("--queue"))          args.queue = next();
+        else if (match("--mode"))     args.mode = next();
         else if (match("--producer-core")) args.producer_core = static_cast<unsigned>(atoi(next()));
         else if (match("--consumer-core")) args.consumer_core = static_cast<unsigned>(atoi(next()));
         else if (match("--messages"))  args.messages = static_cast<uint64_t>(atoll(next()));
@@ -73,7 +76,94 @@ static constexpr size_t CAPACITY = 1024;
 static constexpr size_t MESSAGE_SIZE = 48;
 
 // ---------------------------------------------------------------------------
-// Queue runners
+// Raw queue runner (sum += delta, no Vec, no histogram)
+// ---------------------------------------------------------------------------
+
+/// Run a single raw-protocol measurement for a queue adapter.
+/// Returns total cycle sum across all ops.
+template <typename Adapter>
+uint64_t run_raw_queue_once(Adapter& adapter, const Args& args) {
+    auto push_fn = adapter.make_push();
+    auto pop_fn  = adapter.make_pop();
+
+    std::atomic<bool> consumer_ready{false};
+    std::atomic<bool> producer_ready{false};
+    std::atomic<uint64_t> total_latency{0};
+
+    std::thread consumer_thread([&]() {
+        pin_thread(args.consumer_core);
+
+        Message48 msg{};
+        uint64_t sum = 0;
+        uint64_t count = 0;
+
+        consumer_ready.store(true, std::memory_order_release);
+
+        while (!producer_ready.load(std::memory_order_acquire)) {
+            // spin
+        }
+
+        while (count < args.messages) {
+            if (pop_fn(msg)) {
+                uint64_t now = rdtsc_serialized();
+                sum += now - msg.timestamp;
+                count++;
+            }
+        }
+        total_latency.store(sum, std::memory_order_release);
+    });
+
+    std::thread producer_thread([&]() {
+        pin_thread(args.producer_core);
+
+        producer_ready.store(true, std::memory_order_release);
+
+        while (!consumer_ready.load(std::memory_order_acquire)) {
+            // spin
+        }
+
+        for (uint64_t i = 0; i < args.messages; ++i) {
+            Message48 msg = make_msg(i);
+            msg.timestamp = rdtsc_serialized();
+            while (!push_fn(msg)) {
+                // spin
+            }
+        }
+    });
+
+    producer_thread.join();
+    consumer_thread.join();
+
+    return total_latency.load(std::memory_order_acquire);
+}
+
+/// Run N iterations of the raw protocol for a given queue, print best.
+template <typename Adapter>
+void run_raw_queue(const Args& args) {
+    fprintf(stderr, "[%s] (raw mode)\n", Adapter::name);
+
+    // Warmup
+    {
+        Adapter warmup_adapter(CAPACITY);
+        run_raw_queue_once(warmup_adapter, args);
+    }
+
+    uint64_t best = UINT64_MAX;
+    for (unsigned run = 1; run <= args.runs; ++run) {
+        Adapter adapter(CAPACITY);
+        uint64_t total_cycles = run_raw_queue_once(adapter, args);
+        double cycles_per_op = static_cast<double>(total_cycles) / static_cast<double>(args.messages);
+        if (total_cycles < best) {
+            best = total_cycles;
+        }
+        fprintf(stderr, "  run %u/%u: %.1f cycles/op\n", run, args.runs, cycles_per_op);
+    }
+    double best_per_op = static_cast<double>(best) / static_cast<double>(args.messages);
+    fprintf(stderr, "  BEST: %.1f cycles/op\n", best_per_op);
+}
+
+// ---------------------------------------------------------------------------
+// Histogram queue runners
 // ---------------------------------------------------------------------------
 
 template <typename Adapter>
@@ -135,9 +225,6 @@ void run_queue(const std::string& name, const Args& args, unsigned run) {
 int main(int argc, char* argv[]) {
     Args args = parse_args(argc, argv);
 
-    // Create output directory
-    std::filesystem::create_directories(args.output_dir);
-
     // Determine which queues to run
     std::vector<std::string> queues;
     if (args.queue == "all") {
@@ -146,10 +233,28 @@ int main(int argc, char* argv[]) {
         queues = {args.queue};
     }
 
-    for (const auto& name : queues) {
-        fprintf(stderr, "[%s]\n", name.c_str());
-        for (unsigned run = 1; run <= args.runs; ++run) {
-            run_queue(name, args, run);
+    if (args.mode == "raw") {
+        // Raw mode: sum += delta, no histogram, no JSON output
+        for (const auto& name : queues) {
+            if (name == "rigtorp") {
+                run_raw_queue<RigtorpAdapter>(args);
+            } else if (name == "drogalis") {
+                run_raw_queue<DrogalisAdapter>(args);
+            } else {
+                fprintf(stderr, "unknown queue: %s\n", name.c_str());
+                return 1;
+            }
+            fprintf(stderr, "\n");
+        }
+    } else {
+        // Histogram mode (default): full protocol with JSON output
+        std::filesystem::create_directories(args.output_dir);
+
+        for (const auto& name : queues) {
+            fprintf(stderr, "[%s]\n", name.c_str());
+            for (unsigned run = 1; run <= args.runs; ++run) {
+                run_queue(name, args, run);
+            }
         }
     }
 
