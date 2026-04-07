@@ -234,4 +234,65 @@ mod tests {
         let n = decoder.decode(&mut buf, Timestamp::from_nanos(0), &mut out);
         assert_eq!(n, 0);
     }
+
+    fn make_out() -> [HotEvent; 64] {
+        [HotEvent::heartbeat(
+            Timestamp::ZERO,
+            SeqNum::ZERO,
+            SourceId::from_raw(0),
+            EventFlags::EMPTY,
+            mantis_events::HeartbeatPayload { counter: 0 },
+        ); 64]
+    }
+
+    #[test]
+    fn decode_invalid_bid_price_returns_zero() {
+        let mut decoder = test_decoder();
+        let mut buf =
+            br#"{"e":"bookTicker","s":"BTCUSDT","b":"abc","B":"8.819","a":"67396.90","A":"7.181","T":1775281508123,"E":1775281508123}"#.to_vec();
+        let mut out = make_out();
+        let n = decoder.decode(&mut buf, Timestamp::from_nanos(0), &mut out);
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn decode_invalid_ask_price_returns_zero() {
+        let mut decoder = test_decoder();
+        let mut buf =
+            br#"{"e":"bookTicker","s":"BTCUSDT","b":"67396.70","B":"8.819","a":"xyz","A":"7.181","T":1775281508123,"E":1775281508123}"#.to_vec();
+        let mut out = make_out();
+        let n = decoder.decode(&mut buf, Timestamp::from_nanos(0), &mut out);
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn decode_invalid_bid_qty_returns_zero() {
+        let mut decoder = test_decoder();
+        let mut buf =
+            br#"{"e":"bookTicker","s":"BTCUSDT","b":"67396.70","B":"not_a_number","a":"67396.90","A":"7.181","T":1775281508123,"E":1775281508123}"#.to_vec();
+        let mut out = make_out();
+        let n = decoder.decode(&mut buf, Timestamp::from_nanos(0), &mut out);
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn decode_invalid_ask_qty_returns_zero() {
+        let mut decoder = test_decoder();
+        let mut buf =
+            br#"{"e":"bookTicker","s":"BTCUSDT","b":"67396.70","B":"8.819","a":"67396.90","A":"","T":1775281508123,"E":1775281508123}"#.to_vec();
+        let mut out = make_out();
+        let n = decoder.decode(&mut buf, Timestamp::from_nanos(0), &mut out);
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn decode_negative_price_returns_zero() {
+        let mut decoder = test_decoder();
+        // A price with two decimal points fails parse_decimal_bytes
+        let mut buf =
+            br#"{"e":"bookTicker","s":"BTCUSDT","b":"1.2.3","B":"8.819","a":"67396.90","A":"7.181","T":1775281508123,"E":1775281508123}"#.to_vec();
+        let mut out = make_out();
+        let n = decoder.decode(&mut buf, Timestamp::from_nanos(0), &mut out);
+        assert_eq!(n, 0);
+    }
 }

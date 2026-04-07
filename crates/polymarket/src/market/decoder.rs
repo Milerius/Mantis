@@ -609,4 +609,123 @@ mod tests {
         let n = decoder.decode(&mut buf, Timestamp::from_nanos(0), &mut out);
         assert_eq!(n, 0);
     }
+
+    #[test]
+    fn decode_trade_no_side_defaults_to_bid() {
+        let (reg, _) = test_registry();
+        let mut decoder = PolymarketMarketDecoder::<6>::new(SourceId::from_raw(10), &reg);
+        let mut buf =
+            br#"{"type":"last_trade_price","asset_id":"abc123","price":"0.55","size":"50.0"}"#
+                .to_vec();
+        let mut out = make_out();
+
+        let n = decoder.decode(&mut buf, Timestamp::from_nanos(0), &mut out);
+        assert_eq!(n, 1);
+
+        if let EventBody::Trade(p) = out[0].body {
+            assert_eq!(p.aggressor, Side::Bid);
+        } else {
+            panic!("expected Trade, got {:?}", out[0].kind());
+        }
+    }
+
+    #[test]
+    fn decode_trade_invalid_side_defaults_to_bid() {
+        let (reg, _) = test_registry();
+        let mut decoder = PolymarketMarketDecoder::<6>::new(SourceId::from_raw(10), &reg);
+        let mut buf =
+            br#"{"type":"last_trade_price","asset_id":"abc123","price":"0.55","size":"50.0","side":"INVALID"}"#
+                .to_vec();
+        let mut out = make_out();
+
+        let n = decoder.decode(&mut buf, Timestamp::from_nanos(0), &mut out);
+        assert_eq!(n, 1);
+
+        if let EventBody::Trade(p) = out[0].body {
+            assert_eq!(p.aggressor, Side::Bid);
+        } else {
+            panic!("expected Trade, got {:?}", out[0].kind());
+        }
+    }
+
+    #[test]
+    fn decode_price_change_invalid_price_returns_zero() {
+        let (reg, _) = test_registry();
+        let mut decoder = PolymarketMarketDecoder::<6>::new(SourceId::from_raw(10), &reg);
+        let mut buf =
+            br#"{"type":"price_change","asset_id":"abc123","price":"notanum","size":"100.0","side":"BUY"}"#
+                .to_vec();
+        let mut out = make_out();
+
+        let n = decoder.decode(&mut buf, Timestamp::from_nanos(0), &mut out);
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn decode_price_change_invalid_size_returns_zero() {
+        let (reg, _) = test_registry();
+        let mut decoder = PolymarketMarketDecoder::<6>::new(SourceId::from_raw(10), &reg);
+        let mut buf =
+            br#"{"type":"price_change","asset_id":"abc123","price":"0.53","size":"bad","side":"BUY"}"#
+                .to_vec();
+        let mut out = make_out();
+
+        let n = decoder.decode(&mut buf, Timestamp::from_nanos(0), &mut out);
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn decode_price_change_invalid_side_returns_zero() {
+        let (reg, _) = test_registry();
+        let mut decoder = PolymarketMarketDecoder::<6>::new(SourceId::from_raw(10), &reg);
+        let mut buf =
+            br#"{"type":"price_change","asset_id":"abc123","price":"0.53","size":"100.0","side":"HOLD"}"#
+                .to_vec();
+        let mut out = make_out();
+
+        let n = decoder.decode(&mut buf, Timestamp::from_nanos(0), &mut out);
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn decode_book_empty_levels_returns_zero() {
+        let (reg, _) = test_registry();
+        let mut decoder = PolymarketMarketDecoder::<6>::new(SourceId::from_raw(10), &reg);
+        let mut buf =
+            br#"{"type":"book","asset_id":"abc123","bids":[],"asks":[]}"#.to_vec();
+        let mut out = make_out();
+
+        let n = decoder.decode(&mut buf, Timestamp::from_nanos(0), &mut out);
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn decode_book_skips_invalid_price_level() {
+        let (reg, _) = test_registry();
+        let mut decoder = PolymarketMarketDecoder::<6>::new(SourceId::from_raw(10), &reg);
+        // First bid has invalid price, second bid is valid
+        let mut buf =
+            br#"{"type":"book","asset_id":"abc123","bids":[{"price":"bad","size":"10.0"},{"price":"0.50","size":"20.0"}],"asks":[]}"#
+                .to_vec();
+        let mut out = make_out();
+
+        let n = decoder.decode(&mut buf, Timestamp::from_nanos(0), &mut out);
+        // Only the valid level should be emitted
+        assert_eq!(n, 1);
+
+        if let EventBody::BookDelta(p) = out[0].body {
+            assert_eq!(p.price, Ticks::from_raw(50));
+            assert_eq!(p.qty, Lots::from_raw(20));
+            assert_eq!(p.side, Side::Bid);
+        } else {
+            panic!("expected BookDelta, got {:?}", out[0].kind());
+        }
+    }
+
+    #[test]
+    fn peek_type_truncated_returns_none() {
+        // JSON with "type":" present but no closing quote for the value
+        let truncated = b"{ \"type\":\"abc";
+        assert_eq!(peek_type(truncated), None);
+    }
 }
