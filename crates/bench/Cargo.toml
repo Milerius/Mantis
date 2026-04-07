@@ -26,6 +26,9 @@ mantis-fixed = { workspace = true }
 mantis-seqlock = { workspace = true }
 mantis-events = { workspace = true }
 mantis-market-state = { workspace = true }
+mantis-binance = { workspace = true }
+mantis-polymarket = { workspace = true }
+mantis-registry = { workspace = true }
 criterion = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -57,4 +60,8 @@ harness = false
 
 [[bench]]
 name = "market_state"
+harness = false
+
+[[bench]]
+name = "decode"
 harness = false

@@ -921,12 +921,15 @@ dependencies = [
  "fast-float2",
  "fixed",
  "lexical-core",
+ "mantis-binance",
  "mantis-core",
  "mantis-events",
  "mantis-fixed",
  "mantis-market-state",
  "mantis-platform",
+ "mantis-polymarket",
  "mantis-queue",
+ "mantis-registry",
  "mantis-seqlock",
  "mantis-types",
  "rtrb",
@@ -934,6 +937,21 @@ dependencies = [
  "seqlock",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "mantis-binance"
+version = "0.1.0"
+dependencies = [
+ "mantis-events",
+ "mantis-fixed",
+ "mantis-queue",
+ "mantis-transport",
+ "mantis-types",
+ "serde",
+ "serde_json",
+ "simd-json",
+ "tracing",
 ]
 
 [[package]]
@@ -982,6 +1000,22 @@ dependencies = [
  "cfg-if",
  "libc",
  "perf-event2",
+]
+
+[[package]]
+name = "mantis-polymarket"
+version = "0.1.0"
+dependencies = [
+ "mantis-events",
+ "mantis-fixed",
+ "mantis-queue",
+ "mantis-registry",
+ "mantis-transport",
+ "mantis-types",
+ "serde",
+ "serde_json",
+ "simd-json",
+ "tracing",
 ]
 
 [[package]]
