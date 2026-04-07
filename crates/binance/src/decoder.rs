@@ -38,7 +38,7 @@ impl<const D: u8> BinanceDecoder<D> {
         }
     }
 
-    /// Decode a `bookTicker` JSON message into a [`HotEvent::TopOfBook`].
+    /// Decode a `bookTicker` JSON message into a `HotEvent::TopOfBook`.
     ///
     /// Writes at most one event into `out[0]`. Returns the number of events
     /// written (0 on parse failure, 1 on success).
