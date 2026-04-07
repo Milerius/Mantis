@@ -82,14 +82,34 @@ fn rdtsc() -> u64 {
 // ─── Benchmark ──────────────────────────────────────────────────────────────
 
 fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
-    // Use the library's SpscRing with the new bool API.
-    // SpscRing uses CacheLine-colocated fields internally.
-    let mut ring = SpscRing::<Msg, 1024>::new();
+    let ring = SpscRing::<Msg, 1024>::new();
+    run_raw_ring(&ring, producer_core, consumer_core, total_ops)
+}
+
+fn run_raw_fast(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
+    use mantis_queue::SpscRingFast;
+    let ring = SpscRingFast::<Msg, 1024>::new();
+    run_raw_ring(&ring, producer_core, consumer_core, total_ops)
+}
+
+/// Generic runner for any RawRing with push_shared/pop_shared.
+fn run_raw_ring<S, I, P, Instr>(
+    ring: &mantis_queue::RawRing<Msg, S, I, P, Instr>,
+    producer_core: usize,
+    consumer_core: usize,
+    total_ops: u64,
+) -> u64
+where
+    S: mantis_queue::Storage<Msg>,
+    I: mantis_core::IndexStrategy,
+    P: mantis_core::PushPolicy,
+    Instr: mantis_core::Instrumentation + Sync,
+{
 
     // Use &self shared references — no &mut aliasing UB.
-    // SAFETY: SPSC protocol guarantees disjoint access. Ring lives on stack
-    // and we join both threads before returning.
-    let ring_addr = &ring as *const SpscRing<Msg, 1024> as usize;
+    // SAFETY: SPSC protocol guarantees disjoint access. Ring lives on caller's
+    // stack and we join both threads before returning.
+    let ring_addr = ring as *const mantis_queue::RawRing<Msg, S, I, P, Instr> as usize;
 
     let consumer_ready = AtomicBool::new(false);
     let ready_addr = &consumer_ready as *const AtomicBool as usize;
@@ -105,7 +125,7 @@ fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
         ready.store(true, Ordering::Release);
 
         // SAFETY: SPSC consumer — only pops. &self avoids noalias interference.
-        let rb = unsafe { &*(ring_addr as *const SpscRing<Msg, 1024>) };
+        let rb = unsafe { &*(ring_addr as *const mantis_queue::RawRing<Msg, S, I, P, Instr>) };
         let mut msg = Msg::default();
         let mut sum: u64 = 0;
         let mut count: u64 = 0;
@@ -126,7 +146,7 @@ fn run_raw(producer_core: usize, consumer_core: usize, total_ops: u64) -> u64 {
         while !ready.load(Ordering::Acquire) {}
 
         // SAFETY: SPSC producer — only pushes. &self avoids noalias interference.
-        let rb = unsafe { &*(ring_addr as *const SpscRing<Msg, 1024>) };
+        let rb = unsafe { &*(ring_addr as *const mantis_queue::RawRing<Msg, S, I, P, Instr>) };
         for i in 0..total_ops {
             let msg = Msg {
                 timestamp: rdtsc(),
@@ -289,9 +309,11 @@ fn run_variant(
 
 /// Run all variants or a specific one.
 pub fn run_raw_bench(producer_core: usize, consumer_core: usize, ops: u64, iterations: usize) {
-    run_variant("mantis-inline (push_shared/pop_shared)", run_raw, producer_core, consumer_core, ops, iterations);
+    run_variant("mantis-inline Pow2Masked", run_raw, producer_core, consumer_core, ops, iterations);
     eprintln!();
-    run_variant("mantis-copy (push/pop &self)", run_raw_copy, producer_core, consumer_core, ops, iterations);
+    run_variant("mantis-inline BranchWrap", run_raw_fast, producer_core, consumer_core, ops, iterations);
+    eprintln!();
+    run_variant("mantis-copy", run_raw_copy, producer_core, consumer_core, ops, iterations);
     eprintln!();
     run_variant("rtrb (push/pop Result)", run_raw_rtrb, producer_core, consumer_core, ops, iterations);
 }

@@ -74,12 +74,12 @@ unsafe impl<T: Send, const N: usize> Send for InlineStorage<T, N> {}
 unsafe impl<T: Send, const N: usize> Sync for InlineStorage<T, N> {}
 
 unsafe impl<T: Send, const N: usize> Storage<T> for InlineStorage<T, N> {
-    #[inline]
+    #[inline(always)]
     fn capacity(&self) -> usize {
         N
     }
 
-    #[inline]
+    #[inline(always)]
     unsafe fn slot_ptr(&self, index: usize) -> *mut MaybeUninit<T> {
         debug_assert!(index < N, "slot index {index} out of bounds (capacity {N})");
         // SAFETY: Caller guarantees index < N. UnsafeCell::get returns
