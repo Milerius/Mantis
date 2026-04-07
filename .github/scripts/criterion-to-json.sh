@@ -70,7 +70,7 @@ for est in "${matched_ests[@]}"; do
     '. + [{"workload": $w, "ns_per_op": ($ns | . * 100 | round / 100)}]')
 done
 
-# Wrap in the same schema as spsc report
+# Wrap in the standard bench report schema
 cpu="unknown"
 arch="unknown"
 compiler="unknown"

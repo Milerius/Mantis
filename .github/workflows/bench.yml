@@ -144,7 +144,10 @@ jobs:
           macos_fixed="results/macos/target/bench-report-fixed.json"
           linux_market_state="results/linux/target/bench-report-market_state.json"
           macos_market_state="results/macos/target/bench-report-market_state.json"
-          bash .github/scripts/bench-report.sh "$linux_seqlock" "$macos_seqlock" "$linux_fixed" "$macos_fixed" "$linux_market_state" "$macos_market_state" > report.md
+          bash .github/scripts/bench-report.sh \
+            "$linux_seqlock" "$macos_seqlock" \
+            "$linux_fixed" "$macos_fixed" \
+            "$linux_market_state" "$macos_market_state" > report.md
       - name: Post PR comment
         uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2.9.1
         with:
