@@ -30,6 +30,7 @@ exit = "deny"
 mem_forget = "deny"
 module_name_repetitions = "allow"
 similar_names = "allow"
+inline_always = "allow"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

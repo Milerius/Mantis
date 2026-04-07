@@ -105,7 +105,6 @@ where
     P: mantis_core::PushPolicy,
     Instr: mantis_core::Instrumentation + Sync,
 {
-
     // Use &self shared references — no &mut aliasing UB.
     // SAFETY: SPSC protocol guarantees disjoint access. Ring lives on caller's
     // stack and we join both threads before returning.
@@ -309,11 +308,39 @@ fn run_variant(
 
 /// Run all variants or a specific one.
 pub fn run_raw_bench(producer_core: usize, consumer_core: usize, ops: u64, iterations: usize) {
-    run_variant("mantis-inline Pow2Masked", run_raw, producer_core, consumer_core, ops, iterations);
+    run_variant(
+        "mantis-inline Pow2Masked",
+        run_raw,
+        producer_core,
+        consumer_core,
+        ops,
+        iterations,
+    );
     eprintln!();
-    run_variant("mantis-inline BranchWrap", run_raw_fast, producer_core, consumer_core, ops, iterations);
+    run_variant(
+        "mantis-inline BranchWrap",
+        run_raw_fast,
+        producer_core,
+        consumer_core,
+        ops,
+        iterations,
+    );
     eprintln!();
-    run_variant("mantis-copy", run_raw_copy, producer_core, consumer_core, ops, iterations);
+    run_variant(
+        "mantis-copy",
+        run_raw_copy,
+        producer_core,
+        consumer_core,
+        ops,
+        iterations,
+    );
     eprintln!();
-    run_variant("rtrb (push/pop Result)", run_raw_rtrb, producer_core, consumer_core, ops, iterations);
+    run_variant(
+        "rtrb (push/pop Result)",
+        run_raw_rtrb,
+        producer_core,
+        consumer_core,
+        ops,
+        iterations,
+    );
 }

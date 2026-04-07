@@ -336,7 +336,7 @@ mod tests {
         let engine = TestEngine::new(InlineStorage::new(), NoInstr);
         assert!(engine.push(42));
         let mut out: u64 = 0;
-        assert!(unsafe { engine.pop(&mut out as *mut u64) });
+        assert!(unsafe { engine.pop(&raw mut out) });
         assert_eq!(out, 42);
     }
 
@@ -353,7 +353,7 @@ mod tests {
     fn pop_empty_bool_returns_false() {
         let engine = TestEngine::new(InlineStorage::new(), NoInstr);
         let mut out: u64 = 0;
-        assert!(!unsafe { engine.pop(&mut out as *mut u64) });
+        assert!(!unsafe { engine.pop(&raw mut out) });
     }
 
     #[test]
@@ -364,7 +364,7 @@ mod tests {
         }
         for i in 0..3u64 {
             let mut out: u64 = 0;
-            assert!(unsafe { engine.pop(&mut out as *mut u64) });
+            assert!(unsafe { engine.pop(&raw mut out) });
             assert_eq!(out, i);
         }
     }

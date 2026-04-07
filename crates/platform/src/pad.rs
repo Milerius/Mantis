@@ -36,7 +36,7 @@ impl<T> DerefMut for CachePadded<T> {
 }
 
 /// Cache-line-sized padding using the native line size for the target.
-/// 64 bytes on x86_64, 128 bytes on aarch64 (Apple Silicon).
+/// 64 bytes on `x86_64`, 128 bytes on `aarch64` (Apple Silicon).
 /// Use this for hot-path structures where minimizing cache footprint matters.
 #[derive(Debug)]
 #[cfg_attr(target_arch = "x86_64", repr(align(64)))]

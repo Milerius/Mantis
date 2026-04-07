@@ -45,7 +45,7 @@ impl IndexStrategy for Pow2Masked {
 }
 
 /// Branch-based index wrapping. Uses a branch (predicted not-taken)
-/// instead of bitwise AND. Faster on x86_64 where the branch predictor
+/// instead of bitwise AND. Faster on `x86_64` where the branch predictor
 /// learns the wrap-around almost never happens.
 pub struct BranchWrap;
 
