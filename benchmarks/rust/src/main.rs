@@ -1,6 +1,7 @@
 mod harness;
 mod message;
 mod queues;
+mod raw_bench;
 mod rdtsc;
 mod stats;
 
@@ -117,6 +118,18 @@ fn main() {
         eprintln!("failed to create output dir {}: {e}", args.output_dir.display());
         std::process::exit(1);
     });
+
+    // Special case: "raw" runs the zero-overhead HFT University protocol
+    if args.queue == "raw" {
+        eprintln!("[raw — HFT University protocol, zero overhead]");
+        raw_bench::run_raw_bench(
+            args.producer_core,
+            args.consumer_core,
+            args.messages,
+            args.runs,
+        );
+        return;
+    }
 
     let queues: Vec<&str> = if args.queue == "all" {
         vec!["mantis-inline", "mantis-copy", "rtrb"]
