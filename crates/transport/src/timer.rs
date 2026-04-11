@@ -456,4 +456,70 @@ mod tests {
             ))
         ));
     }
+
+    #[test]
+    fn timer_config_error_display() {
+        let e = TimerConfigError::ZeroTickInterval;
+        assert!(!e.to_string().is_empty());
+        let e = TimerConfigError::HeartbeatShorterThanTick;
+        assert!(!e.to_string().is_empty());
+        let e = TimerConfigError::HeartbeatNotDivisible;
+        assert!(!e.to_string().is_empty());
+        let e = TimerConfigError::HeartbeatTooLarge;
+        assert!(!e.to_string().is_empty());
+    }
+
+    #[test]
+    fn timer_config_error_is_std_error() {
+        let e: &dyn std::error::Error = &TimerConfigError::ZeroTickInterval;
+        assert!(e.source().is_none());
+    }
+
+    #[test]
+    fn timer_spawn_error_display() {
+        let e = TimerSpawnError::Config(TimerConfigError::ZeroTickInterval);
+        assert!(!e.to_string().is_empty());
+        // Also cover the Spawn variant display
+        let io_err = std::io::Error::other("test");
+        let e = TimerSpawnError::Spawn(io_err);
+        assert!(!e.to_string().is_empty());
+    }
+
+    #[test]
+    fn timer_spawn_error_source() {
+        let e = TimerSpawnError::Config(TimerConfigError::ZeroTickInterval);
+        assert!(std::error::Error::source(&e).is_some());
+
+        let io_err = std::io::Error::other("test");
+        let e = TimerSpawnError::Spawn(io_err);
+        assert!(std::error::Error::source(&e).is_some());
+    }
+
+    #[test]
+    #[expect(clippy::expect_used)]
+    fn timer_drop_signals_shutdown() {
+        let config = TimerConfig {
+            name: "test-drop".into(),
+            tick_interval: Duration::from_millis(50),
+            heartbeat_interval: Duration::from_millis(100),
+            source_id: test_source(),
+            core_id: None,
+        };
+        let timer = TimerThread::spawn(config, |_| {}).expect("spawn");
+        drop(timer);
+        // If we get here, Drop didn't hang — test passes
+    }
+
+    #[test]
+    fn heartbeat_too_large_errors() {
+        let config = TimerConfig {
+            name: "test-too-large".into(),
+            tick_interval: Duration::from_nanos(1),
+            heartbeat_interval: Duration::from_secs(u64::MAX),
+            source_id: test_source(),
+            core_id: None,
+        };
+        let result = TimerThread::spawn(config, |_| {});
+        assert!(result.is_err());
+    }
 }

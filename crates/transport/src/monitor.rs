@@ -253,6 +253,19 @@ mod tests {
     }
 
     #[test]
+    fn monitor_full_error_display() {
+        let e = MonitorFullError;
+        assert!(!e.to_string().is_empty());
+        assert_eq!(e.to_string(), "feed monitor is full");
+    }
+
+    #[test]
+    fn monitor_full_error_is_std_error() {
+        let e: &dyn std::error::Error = &MonitorFullError;
+        assert!(e.source().is_none());
+    }
+
+    #[test]
     fn stale_feeds_iterator() {
         let cnt_a = counter(0);
         let cnt_b = counter(0);

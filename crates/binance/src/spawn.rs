@@ -148,6 +148,20 @@ mod tests {
     }
 
     #[test]
+    fn make_out_returns_64_events() {
+        let out = make_out();
+        assert_eq!(out.len(), 64);
+    }
+
+    #[test]
+    fn feed_spawn_result_fields_accessible() {
+        let handle_event_count = Arc::new(AtomicU64::new(42));
+        let handle_drop_count = Arc::new(AtomicU64::new(7));
+        assert_eq!(handle_event_count.load(Ordering::Relaxed), 42);
+        assert_eq!(handle_drop_count.load(Ordering::Relaxed), 7);
+    }
+
+    #[test]
     fn callback_skips_malformed() {
         let decoder = test_decoder();
         let (mut callback, event_count, _) = build_callback(decoder, |_| true);

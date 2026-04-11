@@ -736,6 +736,48 @@ mod tests {
     }
 
     #[test]
+    fn decode_book_truncates_at_64_levels() {
+        use std::fmt::Write as _;
+
+        let (reg, _) = test_registry();
+        let mut decoder = PolymarketMarketDecoder::<6>::new(SourceId::from_raw(10), &reg);
+        let mut out = make_out();
+
+        // Build a book with 70 levels (40 bids + 30 asks) to trigger truncation
+        let mut json = String::from(r#"{"type":"book","asset_id":"abc123","bids":["#);
+        for i in 0..40_u32 {
+            if i > 0 {
+                json.push(',');
+            }
+            let _ = write!(
+                json,
+                r#"{{"price":"0.{:02}","size":"{}"}}"#,
+                50_u32.saturating_sub(i),
+                100 + i
+            );
+        }
+        json.push_str(r#"],"asks":["#);
+        for i in 0..30_u32 {
+            if i > 0 {
+                json.push(',');
+            }
+            let _ = write!(
+                json,
+                r#"{{"price":"0.{:02}","size":"{}"}}"#,
+                55 + i,
+                100 + i
+            );
+        }
+        json.push_str("]}");
+
+        let mut buf = json.into_bytes();
+        let recv_ts = Timestamp::from_nanos(1000);
+        let n = decoder.decode(&mut buf, recv_ts, &mut out);
+
+        assert_eq!(n, 64, "should truncate at 64 events");
+    }
+
+    #[test]
     fn peek_type_truncated_returns_none() {
         // JSON with "type":" present but no closing quote for the value
         let truncated = b"{ \"type\":\"abc";
