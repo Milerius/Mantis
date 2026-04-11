@@ -5,6 +5,7 @@
 
 #![deny(unsafe_code)]
 
+mod decoder_props;
 mod fixed_props;
 pub mod market_state_props;
 pub mod seqlock_proofs;
