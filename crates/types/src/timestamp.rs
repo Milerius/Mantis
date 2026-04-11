@@ -22,6 +22,19 @@ impl Timestamp {
     pub const fn as_nanos(self) -> u64 {
         self.0
     }
+
+    /// Returns the current time as nanoseconds since the Unix epoch.
+    ///
+    /// Uses `std::time::SystemTime` for wall-clock time.
+    #[cfg(feature = "std")]
+    #[must_use]
+    #[expect(clippy::expect_used, reason = "system clock before epoch is unrecoverable")]
+    pub fn now() -> Self {
+        let duration = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock is before Unix epoch");
+        Self(duration.as_nanos() as u64)
+    }
 }
 
 impl fmt::Debug for Timestamp {
@@ -67,5 +80,20 @@ mod tests {
         let ts = Timestamp::from_nanos(42);
         assert_eq!(ts.to_string(), "42ns");
         assert_eq!(alloc::format!("{ts:?}"), "Timestamp(42ns)");
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn now_returns_nonzero() {
+        let ts = Timestamp::now();
+        assert!(ts.as_nanos() > 0);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn now_is_monotonic() {
+        let a = Timestamp::now();
+        let b = Timestamp::now();
+        assert!(b.as_nanos() >= a.as_nanos());
     }
 }
