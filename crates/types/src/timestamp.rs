@@ -102,7 +102,7 @@ mod tests {
 
     #[cfg(feature = "std")]
     #[test]
-    fn now_is_monotonic() {
+    fn now_is_non_decreasing() {
         let a = Timestamp::now();
         let b = Timestamp::now();
         assert!(b.as_nanos() >= a.as_nanos());

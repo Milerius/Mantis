@@ -6,19 +6,19 @@ Converts `bookTicker` JSON messages into `HotEvent::TopOfBook` values at ~307ns 
 
 ## Architecture
 
-```
+```text
 COLD SIDE (transport thread)              HOT SIDE (SPSC consumer)
                                         |
 WS frame -> BinanceDecoder::decode()    |  -> HotEvent::TopOfBook -> SPSC -> engine
-  peek_stream() → combined vs plain     |
-  simd-json parse → FixedI64            |
+  combined_stream flag → wrapper skip   |
+  sonic-rs parse → FixedI64             |
   meta.price_to_ticks/qty_to_lots       |
   emit TopOfBook                        |
                                         |
               push()                    |    pop_batch()
 ```
 
-The decoder runs on the transport IO thread. It accepts raw `&mut [u8]` buffers (required by `simd-json` for in-place parsing), resolves symbols via a flat array lookup, and emits `HotEvent` values through a push callback.
+The decoder runs on the transport IO thread. It accepts raw `&mut [u8]` buffers, resolves symbols via a flat array lookup, and emits `HotEvent` values through a push callback.
 
 ## Multi-Symbol Support
 
@@ -53,7 +53,7 @@ let mut decoder = BinanceDecoder::<3>::new(
 
 ## Combined Stream Detection
 
-Binance sends either plain `bookTicker` JSON or a combined-stream wrapper (`{"stream":"...","data":{...}}`). The decoder calls `peek_stream()` to check for `"stream":` in the raw bytes before parsing, avoiding a double-parse since `simd-json` mutates the buffer.
+Binance sends either plain `bookTicker` JSON or a combined-stream wrapper (`{"stream":"...","data":{...}}`). The `combined_stream` bool field (set automatically when >1 symbol, or overridden via `set_combined_stream`) controls which JSON shape the decoder expects.
 
 ## Spawning a Feed
 
@@ -86,8 +86,9 @@ let drops = result.drop_count.load(std::sync::atomic::Ordering::Relaxed);
 
 | Feature | Effect |
 |---|---|
-| `simd-json` (default) | SIMD-accelerated JSON parsing via `simd-json` |
-| (without `simd-json`) | Falls back to `serde_json` |
+| `sonic-rs` (default) | Fast JSON parsing via `sonic-rs` |
+| `simd-json` | SIMD-accelerated JSON parsing via `simd-json` (used when `sonic-rs` is not enabled) |
+| (neither) | Falls back to `serde_json` |
 
 ## Testing
 

@@ -47,6 +47,8 @@ pub enum TimerConfigError {
     HeartbeatShorterThanTick,
     /// `heartbeat_interval` is not evenly divisible by `tick_interval`.
     HeartbeatNotDivisible,
+    /// `heartbeat_interval / tick_interval` exceeds `u64::MAX`.
+    HeartbeatTooLarge,
 }
 
 impl core::fmt::Display for TimerConfigError {
@@ -61,6 +63,9 @@ impl core::fmt::Display for TimerConfigError {
                     f,
                     "heartbeat_interval must be evenly divisible by tick_interval"
                 )
+            }
+            Self::HeartbeatTooLarge => {
+                write!(f, "heartbeat_interval / tick_interval exceeds u64::MAX")
             }
         }
     }
@@ -123,9 +128,12 @@ fn validate(config: &TimerConfig) -> Result<u64, TimerConfigError> {
     if !hb_ns.is_multiple_of(tick_ns) {
         return Err(TimerConfigError::HeartbeatNotDivisible);
     }
-    // Safe: hb_ns / tick_ns >= 1 and fits in u64 for any reasonable duration.
-    #[expect(clippy::cast_possible_truncation)]
-    let heartbeat_every = (hb_ns / tick_ns) as u64;
+    let ratio = hb_ns / tick_ns;
+    if ratio > u128::from(u64::MAX) {
+        return Err(TimerConfigError::HeartbeatTooLarge);
+    }
+    #[expect(clippy::cast_possible_truncation, reason = "checked above")]
+    let heartbeat_every = ratio as u64;
     Ok(heartbeat_every)
 }
 

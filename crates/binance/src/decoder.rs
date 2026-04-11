@@ -29,6 +29,8 @@ pub enum DecoderError {
     TooManySymbols,
     /// Zero mappings were provided.
     EmptyMappings,
+    /// A symbol name exceeds [`MAX_SYMBOL_LEN`] bytes.
+    SymbolTooLong,
 }
 
 impl core::fmt::Display for DecoderError {
@@ -36,6 +38,7 @@ impl core::fmt::Display for DecoderError {
         match self {
             Self::TooManySymbols => write!(f, "too many symbols (max {MAX_BINANCE_SYMBOLS})"),
             Self::EmptyMappings => write!(f, "at least one symbol mapping is required"),
+            Self::SymbolTooLong => write!(f, "symbol exceeds {MAX_SYMBOL_LEN} bytes"),
         }
     }
 }
@@ -92,16 +95,14 @@ impl<const D: u8> BinanceDecoder<D> {
             instrument_ids[i] = m.instrument_id;
             metas[i] = m.meta;
             let sym = m.symbol.as_bytes();
-            let copy_len = if sym.len() < MAX_SYMBOL_LEN {
-                sym.len()
-            } else {
-                MAX_SYMBOL_LEN
-            };
-            symbol_names[i][..copy_len].copy_from_slice(&sym[..copy_len]);
+            if sym.len() > MAX_SYMBOL_LEN {
+                return Err(DecoderError::SymbolTooLong);
+            }
+            symbol_names[i][..sym.len()].copy_from_slice(sym);
             // MAX_SYMBOL_LEN is 16, always fits in u8.
             #[expect(clippy::cast_possible_truncation, reason = "MAX_SYMBOL_LEN <= 255")]
             {
-                symbol_lens[i] = copy_len as u8;
+                symbol_lens[i] = sym.len() as u8;
             }
         }
 
@@ -454,5 +455,24 @@ mod tests {
         let mappings: &[BinanceSymbolMapping<'_, 3>] = &[];
         let result = BinanceDecoder::new(SourceId::from_raw(1), mappings);
         assert_eq!(result.err(), Some(DecoderError::EmptyMappings));
+    }
+
+    #[test]
+    #[expect(clippy::expect_used, reason = "test-only helper")]
+    fn symbol_too_long_errors() {
+        let meta = InstrumentMeta::new(
+            FixedI64::<3>::from_str_decimal("0.01").expect("valid tick_size"),
+            FixedI64::<3>::from_str_decimal("0.001").expect("valid lot_size"),
+        )
+        .expect("valid meta");
+        let result = BinanceDecoder::new(
+            SourceId::from_raw(1),
+            &[BinanceSymbolMapping {
+                symbol: "ABCDEFGHIJKLMNOPQ", // 17 bytes > MAX_SYMBOL_LEN (16)
+                instrument_id: InstrumentId::from_raw(1),
+                meta,
+            }],
+        );
+        assert_eq!(result.err(), Some(DecoderError::SymbolTooLong));
     }
 }

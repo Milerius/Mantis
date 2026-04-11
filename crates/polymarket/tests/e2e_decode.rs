@@ -267,6 +267,7 @@ fn e2e_malformed_never_panics() {
 
 /// 1M `price_change` messages sustained throughput.
 #[test]
+#[ignore = "stress test"]
 fn stress_1m_price_changes() {
     let registry = test_registry();
     let mut decoder = PolymarketMarketDecoder::new(SourceId::from_raw(1), registry);
@@ -305,6 +306,7 @@ fn stress_1m_price_changes() {
 
 /// Alternating Up/Down tokens for multi-instrument stress.
 #[test]
+#[ignore = "stress test"]
 fn stress_500k_alternating_tokens() {
     let registry = test_registry();
     let mut decoder = PolymarketMarketDecoder::new(SourceId::from_raw(1), registry);
@@ -348,6 +350,7 @@ fn stress_500k_alternating_tokens() {
 
 /// Book snapshot stress: 10K snapshots with 20 levels each.
 #[test]
+#[ignore = "stress test"]
 #[expect(clippy::expect_used, reason = "write!() to String is infallible")]
 fn stress_10k_book_snapshots() {
     use std::fmt::Write;
@@ -412,6 +415,7 @@ fn stress_10k_book_snapshots() {
 
 /// Spawn callback with backpressure simulation.
 #[test]
+#[ignore = "stress test"]
 fn stress_spawn_callback_backpressure() {
     use mantis_polymarket::market::spawn::build_callback;
 

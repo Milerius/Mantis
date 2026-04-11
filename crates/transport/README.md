@@ -136,7 +136,6 @@ Monitoring counters (lock-free `AtomicU64`):
 
 | Feature | Effect |
 |---|---|
-| `simd-json` (default) | SIMD-accelerated JSON parsing for Phase C normalization |
 | `tuning` (default) | Linux socket tuning (`SO_BUSY_POLL`) |
 | `live-tests` | Integration tests against real exchange endpoints |
 

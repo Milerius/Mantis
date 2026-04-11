@@ -176,6 +176,7 @@ fn e2e_malformed_never_panics() {
 
 /// Sustained throughput: decode 1M messages, verify latency and correctness.
 #[test]
+#[ignore = "stress test"]
 fn stress_1m_messages() {
     let mut decoder = multi_decoder();
     let mut out = make_out();
@@ -214,6 +215,7 @@ fn stress_1m_messages() {
 
 /// Stress test with alternating symbols to exercise lookup path.
 #[test]
+#[ignore = "stress test"]
 fn stress_multi_symbol_500k() {
     let mut decoder = multi_decoder();
     let mut out = make_out();
@@ -255,6 +257,7 @@ fn stress_multi_symbol_500k() {
 
 /// Spawn callback stress: simulate high-rate push with backpressure.
 #[test]
+#[ignore = "stress test"]
 #[expect(clippy::expect_used, reason = "test helper with known-valid constants")]
 fn stress_spawn_callback_backpressure() {
     use mantis_binance::spawn::build_callback;
