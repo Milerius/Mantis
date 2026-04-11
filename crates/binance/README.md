@@ -80,7 +80,7 @@ let drops = result.drop_count.load(std::sync::atomic::Ordering::Relaxed);
 | `BinanceDecoder<D>` | Stateful decoder with monotonic sequence numbers |
 | `BinanceSymbolMapping<'a, D>` | Symbol-to-instrument binding (provided at construction) |
 | `FeedSpawnResult` | Handle + `event_count` + `drop_count` atomic counters |
-| `DecoderError` | `TooManySymbols` or `EmptyMappings` |
+| `DecoderError` | `TooManySymbols`, `EmptyMappings`, or `SymbolTooLong` |
 
 ## Features
 

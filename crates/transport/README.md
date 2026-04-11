@@ -91,7 +91,7 @@ let timer = TimerThread::spawn(
         source_id: SourceId::from_raw(99),
         core_id: Some(3),
     },
-    |event| ring.try_push(event).is_ok(),
+    |event| { let _ = ring.try_push(event); },
 )?;
 ```
 
@@ -113,7 +113,7 @@ for stale in monitor.check_all() {
 
 ## Feed Lifecycle
 
-```
+```text
 spawn() -> connect -> subscribe -> read loop --> callback
                                     |
                           on error: reconnect with backoff (1s -> 30s, +/-12.5% jitter)
