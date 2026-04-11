@@ -8,11 +8,12 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["simd-json"]
+default = ["sonic-rs"]
+sonic-rs = ["dep:sonic-rs"]
 simd-json = ["dep:simd-json"]
 
 [dependencies]
-mantis-types = { workspace = true }
+mantis-types = { workspace = true, features = ["std"] }
 mantis-events = { workspace = true }
 mantis-fixed = { workspace = true }
 mantis-registry = { workspace = true }
@@ -21,6 +22,7 @@ mantis-transport = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 simd-json = { workspace = true, optional = true }
+sonic-rs = { workspace = true, optional = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

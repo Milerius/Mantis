@@ -172,9 +172,20 @@ impl<'r, const D: u8> PolymarketMarketDecoder<'r, D> {
         }
 
         let mut count: usize = 0;
+        let total_levels = msg.bids.len() + msg.asks.len();
+        let mut truncation_warned = false;
 
         for (depth_idx, level) in msg.bids.iter().enumerate() {
             if count >= 64 {
+                if !truncation_warned {
+                    tracing::warn!(
+                        asset_id = msg.asset_id,
+                        total_levels,
+                        emitted = 64,
+                        "book snapshot truncated at 64 events"
+                    );
+                    truncation_warned = true;
+                }
                 break;
             }
             let Some((price, qty)) = parse_price_qty::<D>(level.price, level.size, &meta) else {
@@ -202,6 +213,14 @@ impl<'r, const D: u8> PolymarketMarketDecoder<'r, D> {
 
         for (depth_idx, level) in msg.asks.iter().enumerate() {
             if count >= 64 {
+                if !truncation_warned {
+                    tracing::warn!(
+                        asset_id = msg.asset_id,
+                        total_levels,
+                        emitted = 64,
+                        "book snapshot truncated at 64 events"
+                    );
+                }
                 break;
             }
             let Some((price, qty)) = parse_price_qty::<D>(level.price, level.size, &meta) else {
@@ -307,12 +326,17 @@ fn memchr_byte(byte: u8, haystack: &[u8]) -> Option<usize> {
     None
 }
 
-#[cfg(feature = "simd-json")]
+#[cfg(feature = "sonic-rs")]
+fn parse_json<'a, T: serde::Deserialize<'a>>(buf: &'a mut [u8]) -> Result<T, ()> {
+    sonic_rs::from_slice(&*buf).map_err(|_| ())
+}
+
+#[cfg(all(feature = "simd-json", not(feature = "sonic-rs")))]
 fn parse_json<'a, T: serde::Deserialize<'a>>(buf: &'a mut [u8]) -> Result<T, ()> {
     simd_json::from_slice(buf).map_err(|_| ())
 }
 
-#[cfg(not(feature = "simd-json"))]
+#[cfg(not(any(feature = "sonic-rs", feature = "simd-json")))]
 fn parse_json<'a, T: serde::Deserialize<'a>>(buf: &'a mut [u8]) -> Result<T, ()> {
     serde_json::from_slice(buf).map_err(|_| ())
 }
@@ -709,6 +733,48 @@ mod tests {
         } else {
             panic!("expected BookDelta, got {:?}", out[0].kind());
         }
+    }
+
+    #[test]
+    fn decode_book_truncates_at_64_levels() {
+        use std::fmt::Write as _;
+
+        let (reg, _) = test_registry();
+        let mut decoder = PolymarketMarketDecoder::<6>::new(SourceId::from_raw(10), &reg);
+        let mut out = make_out();
+
+        // Build a book with 70 levels (40 bids + 30 asks) to trigger truncation
+        let mut json = String::from(r#"{"type":"book","asset_id":"abc123","bids":["#);
+        for i in 0..40_u32 {
+            if i > 0 {
+                json.push(',');
+            }
+            let _ = write!(
+                json,
+                r#"{{"price":"0.{:02}","size":"{}"}}"#,
+                50_u32.saturating_sub(i),
+                100 + i
+            );
+        }
+        json.push_str(r#"],"asks":["#);
+        for i in 0..30_u32 {
+            if i > 0 {
+                json.push(',');
+            }
+            let _ = write!(
+                json,
+                r#"{{"price":"0.{:02}","size":"{}"}}"#,
+                55 + i,
+                100 + i
+            );
+        }
+        json.push_str("]}");
+
+        let mut buf = json.into_bytes();
+        let recv_ts = Timestamp::from_nanos(1000);
+        let n = decoder.decode(&mut buf, recv_ts, &mut out);
+
+        assert_eq!(n, 64, "should truncate at 64 events");
     }
 
     #[test]

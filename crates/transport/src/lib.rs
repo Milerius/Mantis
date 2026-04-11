@@ -1,9 +1,8 @@
-//! WebSocket transport ingest layer for the Mantis SDK.
+//! WebSocket transport and timing infrastructure for the Mantis SDK.
 //!
-//! This crate connects to venue WebSocket feeds (Polymarket, Binance),
-//! parses JSON into [`mantis_events::HotEvent`] values, and pushes them
-//! into [`mantis_queue::SpscRingCopy`] queues for consumption by
-//! downstream engine threads.
+//! This crate provides raw WebSocket feed threads (Polymarket, Binance)
+//! and a timer thread for periodic events. Venue-specific JSON decoding
+//! lives in `mantis-binance` and `mantis-polymarket` crates.
 //!
 //! # Architecture
 //!
@@ -22,10 +21,14 @@
 
 pub mod binance;
 mod feed;
+mod monitor;
 pub mod polymarket;
+mod timer;
 mod tuning;
 mod ws;
 
 pub use feed::{BackoffConfig, FeedConfig, FeedHandle, FeedThread};
+pub use monitor::{FeedMonitor, MAX_FEEDS, MonitorFullError, StaleFeedInfo};
+pub use timer::{TimerConfig, TimerConfigError, TimerSpawnError, TimerThread};
 pub use tuning::SocketTuning;
 pub use ws::{WsConfig, WsConnection, WsError};

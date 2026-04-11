@@ -176,6 +176,30 @@
 - [x] Old `Strategy` trait removed from `mantis-market-state` (clean break, no deprecation)
 - [x] 38 unit tests, `no_std` clean, clippy clean, 3 rounds of Codex review
 
+### 1.13 Transport & Venue Decoders (`mantis-transport`, `mantis-binance`, `mantis-polymarket`)
+**Status: Complete** | Completed: 2026-04-11
+
+- [x] WebSocket transport layer — blocking IO on CPU-pinned threads, no async runtime
+- [x] Polymarket market WS adapter — heartbeat, subscription, reconnect with backoff
+- [x] Binance futures bookTicker adapter — single + multi-symbol URL generation
+- [x] `FnMut(&mut [u8]) -> bool` callback for simd-json in-place parsing
+- [x] `BinanceDecoder<D>` — multi-symbol (1-8) with flat lookup, combined stream peek
+- [x] `PolymarketMarketDecoder<'r, D>` — book/price_change/trade with peek_type dispatch
+- [x] Zero-alloc decode path — borrowed serde structs, `parse_decimal_bytes`, Ticks/Lots conversion
+- [x] simd-json pluggable via feature flag (serde_json fallback)
+- [x] `spawn_binance_feed` / `spawn_polymarket_market_feed` — monomorphized push callback
+- [x] Backpressure: `FnMut(HotEvent) -> bool` with drop_count tracking
+- [x] `FeedSpawnResult` with event_count + drop_count for monitoring
+- [x] `TimerThread` — periodic Timer(Periodic) + Heartbeat events, validated config
+- [x] `FeedMonitor` — stale feed detection via event_count comparison, first-check baseline
+- [x] `Timestamp::now()` — wall-clock access (std feature)
+- [x] Truncation warning for Polymarket snapshots >64 levels
+- [x] ~307ns Binance bookTicker, ~306ns Polymarket price_change decode latency
+- [x] Criterion benchmarks (decode.rs) + decimal parse contenders (fixed.rs)
+- [x] 13 binance tests, 21 polymarket tests, 7 timer tests, 8 monitor tests
+- [x] Bolero property tests: arbitrary bytes → decoders never panic
+- [x] READMEs for all three crates
+
 ### 1.4 Snapshot Publication
 - [ ] Single-writer publication primitive
 - [ ] Lock-free reader access
@@ -251,3 +275,7 @@
 | `mantis-layout` | Active | std | 6 | — | — |
 | `mantis-verify` | Active | std | 13 | — | 4 kani proofs, 13 bolero/diff |
 | `mantis-strategy` | Active | yes | 38 | — | 3 rounds Codex review |
+| `mantis-transport` | Active | std | 22 | — | — |
+| `mantis-binance` | Active | std | 13 | 1 criterion group | 1 bolero prop |
+| `mantis-polymarket` | Active | std | 21 | 4 criterion groups | 1 bolero prop |
+| `mantis-registry` | Active | std | 41 | — | — |

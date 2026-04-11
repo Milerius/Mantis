@@ -15,6 +15,9 @@ mantis-fixed = { workspace = true }
 mantis-seqlock = { workspace = true }
 mantis-events = { workspace = true }
 mantis-market-state = { workspace = true }
+mantis-binance = { workspace = true }
+mantis-polymarket = { workspace = true }
+mantis-registry = { workspace = true }
 bolero = { workspace = true }
 
 [lints]
