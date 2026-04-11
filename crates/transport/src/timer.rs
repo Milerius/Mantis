@@ -361,7 +361,7 @@ mod tests {
         )
         .expect("spawn");
 
-        thread::sleep(Duration::from_millis(1000));
+        thread::sleep(Duration::from_secs(1));
         timer.shutdown();
 
         let collected = events.lock().expect("lock");

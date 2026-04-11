@@ -15,7 +15,7 @@ use crate::market::decoder::PolymarketMarketDecoder;
 pub struct FeedSpawnResult {
     /// Handle for shutdown and monitoring.
     pub handle: FeedHandle,
-    /// Counter of successfully decoded events (for `FeedMonitor` registration).
+    /// Counter of received messages / callback invocations (for `FeedMonitor` liveness).
     pub event_count: Arc<AtomicU64>,
     /// Counter of events dropped due to push returning false.
     pub drop_count: Arc<AtomicU64>,

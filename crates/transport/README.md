@@ -106,8 +106,11 @@ let mut monitor = FeedMonitor::new();
 monitor.register(source_id, event_count_arc)?;
 
 // On each timer tick:
-for stale in monitor.check_all() {
-    // stale.source_id, stale.last_event_count
+let stale_count = monitor.check_all();
+if stale_count > 0 {
+    for info in monitor.stale_feeds() {
+        // info.source_id, info.last_event_count
+    }
 }
 ```
 

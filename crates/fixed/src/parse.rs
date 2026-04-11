@@ -76,9 +76,9 @@ impl Accumulator {
 
                 // Skip leading zeros — they don't contribute to overflow risk
                 if digit == 0 && self.mantissa == 0 {
-                    // Still track fractional position
+                    // Still track fractional position (saturate to avoid u8 overflow)
                     if self.saw_dot {
-                        self.frac_digits += 1;
+                        self.frac_digits = self.frac_digits.saturating_add(1);
                     }
                     self.saw_any_digit = true;
                     return Ok(self);
@@ -104,7 +104,7 @@ impl Accumulator {
                 }
 
                 if self.saw_dot {
-                    self.frac_digits += 1;
+                    self.frac_digits = self.frac_digits.saturating_add(1);
                 }
                 self.saw_any_digit = true;
                 Ok(self)
