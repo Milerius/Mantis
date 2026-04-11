@@ -65,7 +65,7 @@ impl Accumulator {
     /// Feed one byte. Returns Err on invalid/overflow.
     ///
     /// Accumulates in NEGATIVE space (`mantissa` is always <= 0) to handle
-    /// i64::MIN correctly. `|i64::MIN| > i64::MAX`, so accumulating positive
+    /// `i64::MIN` correctly. `|i64::MIN| > i64::MAX`, so accumulating positive
     /// then negating would overflow for MIN. Instead, we accumulate as
     /// `mantissa = mantissa * 10 - digit` and negate at the end if positive.
     #[inline(always)]
@@ -106,7 +106,6 @@ impl Accumulator {
                 self.saw_dot = true;
                 Ok(self)
             }
-            b'e' | b'E' => Err(ParseFixedError::InvalidFormat),
             _ => Err(ParseFixedError::InvalidFormat),
         }
     }
@@ -203,9 +202,8 @@ impl<const D: u8> FixedI64<D> {
         }
 
         let scale = POW10_I64[pad as usize];
-        let scaled = match signed_mantissa.checked_mul(scale) {
-            Some(v) => v,
-            None => return Err(ParseFixedError::Overflow),
+        let Some(scaled) = signed_mantissa.checked_mul(scale) else {
+            return Err(ParseFixedError::Overflow);
         };
 
         Ok(Self::from_raw(scaled))
@@ -214,6 +212,10 @@ impl<const D: u8> FixedI64<D> {
     /// Parse a decimal string like `"1.23"` or `"-0.5"` into `FixedI64<D>`.
     ///
     /// Delegates to [`parse_decimal_bytes`](Self::parse_decimal_bytes).
+    ///
+    /// # Errors
+    ///
+    /// Same errors as [`parse_decimal_bytes`](Self::parse_decimal_bytes).
     pub const fn from_str_decimal(s: &str) -> Result<Self, ParseFixedError> {
         Self::parse_decimal_bytes(s.as_bytes())
     }
@@ -526,10 +528,7 @@ mod tests {
         // 18 digits is the max we support without overflow
         // 123456789012345678 fits in i64 (max ~9.2e18)
         let result = FixedI64::<0>::parse_decimal_bytes(b"123456789012345678");
-        assert_eq!(
-            result,
-            Ok(FixedI64::<0>::from_raw(123_456_789_012_345_678))
-        );
+        assert_eq!(result, Ok(FixedI64::<0>::from_raw(123_456_789_012_345_678)));
     }
 
     #[test]
