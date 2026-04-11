@@ -1,7 +1,13 @@
 //! End-to-end and stress tests for the Polymarket decode pipeline.
 //!
-//! Tests the full path: raw JSON bytes → PolymarketMarketDecoder → HotEvent output.
+//! Tests the full path: raw JSON bytes → `PolymarketMarketDecoder` → `HotEvent` output.
 //! Includes stress tests for sustained message rates and batch book snapshots.
+
+#![expect(clippy::print_stderr, reason = "stress-test diagnostics use eprintln")]
+#![expect(
+    clippy::cast_precision_loss,
+    reason = "f64 stats in test diagnostics are fine"
+)]
 
 use mantis_events::{EventBody, EventFlags, HeartbeatPayload, HotEvent};
 use mantis_fixed::FixedI64;
@@ -73,8 +79,9 @@ fn test_registry() -> &'static InstrumentRegistry<6> {
 
 // --- End-to-End Tests ---
 
-/// Full pipeline: price_change → BookDelta with all fields verified.
+/// Full pipeline: `price_change` → `BookDelta` with all fields verified.
 #[test]
+#[expect(clippy::panic, reason = "test uses panic for match-arm failure")]
 fn e2e_price_change_full_verification() {
     let registry = test_registry();
     let mut decoder = PolymarketMarketDecoder::new(SourceId::from_raw(1), registry);
@@ -126,8 +133,9 @@ fn e2e_multi_token_routing() {
     assert_eq!(out[0].header.instrument_id, InstrumentId::from_raw(2));
 }
 
-/// Book snapshot produces batch with LAST_IN_BATCH on final event.
+/// Book snapshot produces batch with `LAST_IN_BATCH` on final event.
 #[test]
+#[expect(clippy::panic, reason = "test uses panic for match-arm failure")]
 fn e2e_book_snapshot_batch() {
     let registry = test_registry();
     let mut decoder = PolymarketMarketDecoder::new(SourceId::from_raw(1), registry);
@@ -139,17 +147,17 @@ fn e2e_book_snapshot_batch() {
     assert_eq!(n, 4);
 
     // All should have IS_SNAPSHOT
-    for i in 0..4 {
+    for (i, ev) in out[..4].iter().enumerate() {
         assert!(
-            out[i].header.flags.contains(EventFlags::IS_SNAPSHOT),
+            ev.header.flags.contains(EventFlags::IS_SNAPSHOT),
             "event {i} missing IS_SNAPSHOT"
         );
     }
 
     // Only last should have LAST_IN_BATCH
-    for i in 0..3 {
+    for (i, ev) in out[..3].iter().enumerate() {
         assert!(
-            !out[i].header.flags.contains(EventFlags::LAST_IN_BATCH),
+            !ev.header.flags.contains(EventFlags::LAST_IN_BATCH),
             "event {i} should NOT have LAST_IN_BATCH"
         );
     }
@@ -175,8 +183,9 @@ fn e2e_book_snapshot_batch() {
     );
 }
 
-/// Trade event from last_trade_price.
+/// Trade event from `last_trade_price`.
 #[test]
+#[expect(clippy::panic, reason = "test uses panic for match-arm failure")]
 fn e2e_trade_event() {
     let registry = test_registry();
     let mut decoder = PolymarketMarketDecoder::new(SourceId::from_raw(1), registry);
@@ -256,7 +265,7 @@ fn e2e_malformed_never_panics() {
 
 // --- Stress Tests ---
 
-/// 1M price_change messages sustained throughput.
+/// 1M `price_change` messages sustained throughput.
 #[test]
 fn stress_1m_price_changes() {
     let registry = test_registry();
@@ -339,7 +348,10 @@ fn stress_500k_alternating_tokens() {
 
 /// Book snapshot stress: 10K snapshots with 20 levels each.
 #[test]
+#[expect(clippy::expect_used, reason = "write!() to String is infallible")]
 fn stress_10k_book_snapshots() {
+    use std::fmt::Write;
+
     let registry = test_registry();
     let mut decoder = PolymarketMarketDecoder::new(SourceId::from_raw(1), registry);
     let mut out = make_out();
@@ -350,22 +362,26 @@ fn stress_10k_book_snapshots() {
         if i > 0 {
             json.push(',');
         }
-        json.push_str(&format!(
+        write!(
+            json,
             r#"{{"price":"0.{:02}","size":"{}"}}"#,
             50 - i,
             100 + i * 10
-        ));
+        )
+        .expect("write to String");
     }
     json.push_str(r#"],"asks":["#);
     for i in 0..10 {
         if i > 0 {
             json.push(',');
         }
-        json.push_str(&format!(
+        write!(
+            json,
             r#"{{"price":"0.{:02}","size":"{}"}}"#,
             55 + i,
             100 + i * 10
-        ));
+        )
+        .expect("write to String");
     }
     json.push_str("]}");
     let template = json.into_bytes();
@@ -407,7 +423,7 @@ fn stress_spawn_callback_backpressure() {
 
     let (mut callback, event_count, drop_count) = build_callback(decoder, move |_| {
         let n = ac.fetch_add(1, Ordering::Relaxed);
-        n % 3 != 0 // drop every 3rd event (~33% drop rate)
+        !n.is_multiple_of(3) // drop every 3rd event (~33% drop rate)
     });
 
     let template =

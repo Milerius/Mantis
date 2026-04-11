@@ -1,9 +1,15 @@
 //! End-to-end and stress tests for the Binance decode pipeline.
 //!
-//! Tests the full path: raw JSON bytes → BinanceDecoder → HotEvent output.
+//! Tests the full path: raw JSON bytes → `BinanceDecoder` → `HotEvent` output.
 //! Includes throughput stress test simulating sustained high message rates.
 
-use mantis_binance::{BinanceDecoder, BinanceSymbolMapping, MAX_BINANCE_SYMBOLS};
+#![expect(clippy::print_stderr, reason = "stress-test diagnostics use eprintln")]
+#![expect(
+    clippy::cast_precision_loss,
+    reason = "f64 stats in test diagnostics are fine"
+)]
+
+use mantis_binance::{BinanceDecoder, BinanceSymbolMapping};
 use mantis_events::{EventBody, EventFlags, HeartbeatPayload, HotEvent};
 use mantis_fixed::FixedI64;
 use mantis_types::{InstrumentId, InstrumentMeta, Lots, SeqNum, SourceId, Ticks, Timestamp};
@@ -21,6 +27,7 @@ fn make_out() -> [HotEvent; 64] {
     ); 64]
 }
 
+#[expect(clippy::expect_used, reason = "test helper with known-valid constants")]
 fn btc_meta() -> InstrumentMeta<3> {
     InstrumentMeta::new(
         FixedI64::<3>::from_str_decimal("0.01").expect("tick"),
@@ -29,6 +36,7 @@ fn btc_meta() -> InstrumentMeta<3> {
     .expect("meta")
 }
 
+#[expect(clippy::expect_used, reason = "test helper with known-valid constants")]
 fn multi_decoder() -> BinanceDecoder<3> {
     let btc = btc_meta();
     let eth = InstrumentMeta::new(
@@ -57,8 +65,9 @@ fn multi_decoder() -> BinanceDecoder<3> {
 
 // --- End-to-End Tests ---
 
-/// Full pipeline: raw JSON → decode → verify all HotEvent fields.
+/// Full pipeline: raw JSON → decode → verify all `HotEvent` fields.
 #[test]
+#[expect(clippy::panic, reason = "test uses panic for match-arm failure")]
 fn e2e_binance_btc_bookticker_full_field_verification() {
     let mut decoder = multi_decoder();
     let mut out = make_out();
@@ -246,6 +255,7 @@ fn stress_multi_symbol_500k() {
 
 /// Spawn callback stress: simulate high-rate push with backpressure.
 #[test]
+#[expect(clippy::expect_used, reason = "test helper with known-valid constants")]
 fn stress_spawn_callback_backpressure() {
     use mantis_binance::spawn::build_callback;
 
@@ -266,7 +276,7 @@ fn stress_spawn_callback_backpressure() {
     // Simulate 50% drop rate
     let (mut callback, event_count, drop_count) = build_callback(decoder, move |_| {
         let n = ac.fetch_add(1, Ordering::Relaxed);
-        n % 2 == 0 // accept every other event
+        n.is_multiple_of(2) // accept every other event
     });
 
     let template =
