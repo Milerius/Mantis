@@ -42,11 +42,10 @@ where
 
     let mut out = make_out();
     let callback = move |buf: &mut [u8]| {
+        // Always count — proves the feed is alive even for non-hot messages
+        ec.fetch_add(1, Ordering::Relaxed);
         let recv_ts = Timestamp::now();
         let count = decoder.decode(buf, recv_ts, &mut out);
-        if count > 0 {
-            ec.fetch_add(count as u64, Ordering::Relaxed);
-        }
         for event in out.iter().take(count) {
             if !push(*event) {
                 dc.fetch_add(1, Ordering::Relaxed);
@@ -65,12 +64,15 @@ where
 /// Returns an error if the OS fails to spawn the thread.
 pub fn spawn_binance_feed<const D: u8, F>(
     config: BinanceReferenceConfig,
-    decoder: BinanceDecoder<D>,
+    mut decoder: BinanceDecoder<D>,
     push: F,
 ) -> Result<FeedSpawnResult, std::io::Error>
 where
     F: FnMut(HotEvent) -> bool + Send + 'static,
 {
+    // Sync decoder stream mode with transport config so combined-stream
+    // JSON is always decoded correctly regardless of mapping count.
+    decoder.set_combined_stream(config.symbols.len() > 1);
     let (callback, event_count, drop_count) = build_callback(decoder, push);
     let handle = mantis_transport::binance::reference::spawn_reference_feed(config, callback)?;
     Ok(FeedSpawnResult {
@@ -152,6 +154,8 @@ mod tests {
 
         let mut buf = b"not json".to_vec();
         callback(&mut buf);
-        assert_eq!(event_count.load(Ordering::Relaxed), 0);
+        // event_count increments on every callback (feed liveness), even when
+        // the decoder produces zero hot events.
+        assert_eq!(event_count.load(Ordering::Relaxed), 1);
     }
 }

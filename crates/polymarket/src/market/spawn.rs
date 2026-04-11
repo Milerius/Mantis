@@ -40,11 +40,10 @@ where
 
     let mut out = make_out();
     let callback = move |buf: &mut [u8]| {
+        // Always count — proves the feed is alive even for non-hot messages
+        ec.fetch_add(1, Ordering::Relaxed);
         let recv_ts = Timestamp::now();
         let count = decoder.decode(buf, recv_ts, &mut out);
-        if count > 0 {
-            ec.fetch_add(count as u64, Ordering::Relaxed);
-        }
         for event in out.iter().take(count) {
             if !push(*event) {
                 dc.fetch_add(1, Ordering::Relaxed);

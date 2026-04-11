@@ -73,6 +73,17 @@ impl Accumulator {
         match byte {
             b'0'..=b'9' => {
                 let digit = (byte - b'0') as i64;
+
+                // Skip leading zeros — they don't contribute to overflow risk
+                if digit == 0 && self.mantissa == 0 {
+                    // Still track fractional position
+                    if self.saw_dot {
+                        self.frac_digits += 1;
+                    }
+                    self.saw_any_digit = true;
+                    return Ok(self);
+                }
+
                 self.total_digits += 1;
 
                 if self.total_digits > 19 {
@@ -554,5 +565,18 @@ mod tests {
             FixedI64::<0>::parse_decimal_bytes(b"12345678901234567890"),
             Err(ParseFixedError::Overflow)
         );
+    }
+
+    #[test]
+    fn parse_many_leading_zeros() {
+        // 20 chars but value is 1 — leading zeros must not count toward overflow
+        let result = FixedI64::<0>::parse_decimal_bytes(b"00000000000000000001");
+        assert_eq!(result, Ok(FixedI64::<0>::from_raw(1)));
+    }
+
+    #[test]
+    fn parse_leading_zeros_with_decimal() {
+        let result = FixedI64::<6>::parse_decimal_bytes(b"000000.500000");
+        assert_eq!(result, Ok(FixedI64::<6>::from_raw(500_000)));
     }
 }
