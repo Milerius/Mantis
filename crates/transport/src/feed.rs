@@ -165,7 +165,7 @@ impl FeedThread {
 
 /// Sleep for `duration`, checking the shutdown flag every 100ms.
 /// Returns `true` if shutdown was requested during the sleep.
-fn interruptible_sleep(duration: Duration, shutdown: &AtomicBool) -> bool {
+pub(crate) fn interruptible_sleep(duration: Duration, shutdown: &AtomicBool) -> bool {
     let deadline = std::time::Instant::now() + duration;
     let chunk = Duration::from_millis(100);
     while std::time::Instant::now() < deadline {
