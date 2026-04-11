@@ -26,9 +26,17 @@ impl Timestamp {
     /// Returns the current time as nanoseconds since the Unix epoch.
     ///
     /// Uses `std::time::SystemTime` for wall-clock time.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the system clock is before the Unix epoch.
     #[cfg(feature = "std")]
     #[must_use]
     #[expect(clippy::expect_used, reason = "system clock before epoch is unrecoverable")]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "u64 nanos covers ~584 years from epoch — sufficient until 2554"
+    )]
     pub fn now() -> Self {
         let duration = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

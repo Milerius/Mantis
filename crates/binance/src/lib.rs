@@ -9,4 +9,5 @@ mod decoder;
 mod schema;
 pub mod spawn;
 
-pub use decoder::BinanceDecoder;
+pub use decoder::{BinanceDecoder, BinanceSymbolMapping, DecoderError, MAX_BINANCE_SYMBOLS};
+pub use spawn::{spawn_binance_feed, FeedSpawnResult};

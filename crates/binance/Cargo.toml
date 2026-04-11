@@ -12,7 +12,7 @@ default = ["simd-json"]
 simd-json = ["dep:simd-json"]
 
 [dependencies]
-mantis-types = { workspace = true }
+mantis-types = { workspace = true, features = ["std"] }
 mantis-events = { workspace = true }
 mantis-fixed = { workspace = true }
 mantis-transport = { workspace = true }
