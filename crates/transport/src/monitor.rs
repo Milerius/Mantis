@@ -4,8 +4,8 @@
 //! staleness. The engine calls [`FeedMonitor::check_all`] on each
 //! `Timer(Periodic)` event.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use mantis_types::SourceId;
 
@@ -181,8 +181,7 @@ mod tests {
     fn first_check_establishes_baseline() {
         let cnt = counter(0);
         let mut mon = FeedMonitor::new();
-        mon.register(SourceId::from_raw(1), Arc::clone(&cnt))
-            .ok();
+        mon.register(SourceId::from_raw(1), Arc::clone(&cnt)).ok();
         let stale = mon.check_all();
         assert_eq!(stale, 0);
         assert!(!mon.is_stale(SourceId::from_raw(1)));
@@ -192,8 +191,7 @@ mod tests {
     fn unchanged_after_baseline_is_stale() {
         let cnt = counter(0);
         let mut mon = FeedMonitor::new();
-        mon.register(SourceId::from_raw(1), Arc::clone(&cnt))
-            .ok();
+        mon.register(SourceId::from_raw(1), Arc::clone(&cnt)).ok();
         mon.check_all(); // baseline
         let stale = mon.check_all(); // no change
         assert_eq!(stale, 1);
@@ -204,8 +202,7 @@ mod tests {
     fn active_feed_not_stale() {
         let cnt = counter(0);
         let mut mon = FeedMonitor::new();
-        mon.register(SourceId::from_raw(1), Arc::clone(&cnt))
-            .ok();
+        mon.register(SourceId::from_raw(1), Arc::clone(&cnt)).ok();
         mon.check_all(); // baseline
         cnt.fetch_add(5, Ordering::Relaxed);
         let stale = mon.check_all();
@@ -217,8 +214,7 @@ mod tests {
     fn recovery_clears_stale() {
         let cnt = counter(0);
         let mut mon = FeedMonitor::new();
-        mon.register(SourceId::from_raw(1), Arc::clone(&cnt))
-            .ok();
+        mon.register(SourceId::from_raw(1), Arc::clone(&cnt)).ok();
         mon.check_all(); // baseline
         assert_eq!(mon.check_all(), 1); // stale
         assert!(mon.is_stale(SourceId::from_raw(1)));
@@ -232,10 +228,8 @@ mod tests {
         let cnt_a = counter(0);
         let cnt_b = counter(0);
         let mut mon = FeedMonitor::new();
-        mon.register(SourceId::from_raw(1), Arc::clone(&cnt_a))
-            .ok();
-        mon.register(SourceId::from_raw(2), Arc::clone(&cnt_b))
-            .ok();
+        mon.register(SourceId::from_raw(1), Arc::clone(&cnt_a)).ok();
+        mon.register(SourceId::from_raw(2), Arc::clone(&cnt_b)).ok();
         mon.check_all(); // baseline for both
         cnt_a.fetch_add(1, Ordering::Relaxed);
         // cnt_b unchanged
@@ -263,10 +257,8 @@ mod tests {
         let cnt_a = counter(0);
         let cnt_b = counter(0);
         let mut mon = FeedMonitor::new();
-        mon.register(SourceId::from_raw(1), Arc::clone(&cnt_a))
-            .ok();
-        mon.register(SourceId::from_raw(2), Arc::clone(&cnt_b))
-            .ok();
+        mon.register(SourceId::from_raw(1), Arc::clone(&cnt_a)).ok();
+        mon.register(SourceId::from_raw(2), Arc::clone(&cnt_b)).ok();
         mon.check_all(); // baseline
         // both unchanged
         mon.check_all();

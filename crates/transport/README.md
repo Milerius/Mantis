@@ -1,6 +1,6 @@
 # mantis-transport
 
-WebSocket transport ingest layer for the Mantis low-latency financial SDK.
+WebSocket transport, timer, and feed monitoring infrastructure for the Mantis low-latency financial SDK.
 
 Blocking IO on dedicated pinned threads. No async runtime. No Mutex.
 
@@ -9,26 +9,30 @@ Blocking IO on dedicated pinned threads. No async runtime. No Mutex.
 ```
 VENUE FEEDS                          MANTIS HOT PATH
 
-Polymarket Market WS ──> [SPSC 4096] ──┐
-Polymarket User WS   ──> [SPSC 1024] ──┤──> market-state engine
-Binance Reference WS ──> [SPSC 8192] ──┤
-Timer                ──> [SPSC  256] ──┘
+Polymarket Market WS ──> callback ──┐
+Polymarket User WS   ──> callback ──┤──> venue decoder ──> [SPSC] ──> engine
+Binance Reference WS ──> callback ──┤
+Timer thread         ──> [SPSC  256] ──────────────────────────────┘
+                                        │
+FeedMonitor ◄── event_count atomics ────┘  (stale feed detection)
 ```
 
 Each feed runs on a dedicated CPU-pinned thread. The thread calls
-`tungstenite::WebSocket::read()` in a blocking loop, parses venue JSON
-into `HotEvent` values, and pushes them into `SpscRingCopy<HotEvent, N>`
-queues.
+`tungstenite::WebSocket::read()` in a blocking loop and delivers raw
+`&mut [u8]` buffers to an `FnMut` callback. Venue-specific JSON parsing
+and `HotEvent` emission live in separate crates (`mantis-binance`,
+`mantis-polymarket`), not in transport.
 
 ## Thread Model
 
 | Layer | What happens | Allowed |
 |---|---|---|
-| IO threads (this crate) | WS + TLS, JSON parse, `FixedI64` → `Ticks`/`Lots`, emit `HotEvent` | alloc, strings, serde |
+| IO threads (this crate) | WS + TLS, deliver raw bytes via callback | alloc, strings, network |
+| Venue decoders (separate crates) | JSON parse, `FixedI64` -> `Ticks`/`Lots`, emit `HotEvent` | alloc, serde |
 | Owner threads (engine) | book update, signal, order decision | no alloc, no strings, no JSON |
 
 The SPSC ring is the boundary. After `push()`, no strings or decimal types
-exist — only `InstrumentId`, `Ticks`, `Lots`, and compact enums.
+exist -- only `InstrumentId`, `Ticks`, `Lots`, and compact enums.
 
 ## Venue Adapters
 
@@ -44,7 +48,7 @@ let handle = spawn_market_feed(
         backoff: BackoffConfig::default(),
     },
     |msg| {
-        // raw JSON: book, price_change, last_trade_price, etc.
+        // raw &mut [u8]: book, price_change, last_trade_price, etc.
         true // continue
     },
 )?;
@@ -62,7 +66,7 @@ use mantis_transport::binance::reference::*;
 let handle = spawn_reference_feed(
     BinanceReferenceConfig::default(), // btcusdt@bookTicker
     |msg| {
-        // raw JSON: {"e":"bookTicker","b":"67396.70","B":"8.819",...}
+        // raw &mut [u8]: {"e":"bookTicker","b":"67396.70","B":"8.819",...}
         true
     },
 )?;
@@ -72,20 +76,55 @@ let handle = spawn_reference_feed(
 - No subscription message needed (stream selection in URL path)
 - Uses futures endpoint (`fstream`) for broader geo-availability
 
+## Timer Thread
+
+The timer thread emits periodic `HotEvent::Timer` and `HotEvent::Heartbeat` events at configurable intervals. It runs on a dedicated thread with no WS connection.
+
+```rust
+use mantis_transport::{TimerConfig, TimerThread};
+
+let timer = TimerThread::spawn(
+    TimerConfig {
+        name: "timer".into(),
+        tick_interval: Duration::from_millis(100),
+        heartbeat_interval: Duration::from_secs(1),
+        source_id: SourceId::from_raw(99),
+        core_id: Some(3),
+    },
+    |event| ring.try_push(event).is_ok(),
+)?;
+```
+
+## Feed Monitor
+
+`FeedMonitor` passively tracks `event_count` atomics from feed spawn wrappers and detects feeds that have stopped producing events. The engine calls `check_all()` on each `Timer(Periodic)` event.
+
+```rust
+use mantis_transport::FeedMonitor;
+
+let mut monitor = FeedMonitor::new();
+monitor.register(source_id, event_count_arc)?;
+
+// On each timer tick:
+for stale in monitor.check_all() {
+    // stale.source_id, stale.last_event_count
+}
+```
+
 ## Feed Lifecycle
 
 ```
-spawn() → connect → subscribe → read loop ──> callback
-                                    │
-                          on error: reconnect with backoff (1s → 30s, ±12.5% jitter)
-                                    │
-                        shutdown() → responds within 100ms, thread joins
+spawn() -> connect -> subscribe -> read loop --> callback
+                                    |
+                          on error: reconnect with backoff (1s -> 30s, +/-12.5% jitter)
+                                    |
+                        shutdown() -> responds within 100ms, thread joins
 ```
 
 Monitoring counters (lock-free `AtomicU64`):
-- `msg_count` — messages delivered to callback
-- `reconnects` — successful reconnections
-- `drops` — messages dropped (future: backpressure)
+- `msg_count` -- messages delivered to callback
+- `reconnects` -- successful reconnections
+- `drops` -- messages dropped (future: backpressure)
 
 ## Socket Tuning
 

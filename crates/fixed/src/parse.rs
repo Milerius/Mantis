@@ -1,8 +1,12 @@
 //! Decimal string parsing for `FixedI64`.
+//!
+//! Single-pass, i64-only parser optimized for HFT price strings.
+//! No i128 widening, no multi-scan, POW10 lookup for zero-padding.
 
 use core::fmt;
 
 use crate::FixedI64;
+use mantis_platform::numerics::POW10_I64;
 
 /// Error returned when parsing a decimal string into `FixedI64`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,102 +30,105 @@ impl fmt::Display for ParseFixedError {
     }
 }
 
-/// Returns `true` if every byte in `s` is an ASCII digit.
-const fn all_digits(s: &[u8]) -> bool {
-    let mut i = 0;
-    while i < s.len() {
-        if !s[i].is_ascii_digit() {
-            return false;
+/// Single-pass decimal accumulator state.
+///
+/// Walks the byte slice once, accumulating both whole and fractional
+/// parts into a single `i64` mantissa. Records position of the dot
+/// (if any) to compute the fractional digit count at the end.
+///
+/// # Why i64 instead of i128
+///
+/// Price strings from venue feeds are at most ~18 digits total
+/// (e.g., `"999999999.99999999"`). The maximum value at D=8 is
+/// `999_999_999 * 10^8 + 99_999_999 = 99_999_999_999_999_999`
+/// which fits in i64 (max 9.2e18). We only need i128 for extreme
+/// edge cases (>18 total digits), which we reject as Overflow.
+struct Accumulator {
+    mantissa: i64,
+    total_digits: u8,
+    frac_digits: u8,
+    saw_dot: bool,
+    saw_any_digit: bool,
+}
+
+impl Accumulator {
+    const fn new() -> Self {
+        Self {
+            mantissa: 0,
+            total_digits: 0,
+            frac_digits: 0,
+            saw_dot: false,
+            saw_any_digit: false,
         }
-        i += 1;
     }
-    true
-}
 
-/// Parse an ASCII digit string as `i128`. Returns `None` on overflow or empty input.
-/// Leading zeros are allowed.
-const fn parse_digits(s: &[u8]) -> Option<i128> {
-    if s.is_empty() {
-        return None;
-    }
-    let mut acc: i128 = 0;
-    let mut i = 0;
-    while i < s.len() {
-        let d = (s[i] - b'0') as i128;
-        acc = match acc.checked_mul(10) {
-            Some(v) => v,
-            None => return None,
-        };
-        acc = match acc.checked_add(d) {
-            Some(v) => v,
-            None => return None,
-        };
-        i += 1;
-    }
-    Some(acc)
-}
+    /// Feed one byte. Returns Err on invalid/overflow.
+    ///
+    /// Accumulates in NEGATIVE space (`mantissa` is always <= 0) to handle
+    /// i64::MIN correctly. `|i64::MIN| > i64::MAX`, so accumulating positive
+    /// then negating would overflow for MIN. Instead, we accumulate as
+    /// `mantissa = mantissa * 10 - digit` and negate at the end if positive.
+    #[inline(always)]
+    const fn feed(mut self, byte: u8) -> Result<Self, ParseFixedError> {
+        match byte {
+            b'0'..=b'9' => {
+                let digit = (byte - b'0') as i64;
+                self.total_digits += 1;
 
-/// Find the index of the first `.` in `s`, or `None`.
-const fn find_dot(s: &[u8]) -> Option<usize> {
-    let mut i = 0;
-    while i < s.len() {
-        if s[i] == b'.' {
-            return Some(i);
+                if self.total_digits > 19 {
+                    return Err(ParseFixedError::Overflow);
+                }
+
+                // acc = acc * 10 - digit (accumulate in negative space)
+                if self.total_digits <= 18 {
+                    self.mantissa = self.mantissa * 10 - digit;
+                } else {
+                    self.mantissa = match self.mantissa.checked_mul(10) {
+                        Some(v) => match v.checked_sub(digit) {
+                            Some(v2) => v2,
+                            None => return Err(ParseFixedError::Overflow),
+                        },
+                        None => return Err(ParseFixedError::Overflow),
+                    };
+                }
+
+                if self.saw_dot {
+                    self.frac_digits += 1;
+                }
+                self.saw_any_digit = true;
+                Ok(self)
+            }
+            b'.' => {
+                if self.saw_dot {
+                    // Double dot
+                    return Err(ParseFixedError::InvalidFormat);
+                }
+                self.saw_dot = true;
+                Ok(self)
+            }
+            b'e' | b'E' => Err(ParseFixedError::InvalidFormat),
+            _ => Err(ParseFixedError::InvalidFormat),
         }
-        i += 1;
     }
-    None
 }
 
-/// Check if byte slice contains a specific byte.
-const fn contains_byte(s: &[u8], b: u8) -> bool {
-    let mut i = 0;
-    while i < s.len() {
-        if s[i] == b {
-            return true;
-        }
-        i += 1;
-    }
-    false
-}
-
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "i128-to-i64 cast is guarded by range check"
-)]
 impl<const D: u8> FixedI64<D> {
-    /// Parse a decimal string like `"1.23"` or `"-0.5"` into `FixedI64<D>`.
-    ///
-    /// Accepts:
-    /// - Optional sign prefix (`-` or `+`)
-    /// - Integer-only: `"123"`
-    /// - Decimal: `"1.23"`, `".5"`, `"0.5"`
-    /// - Leading zeros: `"007.50"`
-    ///
-    /// Rejects:
-    /// - Empty strings
-    /// - Exponent notation (`"1e5"`)
-    /// - Double dots (`"1..2"`)
-    /// - Non-digit characters
-    /// - Fractional digits exceeding D
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ParseFixedError::InvalidFormat`] for malformed input,
-    /// [`ParseFixedError::Overflow`] if the value exceeds `i64` range,
-    /// or [`ParseFixedError::ExcessPrecision`] if fractional digits exceed D.
     /// Parse a decimal byte slice like `b"1.23"` or `b"-0.5"` into `FixedI64<D>`.
     ///
-    /// This is the hot-path parser for venue decoders — it operates directly on
-    /// byte slices from JSON buffers without requiring UTF-8 `&str` conversion.
+    /// Optimized single-pass parser for HFT hot paths:
+    /// - **No i128**: accumulates directly into i64 (prices fit in 18 digits)
+    /// - **Single scan**: no separate dot-find, digit-validate, or digit-parse passes
+    /// - **POW10 lookup**: zero-padding via table lookup instead of multiply loop
     ///
-    /// Accepts:
-    /// - Optional sign prefix (`-` or `+`)
+    /// # Accepted formats
+    ///
     /// - Integer-only: `b"123"`
     /// - Decimal: `b"1.23"`, `b".5"`, `b"0.5"`
     /// - Leading zeros: `b"007.50"`
+    /// - Sign prefix: `b"-1.5"`, `b"+1.5"`
     ///
-    /// Rejects:
+    /// # Rejected formats
+    ///
     /// - Empty slices
     /// - Exponent notation (`b"1e5"`)
     /// - Double dots (`b"1..2"`)
@@ -138,135 +145,75 @@ impl<const D: u8> FixedI64<D> {
             return Err(ParseFixedError::InvalidFormat);
         }
 
-        // Handle sign
-        let (negative, rest) = match bytes[0] {
-            b'-' => (true, bytes.split_at(1).1),
-            b'+' => (false, bytes.split_at(1).1),
-            _ => (false, bytes),
+        // Handle sign prefix
+        let (negative, start) = match bytes[0] {
+            b'-' => (true, 1),
+            b'+' => (false, 1),
+            _ => (false, 0),
         };
 
-        if rest.is_empty() {
+        if start >= bytes.len() {
             return Err(ParseFixedError::InvalidFormat);
         }
 
-        // Reject exponent notation
-        if contains_byte(rest, b'e') || contains_byte(rest, b'E') {
+        // Single-pass accumulation
+        let mut acc = Accumulator::new();
+        let mut i = start;
+        while i < bytes.len() {
+            acc = match acc.feed(bytes[i]) {
+                Ok(a) => a,
+                Err(e) => return Err(e),
+            };
+            i += 1;
+        }
+
+        // Must have seen at least one digit ("." alone is invalid)
+        if !acc.saw_any_digit {
             return Err(ParseFixedError::InvalidFormat);
         }
 
-        // Split on decimal point
-        let (whole_bytes, frac_bytes) = match find_dot(rest) {
-            None => {
-                // No decimal point: integer only
-                if !all_digits(rest) {
-                    return Err(ParseFixedError::InvalidFormat);
-                }
-                (rest, &[] as &[u8])
-            }
-            Some(dot_idx) => {
-                let (w, after_dot) = rest.split_at(dot_idx);
-                // after_dot starts with '.', skip it
-                let f = after_dot.split_at(1).1;
-
-                // Reject double dots
-                if contains_byte(f, b'.') {
-                    return Err(ParseFixedError::InvalidFormat);
-                }
-
-                // Validate digits
-                if !w.is_empty() && !all_digits(w) {
-                    return Err(ParseFixedError::InvalidFormat);
-                }
-                if !f.is_empty() && !all_digits(f) {
-                    return Err(ParseFixedError::InvalidFormat);
-                }
-
-                // ".5" is valid (empty whole part), but "." alone is not
-                if w.is_empty() && f.is_empty() {
-                    return Err(ParseFixedError::InvalidFormat);
-                }
-
-                (w, f)
-            }
-        };
-
-        // Check excess precision
-        if frac_bytes.len() > D as usize {
+        // Check fractional precision
+        if acc.frac_digits > D {
             return Err(ParseFixedError::ExcessPrecision);
         }
 
-        // Parse whole part
-        let whole: i128 = if whole_bytes.is_empty() {
-            0
+        // Rescale: mantissa currently has `frac_digits` implied decimals.
+        // We need D decimals, so multiply by 10^(D - frac_digits).
+        let pad = D - acc.frac_digits;
+        if pad > 18 {
+            return Err(ParseFixedError::Overflow);
+        }
+
+        // Mantissa is accumulated in negative space (always <= 0).
+        // For positive numbers, negate. For negative, keep as-is.
+        // This handles i64::MIN correctly since |-i64::MIN| > i64::MAX.
+        let signed_mantissa = if negative {
+            // Already negative — keep as-is
+            acc.mantissa
         } else {
-            match parse_digits(whole_bytes) {
+            // Negate to get positive value
+            match acc.mantissa.checked_neg() {
                 Some(v) => v,
                 None => return Err(ParseFixedError::Overflow),
             }
         };
 
-        // Parse fractional part, zero-padding to D digits
-        let frac: i128 = if frac_bytes.is_empty() {
-            0
-        } else {
-            let Some(base) = parse_digits(frac_bytes) else {
-                return Err(ParseFixedError::Overflow);
-            };
-            // Multiply by 10^(D - frac_len) to zero-pad
-            let pad = D as usize - frac_bytes.len();
-            let mut result = base;
-            let mut p = 0;
-            while p < pad {
-                result = match result.checked_mul(10) {
-                    Some(v) => v,
-                    None => return Err(ParseFixedError::Overflow),
-                };
-                p += 1;
-            }
-            result
-        };
+        if pad == 0 {
+            return Ok(Self::from_raw(signed_mantissa));
+        }
 
-        // Combine: whole * SCALE + frac
-        let scale = Self::SCALE as i128;
-        let combined = match whole.checked_mul(scale) {
-            Some(v) => match v.checked_add(frac) {
-                Some(v2) => v2,
-                None => return Err(ParseFixedError::Overflow),
-            },
+        let scale = POW10_I64[pad as usize];
+        let scaled = match signed_mantissa.checked_mul(scale) {
+            Some(v) => v,
             None => return Err(ParseFixedError::Overflow),
         };
 
-        // Apply sign
-        let signed = if negative { -combined } else { combined };
-
-        // Narrow to i64
-        if signed > (i64::MAX as i128) || signed < (i64::MIN as i128) {
-            return Err(ParseFixedError::Overflow);
-        }
-
-        Ok(Self::from_raw(signed as i64))
+        Ok(Self::from_raw(scaled))
     }
 
     /// Parse a decimal string like `"1.23"` or `"-0.5"` into `FixedI64<D>`.
     ///
-    /// Accepts:
-    /// - Optional sign prefix (`-` or `+`)
-    /// - Integer-only: `"123"`
-    /// - Decimal: `"1.23"`, `".5"`, `"0.5"`
-    /// - Leading zeros: `"007.50"`
-    ///
-    /// Rejects:
-    /// - Empty strings
-    /// - Exponent notation (`"1e5"`)
-    /// - Double dots (`"1..2"`)
-    /// - Non-digit characters
-    /// - Fractional digits exceeding D
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ParseFixedError::InvalidFormat`] for malformed input,
-    /// [`ParseFixedError::Overflow`] if the value exceeds `i64` range,
-    /// or [`ParseFixedError::ExcessPrecision`] if fractional digits exceed D.
+    /// Delegates to [`parse_decimal_bytes`](Self::parse_decimal_bytes).
     pub const fn from_str_decimal(s: &str) -> Result<Self, ParseFixedError> {
         Self::parse_decimal_bytes(s.as_bytes())
     }
@@ -542,5 +489,71 @@ mod tests {
             let from_bytes = FixedI64::<6>::parse_decimal_bytes(input.as_bytes());
             assert_eq!(from_str, from_bytes, "mismatch for {input:?}");
         }
+    }
+
+    // --- HFT price format tests ---
+
+    #[test]
+    fn parse_binance_btc_price() {
+        // Typical Binance BTC/USDT price
+        let result = FixedI64::<2>::parse_decimal_bytes(b"72681.70");
+        assert_eq!(result, Ok(FixedI64::<2>::from_raw(7_268_170)));
+    }
+
+    #[test]
+    fn parse_binance_btc_qty() {
+        // Typical Binance BTC quantity
+        let result = FixedI64::<3>::parse_decimal_bytes(b"4.160");
+        assert_eq!(result, Ok(FixedI64::<3>::from_raw(4160)));
+    }
+
+    #[test]
+    fn parse_polymarket_price() {
+        // Typical Polymarket contract price
+        let result = FixedI64::<6>::parse_decimal_bytes(b"0.53");
+        assert_eq!(result, Ok(FixedI64::<6>::from_raw(530_000)));
+    }
+
+    #[test]
+    fn parse_polymarket_size() {
+        // Typical Polymarket order size
+        let result = FixedI64::<6>::parse_decimal_bytes(b"250.0");
+        assert_eq!(result, Ok(FixedI64::<6>::from_raw(250_000_000)));
+    }
+
+    #[test]
+    fn parse_max_18_digits_no_overflow() {
+        // 18 digits is the max we support without overflow
+        // 123456789012345678 fits in i64 (max ~9.2e18)
+        let result = FixedI64::<0>::parse_decimal_bytes(b"123456789012345678");
+        assert_eq!(
+            result,
+            Ok(FixedI64::<0>::from_raw(123_456_789_012_345_678))
+        );
+    }
+
+    #[test]
+    fn parse_19_digits_fits() {
+        // 19 digits that fit in i64 (i64::MAX = 9223372036854775807)
+        let result = FixedI64::<0>::parse_decimal_bytes(b"9223372036854775807");
+        assert_eq!(result, Ok(FixedI64::<0>::from_raw(i64::MAX)));
+    }
+
+    #[test]
+    fn parse_19_digits_overflows() {
+        // 19 digits that exceed i64::MAX
+        assert_eq!(
+            FixedI64::<0>::parse_decimal_bytes(b"9223372036854775808"),
+            Err(ParseFixedError::Overflow)
+        );
+    }
+
+    #[test]
+    fn parse_20_digits_overflows() {
+        // 20 digits always overflows
+        assert_eq!(
+            FixedI64::<0>::parse_decimal_bytes(b"12345678901234567890"),
+            Err(ParseFixedError::Overflow)
+        );
     }
 }

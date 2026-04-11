@@ -10,4 +10,4 @@ mod schema;
 pub mod spawn;
 
 pub use decoder::{BinanceDecoder, BinanceSymbolMapping, DecoderError, MAX_BINANCE_SYMBOLS};
-pub use spawn::{spawn_binance_feed, FeedSpawnResult};
+pub use spawn::{FeedSpawnResult, spawn_binance_feed};

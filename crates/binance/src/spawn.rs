@@ -1,11 +1,11 @@
 //! Convenience functions for spawning Binance feed threads.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use mantis_events::HotEvent;
-use mantis_transport::binance::reference::BinanceReferenceConfig;
 use mantis_transport::FeedHandle;
+use mantis_transport::binance::reference::BinanceReferenceConfig;
 use mantis_types::Timestamp;
 
 use crate::decoder::BinanceDecoder;
@@ -27,7 +27,11 @@ pub struct FeedSpawnResult {
 pub fn build_callback<const D: u8, F>(
     mut decoder: BinanceDecoder<D>,
     mut push: F,
-) -> (impl FnMut(&mut [u8]) -> bool, Arc<AtomicU64>, Arc<AtomicU64>)
+) -> (
+    impl FnMut(&mut [u8]) -> bool,
+    Arc<AtomicU64>,
+    Arc<AtomicU64>,
+)
 where
     F: FnMut(HotEvent) -> bool + Send + 'static,
 {

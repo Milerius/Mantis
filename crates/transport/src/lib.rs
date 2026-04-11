@@ -28,7 +28,7 @@ mod tuning;
 mod ws;
 
 pub use feed::{BackoffConfig, FeedConfig, FeedHandle, FeedThread};
-pub use monitor::{FeedMonitor, MonitorFullError, StaleFeedInfo, MAX_FEEDS};
+pub use monitor::{FeedMonitor, MAX_FEEDS, MonitorFullError, StaleFeedInfo};
 pub use timer::{TimerConfig, TimerConfigError, TimerSpawnError, TimerThread};
 pub use tuning::SocketTuning;
 pub use ws::{WsConfig, WsConnection, WsError};

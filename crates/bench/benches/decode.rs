@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use mantis_binance::BinanceDecoder;
+use mantis_binance::{BinanceDecoder, BinanceSymbolMapping};
 use mantis_events::{EventFlags, HeartbeatPayload, HotEvent};
 use mantis_fixed::FixedI64;
 use mantis_registry::{
@@ -42,7 +42,15 @@ fn binance_decoder() -> BinanceDecoder<3> {
         FixedI64::<3>::from_str_decimal("0.001").expect("valid lot_size"),
     )
     .expect("valid meta");
-    BinanceDecoder::new(SourceId::from_raw(2), InstrumentId::from_raw(1), meta)
+    BinanceDecoder::new(
+        SourceId::from_raw(2),
+        &[BinanceSymbolMapping {
+            symbol: "BTCUSDT",
+            instrument_id: InstrumentId::from_raw(1),
+            meta,
+        }],
+    )
+    .expect("valid decoder")
 }
 
 fn binance_json() -> Vec<u8> {
