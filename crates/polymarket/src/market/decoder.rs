@@ -320,12 +320,17 @@ fn memchr_byte(byte: u8, haystack: &[u8]) -> Option<usize> {
     None
 }
 
-#[cfg(feature = "simd-json")]
+#[cfg(feature = "sonic-rs")]
+fn parse_json<'a, T: serde::Deserialize<'a>>(buf: &'a mut [u8]) -> Result<T, ()> {
+    sonic_rs::from_slice(&*buf).map_err(|_| ())
+}
+
+#[cfg(all(feature = "simd-json", not(feature = "sonic-rs")))]
 fn parse_json<'a, T: serde::Deserialize<'a>>(buf: &'a mut [u8]) -> Result<T, ()> {
     simd_json::from_slice(buf).map_err(|_| ())
 }
 
-#[cfg(not(feature = "simd-json"))]
+#[cfg(not(any(feature = "sonic-rs", feature = "simd-json")))]
 fn parse_json<'a, T: serde::Deserialize<'a>>(buf: &'a mut [u8]) -> Result<T, ()> {
     serde_json::from_slice(buf).map_err(|_| ())
 }

@@ -63,6 +63,7 @@ mantis-polymarket = { path = "crates/polymarket", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 simd-json = "0.17"
+sonic-rs = "0.5"
 tracing = "0.1"
 cfg-if = "1"
 libm = "0.2"
