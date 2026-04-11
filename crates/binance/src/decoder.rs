@@ -29,7 +29,7 @@ pub enum DecoderError {
     TooManySymbols,
     /// Zero mappings were provided.
     EmptyMappings,
-    /// A symbol name exceeds [`MAX_SYMBOL_LEN`] bytes.
+    /// A symbol name exceeds 16 bytes.
     SymbolTooLong,
 }
 
