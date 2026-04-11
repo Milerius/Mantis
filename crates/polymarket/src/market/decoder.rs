@@ -172,9 +172,16 @@ impl<'r, const D: u8> PolymarketMarketDecoder<'r, D> {
         }
 
         let mut count: usize = 0;
+        let total_levels = msg.bids.len() + msg.asks.len();
 
         for (depth_idx, level) in msg.bids.iter().enumerate() {
             if count >= 64 {
+                tracing::warn!(
+                    asset_id = msg.asset_id,
+                    total_levels,
+                    emitted = 64,
+                    "book snapshot truncated at 64 events"
+                );
                 break;
             }
             let Some((price, qty)) = parse_price_qty::<D>(level.price, level.size, &meta) else {
@@ -202,6 +209,12 @@ impl<'r, const D: u8> PolymarketMarketDecoder<'r, D> {
 
         for (depth_idx, level) in msg.asks.iter().enumerate() {
             if count >= 64 {
+                tracing::warn!(
+                    asset_id = msg.asset_id,
+                    total_levels,
+                    emitted = 64,
+                    "book snapshot truncated at 64 events"
+                );
                 break;
             }
             let Some((price, qty)) = parse_price_qty::<D>(level.price, level.size, &meta) else {
